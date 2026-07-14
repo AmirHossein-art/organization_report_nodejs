@@ -1,0 +1,6 @@
+{
+  "name": "Organization Report App",
+  "description": "سامانه جامع گزارش‌دهی سازمانی (هفتگی و ماهانه) با قابلیت مدیریت پروژه‌ها، تخصیص کاربران، تنظیم ددلاین و تحلیل هوشمند گزارش‌ها با هوش مصنوعی.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
