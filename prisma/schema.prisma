@@ -1,0 +1,124 @@
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// تعریف انواع مقادیر مجاز (Enums)
+enum Role {
+  user
+  manager
+}
+
+enum ReportType {
+  weekly
+  monthly
+}
+
+enum ReportStatus {
+  submitted
+  late
+}
+
+// ۱. جدول کاربران
+model User {
+  id                   Int           @id @default(autoincrement())
+  username             String        @unique
+  full_name            String
+  password             String        @default("123456")
+  role                 Role          @default(user)
+  is_active            Boolean       @default(true)
+  must_change_password Boolean       @default(true)
+  password_changed_at  DateTime?
+  created_at           DateTime      @default(now())
+  
+  userProjects         UserProject[]
+  reports              Report[]
+}
+
+// ۲. جدول پروژه‌ها
+model Project {
+  id           Int           @id @default(autoincrement())
+  title        String
+  description  String
+  code         String        @unique
+  is_active    Boolean       @default(true)
+  created_at   DateTime      @default(now())
+  
+  userProjects UserProject[]
+  reports      Report[]
+}
+
+// ۳. جدول دوره‌های گزارش‌دهی
+model ReportPeriod {
+  id           Int        @id @default(autoincrement())
+  title        String
+  report_type  ReportType
+  period_start DateTime
+  period_end   DateTime
+  is_open      Boolean    @default(true)
+  created_at   DateTime   @default(now())
+  
+  reports      Report[]
+}
+
+// ۴. جدول رابط کاربری و پروژه‌ها (Many-to-Many)
+model UserProject {
+  id         Int      @id @default(autoincrement())
+  user_id    Int
+  project_id Int
+  created_at DateTime @default(now())
+
+  user    User    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, project_id]) // جلوگیری از ثبت تکراری یک کاربر در یک پروژه
+}
+
+// ۵. جدول فایل‌های ضمیمه گزارش‌ها
+model ReportFile {
+  id                Int      @id @default(autoincrement())
+  report_id         Int
+  filename          String
+  original_filename String
+  file_size         Int
+  created_at        DateTime @default(now())
+
+  report Report @relation(fields: [report_id], references: [id], onDelete: Cascade)
+}
+
+// ۶. جدول اصلی گزارش‌ها
+model Report {
+  id               Int          @id @default(autoincrement())
+  user_id          Int
+  user_full_name   String       // برای ذخیره نام کاربر در لحظه ثبت گزارش
+  user_username    String
+  project_id       Int
+  project_title    String       // برای ذخیره نام پروژه در لحظه ثبت گزارش
+  report_type      ReportType
+  period_id        Int
+  period_title     String
+  period_start     DateTime
+  period_end       DateTime
+  activities_done  String       @db.Text // استفاده از نوع متن طولانی در دیتابیس
+  results_achieved String       @db.Text
+  next_actions     String       @db.Text
+  kpi_text         String       @db.Text
+  status           ReportStatus
+  submitted_at     DateTime     @default(now())
+
+  user    User         @relation(fields: [user_id], references: [id])
+  project Project      @relation(fields: [project_id], references: [id])
+  period  ReportPeriod @relation(fields: [period_id], references: [id])
+  files   ReportFile[]
+}
+
+// ۷. جدول تنظیمات ددلاین‌ها
+model DeadlineSetting {
+  id            Int        @id @default(autoincrement())
+  report_type   ReportType
+  deadline_day  Int
+  deadline_time String     // ذخیره به صورت فرمت "HH:MM"
+}

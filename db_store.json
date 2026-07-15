@@ -1,0 +1,226 @@
+{
+  "users": [
+    {
+      "id": 1,
+      "username": "manager",
+      "full_name": "سهراب رحمانی (مدیر سامانه)",
+      "role": "manager",
+      "is_active": true,
+      "must_change_password": false,
+      "password_changed_at": null,
+      "created_at": "2026-07-15T07:10:20.289Z"
+    },
+    {
+      "id": 2,
+      "username": "ahmadi",
+      "full_name": "علیرضا احمدی (توسعه‌دهنده ارشد)",
+      "role": "user",
+      "is_active": true,
+      "must_change_password": false,
+      "password_changed_at": null,
+      "created_at": "2026-07-15T07:10:20.290Z"
+    },
+    {
+      "id": 3,
+      "username": "rezai",
+      "full_name": "مریم رضایی (طراح رابط کاربری)",
+      "role": "user",
+      "is_active": true,
+      "must_change_password": false,
+      "password_changed_at": null,
+      "created_at": "2026-07-15T07:10:20.290Z"
+    },
+    {
+      "id": 4,
+      "username": "karimi",
+      "full_name": "محمد کریمی (تست و تضمین کیفیت)",
+      "role": "user",
+      "is_active": true,
+      "must_change_password": true,
+      "password_changed_at": null,
+      "created_at": "2026-07-15T07:10:20.290Z"
+    }
+  ],
+  "projects": [
+    {
+      "id": 1,
+      "title": "پورتال سازمانی خدمات دیجیتال",
+      "description": "طراحی و توسعه پورتال متمرکز خدمات الکترونیک برای پرسنل و ارباب رجوع.",
+      "code": "PRJ-ORG-101",
+      "is_active": true,
+      "created_at": "2026-07-15T07:10:20.290Z"
+    },
+    {
+      "id": 2,
+      "title": "اپلیکیشن موبایل همکاران",
+      "description": "توسعه نسخه اندروید و iOS برای دسترسی به خدمات رفاهی و اداری.",
+      "code": "PRJ-MOB-102",
+      "is_active": true,
+      "created_at": "2026-07-15T07:10:20.290Z"
+    },
+    {
+      "id": 3,
+      "title": "سامانه یکپارچه‌سازی داده‌ها",
+      "description": "اتصال پایگاه‌های داده جزیره‌ای سازمان به مخزن داده مرکزی.",
+      "code": "PRJ-INT-103",
+      "is_active": true,
+      "created_at": "2026-07-15T07:10:20.290Z"
+    }
+  ],
+  "reportPeriods": [
+    {
+      "id": 1,
+      "title": "هفته اول تیر ۱۴۰۵",
+      "report_type": "weekly",
+      "period_start": "2026-06-22",
+      "period_end": "2026-06-28",
+      "is_open": false,
+      "created_at": "2026-07-15T07:10:20.290Z"
+    },
+    {
+      "id": 2,
+      "title": "هفته دوم تیر ۱۴۰۵",
+      "report_type": "weekly",
+      "period_start": "2026-06-29",
+      "period_end": "2026-07-05",
+      "is_open": false,
+      "created_at": "2026-07-15T07:10:20.290Z"
+    },
+    {
+      "id": 3,
+      "title": "هفته سوم تیر ۱۴۰۵",
+      "report_type": "weekly",
+      "period_start": "2026-07-06",
+      "period_end": "2026-07-12",
+      "is_open": true,
+      "created_at": "2026-07-15T07:10:20.290Z"
+    },
+    {
+      "id": 4,
+      "title": "خرداد ۱۴۰۵",
+      "report_type": "monthly",
+      "period_start": "2026-05-22",
+      "period_end": "2026-06-21",
+      "is_open": false,
+      "created_at": "2026-07-15T07:10:20.290Z"
+    },
+    {
+      "id": 5,
+      "title": "تیر ۱۴۰۵",
+      "report_type": "monthly",
+      "period_start": "2026-06-22",
+      "period_end": "2026-07-22",
+      "is_open": true,
+      "created_at": "2026-07-15T07:10:20.290Z"
+    }
+  ],
+  "userProjects": [
+    {
+      "id": 1,
+      "user_id": 2,
+      "project_id": 1,
+      "created_at": "2026-07-15T07:10:20.290Z"
+    },
+    {
+      "id": 2,
+      "user_id": 2,
+      "project_id": 3,
+      "created_at": "2026-07-15T07:10:20.290Z"
+    },
+    {
+      "id": 3,
+      "user_id": 3,
+      "project_id": 1,
+      "created_at": "2026-07-15T07:10:20.290Z"
+    },
+    {
+      "id": 4,
+      "user_id": 3,
+      "project_id": 2,
+      "created_at": "2026-07-15T07:10:20.290Z"
+    },
+    {
+      "id": 5,
+      "user_id": 4,
+      "project_id": 2,
+      "created_at": "2026-07-15T07:10:20.290Z"
+    }
+  ],
+  "deadlineSettings": [
+    {
+      "id": 1,
+      "report_type": "weekly",
+      "deadline_day": 5,
+      "deadline_time": "14:00"
+    },
+    {
+      "id": 2,
+      "report_type": "monthly",
+      "deadline_day": 30,
+      "deadline_time": "16:00"
+    }
+  ],
+  "reports": [
+    {
+      "id": 1,
+      "user_id": 2,
+      "user_full_name": "علیرضا احمدی (توسعه‌دهنده ارشد)",
+      "user_username": "ahmadi",
+      "project_id": 1,
+      "project_title": "پورتال سازمانی خدمات دیجیتال",
+      "report_type": "weekly",
+      "period_id": 2,
+      "period_title": "هفته دوم تیر ۱۴۰۵",
+      "period_start": "2026-06-29",
+      "period_end": "2026-07-05",
+      "activities_done": "طراحی و توسعه ماژول ورود دو مرحله‌ای کاربران (2FA). اتصال متد ارسال پیامک تایید هویت به پرووایدر مخابراتی ارائه‌دهنده سرویس پیامکی. پیاده‌سازی ریت‌لیمیت برای جلوگیری از حملات Brute force.",
+      "results_achieved": "امنیت بخش ورود کاربران به میزان چشمگیری افزایش یافت و تست‌های نفوذ با موفقیت به پایان رسیدند.",
+      "next_actions": "پیاده‌سازی مکانیزم لاگ‌اوت خودکار در صورت غیرفعال بودن کاربر به مدت ۱۵ دقیقه.",
+      "kpi_text": "- پیاده‌سازی و تست کامل ۵ سناریو امنیتی ورود.\n- زمان پاسخ‌دهی به درخواست ورود زیر ۴۰۰ میلی‌ثانیه.",
+      "status": "submitted",
+      "submitted_at": "2026-07-04T11:20:00.000Z",
+      "files": []
+    },
+    {
+      "id": 2,
+      "user_id": 3,
+      "user_full_name": "مریم رضایی (طراح رابط کاربری)",
+      "user_username": "rezai",
+      "project_id": 1,
+      "project_title": "پورتال سازمانی خدمات دیجیتال",
+      "report_type": "weekly",
+      "period_id": 2,
+      "period_title": "هفته دوم تیر ۱۴۰۵",
+      "period_start": "2026-06-29",
+      "period_end": "2026-07-05",
+      "activities_done": "طراحی و نمونه‌سازی نمای دسکتاپ و موبایل برای پنل کاربری پرسنل در نرم‌افزار فیگما. برگزاری جلسه هماهنگی با مدیر محصول برای دریافت بازخوردهای نهایی و رفع ابهامات طراحی.",
+      "results_achieved": "تاییدیه نهایی ۸۰٪ از نماهای طراحی شده از مدیر محصول گرفته شد و به تیم فرانت‌اند تحویل گردید.",
+      "next_actions": "شروع طراحی المان‌های بخش داشبورد مالی و گزارشات حقوق و دستمزد پرسنل.",
+      "kpi_text": "- تحویل کامل فایلهای دیزاین سیستم در فیگما.\n- طراحی ۱۰ ماکاپ با کیفیت بالا.",
+      "status": "submitted",
+      "submitted_at": "2026-07-05T09:15:00.000Z",
+      "files": []
+    },
+    {
+      "id": 3,
+      "user_id": 4,
+      "user_full_name": "محمد کریمی (تست و تضمین کیفیت)",
+      "user_username": "karimi",
+      "project_id": 2,
+      "project_title": "اپلیکیشن موبایل همکاران",
+      "report_type": "weekly",
+      "period_id": 2,
+      "period_title": "هفته دوم تیر ۱۴۰۵",
+      "period_start": "2026-06-29",
+      "period_end": "2026-07-05",
+      "activities_done": "اجرای سناریوهای تست دستی بر روی نسخه بتا ۳.۲ اپلیکیشن موبایل. تمرکز بر تست بخش رزرو غذا و ثبت درخواست مرخصی هفتگی.",
+      "results_achieved": "کشف ۴ باگ بحرانی در بخش هماهنگ‌سازی زمان مرخصی با سرور اداری و ارجاع آن‌ها به تیم فنی.",
+      "next_actions": "طراحی تست‌های رگرسیون برای بررسی مجدد باگ‌های برطرف شده پس از ریلیز پچ جدید.",
+      "kpi_text": "- اجرای کامل ۱۲ تست سناریو برای رزرو غذا.\n- گزارش و مستندسازی کامل باگ‌ها در سیستم جیرا.",
+      "status": "late",
+      "submitted_at": "2026-07-06T15:30:00.000Z",
+      "files": []
+    }
+  ],
+  "reportFiles": []
+}

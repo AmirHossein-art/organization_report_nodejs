@@ -631,9 +631,9 @@ export default function App() {
       <div className="min-h-screen flex items-center justify-center bg-slate-100 p-4 font-sans">
         <div className="w-full max-w-md bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden">
           <div className="bg-slate-900 px-6 py-8 text-center text-white">
-            <span className="text-5xl inline-block mb-3">📊</span>
-            <h1 className="text-2xl font-bold font-sans tracking-tight">سامانه گزارش‌دهی سازمانی</h1>
-            <p className="text-slate-400 mt-2 text-sm">پورتال ورود پرسنل و مدیریت پروژه‌ها</p>
+            <img src="/logo.png" alt="لوگوی سازمان" className="h-30 w-30 object-contain inline-block" />
+            <h1 className="text-2xl font-bold font-sans tracking-tight">سامانه پیگیری استراتژیک سازمان حمل‌ونقل و ترافیک شهرداری تهران</h1>
+            <p className="text-slate-400 mt-2 text-sm">دروازه ورود پرسنل و مدیریت پروژه‌ها</p>
           </div>
 
           <form onSubmit={handleLogin} className="p-6 space-y-4">
@@ -709,8 +709,8 @@ export default function App() {
       {/* Mobile Top Header */}
       <header className="md:hidden bg-slate-900 text-white px-4 py-3 flex items-center justify-between shadow-md">
         <div className="flex items-center gap-2">
-          <span className="text-2xl">📊</span>
-          <span className="font-bold text-lg">گزارش‌دهی سازمانی</span>
+          <img src="/logo.png" alt="لوگوی سازمان" className="h-10 w-10 object-contain inline-block" />
+          <span className="font-bold text-lg">پیگیری استراتژیک سازمانی</span>
         </div>
         <button
           onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
@@ -728,9 +728,9 @@ export default function App() {
       >
         {/* Desktop Sidebar Header */}
         <div className="p-6 hidden md:flex items-center gap-3 border-b border-slate-800">
-          <span className="text-3xl">📊</span>
+          <img src="/logo.png" alt="لوگوی سازمان" className="h-15 w-15 object-contain inline-block" />
           <div>
-            <h1 className="font-bold text-white text-base">گزارش‌دهی سازمانی</h1>
+            <h1 className="font-bold text-white text-base">پیگیری استراتژیک سازمانی</h1>
             <p className="text-xs text-slate-400 mt-0.5">پورتال خدمات هوشمند</p>
           </div>
         </div>
@@ -774,7 +774,7 @@ export default function App() {
             }`}
           >
             <ClipboardList className="w-4 h-4" />
-            <span>📝 ثبت گزارش عملکرد</span>
+            <span> ثبت گزارش عملکرد</span>
           </button>
 
           <button
@@ -787,7 +787,7 @@ export default function App() {
             }`}
           >
             <FileText className="w-4 h-4" />
-            <span>📄 گزارش‌های من</span>
+            <span> گزارش‌های من</span>
           </button>
 
           {/* Manager-only Views */}
@@ -807,7 +807,7 @@ export default function App() {
                 }`}
               >
                 <BarChart3 className="w-4 h-4" />
-                <span>📊 داشبورد نظارتی مدیر</span>
+                <span> داشبورد نظارتی مدیر</span>
               </button>
 
               <button
@@ -820,7 +820,7 @@ export default function App() {
                 }`}
               >
                 <Folder className="w-4 h-4" />
-                <span>📂 مدیریت پروژه‌ها</span>
+                <span> مدیریت پروژه‌ها</span>
               </button>
 
               <button
@@ -833,7 +833,7 @@ export default function App() {
                 }`}
               >
                 <Clock className="w-4 h-4" />
-                <span>⏱️ تنظیمات ددلاین</span>
+                <span> تنظیمات ددلاین</span>
               </button>
 
               <button
@@ -846,7 +846,7 @@ export default function App() {
                 }`}
               >
                 <Users className="w-4 h-4" />
-                <span>👤 مدیریت کاربران</span>
+                <span> مدیریت کاربران</span>
               </button>
 
               <button
@@ -859,7 +859,7 @@ export default function App() {
                 }`}
               >
                 <Calendar className="w-4 h-4" />
-                <span>🗓️ بازه‌های گزارش‌دهی</span>
+                <span> بازه‌های گزارش‌دهی</span>
               </button>
 
               <button
@@ -872,7 +872,7 @@ export default function App() {
                 }`}
               >
                 <Settings className="w-4 h-4" />
-                <span>📌 تخصیص پروژه به پرسنل</span>
+                <span> تخصیص پروژه به پرسنل</span>
               </button>
             </>
           )}
@@ -902,7 +902,7 @@ export default function App() {
                 <span className="bg-white/10 text-white text-xs px-3 py-1 rounded-full font-medium">نسخه جدید ۱.۰.۰</span>
                 <h2 className="text-2xl md:text-3xl font-extrabold">{user.full_name} عزیز، خوش آمدید.</h2>
                 <p className="text-slate-300 text-sm md:text-base">
-                  به پرتال سازمانی گزارش‌دهی و پایش عملکرد پروژه‌ها خوش آمدید. امکان ثبت گزارشات در اینجا فراهم است.
+                  به پرتال سازمانی پیگیری و پایش استراتژیک پروژه‌ها خوش آمدید. امکان ثبت گزارشات در اینجا فراهم است.
                 </p>
               </div>
               <span className="text-6xl md:text-7xl">🎯</span>
@@ -921,7 +921,7 @@ export default function App() {
               </div>
 
               <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
-                <div className="text-sm font-medium text-slate-500">پروژه‌های فعال تجاری</div>
+                <div className="text-sm font-medium text-slate-500">پروژه‌های فعال</div>
                 <div className="text-3xl font-bold mt-2 text-slate-950 font-mono">
                   {projects.length > 0 ? projects.filter((p) => p.is_active).length : "۳"} پروژه
                 </div>
@@ -964,11 +964,11 @@ export default function App() {
                 </li>
                 <li className="flex items-center gap-3">
                   <span className="w-2 h-2 rounded-full bg-slate-900"></span>
-                  داشبورد نظارتی و مدیریتی فوق‌پیشرفته به همراه آمارگیری درصدی
+                  داشبورد نظارتی و مدیریتی به همراه آمارگیری درصدی
                 </li>
                 <li className="flex items-center gap-3">
                   <span className="w-2 h-2 rounded-full bg-slate-900"></span>
-                  تحلیل و خلاصه‌سازی هوشمند گزارشات با هوش مصنوعی (Gemini AI)
+                  تحلیل و خلاصه‌سازی هوشمند گزارشات با هوش مصنوعی
                 </li>
               </ul>
             </div>
@@ -1738,7 +1738,7 @@ export default function App() {
                       required
                       value={newProjTitle}
                       onChange={(e) => setNewProjTitle(e.target.value)}
-                      placeholder="مثلاً توسعه اپلیکیشن حضور غیاب"
+                      placeholder="مثلاً توسعه مسیر سرزندگی"
                       className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs"
                     />
                   </div>

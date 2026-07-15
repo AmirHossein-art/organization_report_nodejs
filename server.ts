@@ -1,3 +1,4 @@
+import "dotenv/config"; // ۱. اول از همه متغیرهای محیطی لود شوند
 import express from "express";
 import path from "path";
 import fs from "fs";
@@ -5,11 +6,29 @@ import cors from "cors";
 import multer from "multer";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
+
+// ایمپورت‌های جدید برای پریزما ۷ و پایگاه داده
+import { PrismaClient } from "@prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
+import pg from "pg";
+
 const PORT = 3000;
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+// ۲. ساخت استخر اتصالات (Connection Pool) برای PostgreSQL
+const pool = new pg.Pool({
+  connectionString: process.env.DATABASE_URL,
+});
+
+// ۳. تعریف آداپتور برای اتصال پریزما به درایور پایگاه داده
+const adapter = new PrismaPg(pool);
+
+// ۴. ساخت کلاینت پریزما با آداپتور مربوطه
+const prisma = new PrismaClient({ adapter });
+
 
 // Set up file storage for report attachments
 const uploadDir = path.join(process.cwd(), "uploads");
@@ -275,98 +294,156 @@ const nextId = (collection: any[]) =>
 app.use("/uploads", express.static(uploadDir));
 
 // --- Auth Endpoints ---
-app.post("/api/auth/login", (req, res) => {
-  const { username, password } = req.body;
-  const user = state.users.find(
-    (u) => u.username === username && u.is_active
-  );
+app.post("/api/auth/login", async (req, res) => {
+  try {
+    const { username, password } = req.body;
 
-  if (!user) {
-    return res.status(401).json({ error: "نام کاربری یا رمز عبور اشتباه است، یا حساب کاربری غیرفعال می‌باشد." });
-  }
+    // ۱. پیدا کردن کاربر در دیتابیس بر اساس نام کاربری منحصربه‌فرد
+    const user = await prisma.user.findUnique({
+      where: { username: username }
+    });
 
-  // Simplified auth: check if password matches (in this mock-up password is raw or matches default "123456")
-  if (password !== "123456" && password !== user.password) {
-    // If not matching, verify if they just entered correct temporary password
-    if (password !== "123456") {
+    // ۲. بررسی وجود کاربر و فعال بودن حساب کاربری او
+    if (!user || !user.is_active) {
+      return res.status(401).json({ 
+        error: "نام کاربری یا رمز عبور اشتباه است، یا حساب کاربری غیرفعال می‌باشد." 
+      });
+    }
+
+    // ۳. بررسی صحت رمز عبور (در حال حاضر به صورت متن ساده مقایسه می‌شود)
+    if (password !== user.password) {
       return res.status(401).json({ error: "نام کاربری یا رمز عبور اشتباه است." });
     }
-  }
 
-  res.json({
-    user: {
-      id: user.id,
-      username: user.username,
-      full_name: user.full_name,
-      role: user.role,
-      must_change_password: user.must_change_password,
-    },
-  });
+    // ۴. ارسال مشخصات کاربر به فرانت‌اِند برای ایجاد نشست فعال
+    res.json({
+      user: {
+        id: user.id,
+        username: user.username,
+        full_name: user.full_name,
+        role: user.role,
+        must_change_password: user.must_change_password,
+      },
+    });
+
+  } catch (error) {
+    console.error("Login error:", error);
+    res.status(500).json({ error: "خطا در برقراری ارتباط با سرور احراز هویت" });
+  }
 });
 
-app.post("/api/auth/change-password", (req, res) => {
-  const { userId, newPassword } = req.body;
-  const userIndex = state.users.findIndex((u) => u.id === userId);
+app.post("/api/auth/change-password", async (req, res) => {
+  try {
+    const { userId, newPassword } = req.body;
 
-  if (userIndex === -1) {
-    return res.status(404).json({ error: "کاربر پیدا نشد." });
+    // ۱. بررسی وجود کاربر با شناسه ارسال شده
+    const user = await prisma.user.findUnique({
+      where: { id: parseInt(userId) }
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: "کاربر مورد نظر یافت نشد." });
+    }
+
+    // ۲. بروزرسانی رمز عبور، تغییر وضعیت اجبار تغییر پسورد و ثبت تاریخ تغییر
+    await prisma.user.update({
+      where: { id: parseInt(userId) },
+      data: {
+        password: newPassword,
+        must_change_password: false, // دیگر نیازی به تغییر رمز اجباری در ورودهای بعدی نیست
+        password_changed_at: new Date(), // ذخیره تاریخ دقیق تغییر رمز به زمان فعلی دیتابیس
+      }
+    });
+
+    res.json({ success: true, message: "رمز عبور با موفقیت تغییر یافت." });
+
+  } catch (error) {
+    console.error("Change password error:", error);
+    res.status(500).json({ error: "خطا در ذخیره‌سازی رمز عبور جدید در دیتابیس" });
   }
-
-  state.users[userIndex].password = newPassword;
-  state.users[userIndex].must_change_password = false;
-  state.users[userIndex].password_changed_at = new Date().toISOString();
-  saveDB();
-
-  res.json({ success: true, message: "رمز عبور با موفقیت تغییر یافت." });
 });
 
 // --- User Management ---
-app.get("/api/users", (req, res) => {
-  res.json(state.users);
+app.get("/api/users", async (_req, res) => {
+  try {
+    // رفتن به دیتابیس و خواندن تمام رکوردهای جدول User
+    const users = await prisma.user.findMany({
+      orderBy: { id: "asc" }
+    });
+    res.json(users);
+  } catch (error) {
+    console.error("Error fetching users:", error);
+    res.status(500).json({ error: "خطا در دریافت اطلاعات کاربران از دیتابیس" });
+  }
 });
 
-app.post("/api/users", (req, res) => {
-  const { username, full_name, role, password, must_change_password } = req.body;
+app.post("/api/users", async (req, res) => {
+  try {
+    const { username, full_name, role, password, must_change_password } = req.body;
 
-  if (state.users.some((u) => u.username === username)) {
-    return res.status(400).json({ error: "نام کاربری تکراری است." });
+    // ۱. بررسی تکراری نبودن نام کاربری در دیتابیس
+    const existingUser = await prisma.user.findUnique({
+      where: { username: username }
+    });
+
+    if (existingUser) {
+      return res.status(400).json({ error: "نام کاربری تکراری است." });
+    }
+
+    // ۲. ساخت کاربر جدید در دیتابیس PostgreSQL
+    const newUser = await prisma.user.create({
+      data: {
+        username,
+        full_name,
+        role: role || "user", // در پریزما به حروف کوچک/بزرگ Enum دقت کن
+        // رمز عبور پیش‌فرض ۱۲۳۴۵۶ در نظر گرفته می‌شود
+        password: password || "123456", 
+        is_active: true,
+        must_change_password: must_change_password !== undefined ? must_change_password : true,
+      },
+    });
+
+    // ۳. بازگرداندن اطلاعات کاربر ساخته شده به فرانت‌اند
+    res.status(201).json(newUser);
+
+  } catch (error) {
+    console.error("Error creating user:", error);
+    res.status(500).json({ error: "خطا در ثبت کاربر جدید در دیتابیس" });
   }
-
-  const newUser = {
-    id: nextId(state.users),
-    username,
-    full_name,
-    role: role || "user",
-    password: password || "123456",
-    is_active: true,
-    must_change_password: must_change_password !== undefined ? must_change_password : true,
-    password_changed_at: null,
-    created_at: new Date().toISOString(),
-  };
-
-  state.users.push(newUser);
-  saveDB();
-  res.json(newUser);
 });
 
-app.put("/api/users/:id", (req, res) => {
-  const id = parseInt(req.params.id);
-  const { full_name, role, is_active } = req.body;
-  const userIndex = state.users.findIndex((u) => u.id === id);
+app.put("/api/users/:id", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const { full_name, role, is_active } = req.body;
 
-  if (userIndex === -1) {
-    return res.status(404).json({ error: "کاربر پیدا نشد." });
+    // ۱. بررسی اینکه آیا اصلاً کاربری با این شناسه وجود دارد؟
+    const existingUser = await prisma.user.findUnique({
+      where: { id: id }
+    });
+
+    if (!existingUser) {
+      return res.status(404).json({ error: "کاربر مورد نظر یافت نشد." });
+    }
+
+    // ۲. آپدیت اطلاعات در جدول User دیتابیس
+    const updatedUser = await prisma.user.update({
+      where: { id: id },
+      data: {
+        // اگر مقدار جدید فرستاده شده بود، آن را ذخیره کن؛ در غیر این صورت مقدار قبلی را نگه دار
+        full_name: full_name !== undefined ? full_name : existingUser.full_name,
+        role: role !== undefined ? role : existingUser.role,
+        is_active: is_active !== undefined ? is_active : existingUser.is_active,
+      }
+    });
+
+    // ۳. فرستادن اطلاعات کاربرِ آپدیت‌شده به فرانت‌اِند
+    res.json(updatedUser);
+
+  } catch (error) {
+    console.error("Error updating user:", error);
+    res.status(500).json({ error: "خطا در ویرایش اطلاعات کاربر در دیتابیس" });
   }
-
-  state.users[userIndex] = {
-    ...state.users[userIndex],
-    full_name: full_name !== undefined ? full_name : state.users[userIndex].full_name,
-    role: role !== undefined ? role : state.users[userIndex].role,
-    is_active: is_active !== undefined ? is_active : state.users[userIndex].is_active,
-  };
-
-  saveDB();
-  res.json(state.users[userIndex]);
 });
 
 app.post("/api/users/:id/reset-password", (req, res) => {
@@ -386,9 +463,19 @@ app.post("/api/users/:id/reset-password", (req, res) => {
 });
 
 // --- Project Management ---
-app.get("/api/projects", (req, res) => {
-  res.json(state.projects);
+app.get("/api/projects", async (_req, res) => {
+  try {
+    // رفتن به دیتابیس و خواندن تمام رکوردهای جدول Project
+    const projects = await prisma.project.findMany({
+      orderBy: { id: "asc" }
+    });
+    res.json(projects);
+  } catch (error) {
+    console.error("Error fetching projects:", error);
+    res.status(500).json({ error: "خطا در دریافت اطلاعات پروژه‌ها از دیتابیس" });
+  }
 });
+
 
 app.post("/api/projects", (req, res) => {
   const { title, description, code } = req.body;
