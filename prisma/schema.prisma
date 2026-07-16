@@ -109,9 +109,9 @@ model Report {
   status           ReportStatus
   submitted_at     DateTime     @default(now())
 
-  user    User         @relation(fields: [user_id], references: [id])
-  project Project      @relation(fields: [project_id], references: [id])
-  period  ReportPeriod @relation(fields: [period_id], references: [id])
+  user    User         @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  project Project      @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  period  ReportPeriod @relation(fields: [period_id], references: [id], onDelete: Cascade)
   files   ReportFile[]
 }
 

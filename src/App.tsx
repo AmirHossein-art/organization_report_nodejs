@@ -24,6 +24,31 @@ import {
   Menu,
 } from "lucide-react";
 import { User, Project, ReportPeriod, Report, DeadlineSetting, DashboardSummary, DashboardRow } from "./types";
+import { CustomSelect, ShamsiDatePicker, DeadlineCard } from "./components";
+import { formatToShamsi, toPersianDigits } from "./dateUtils";
+
+const parseNextActions = (text: string): { action: string; estimation: string }[] => {
+  if (!text) return [{ action: "", estimation: "" }];
+  
+  const lines = text.split("\n");
+  const parsed: { action: string; estimation: string }[] = [];
+  
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    
+    const cleanLine = trimmed.replace(/^[•\-\*]\s*/, "");
+    
+    const match = cleanLine.match(/^(.*?)\s*\(تخمین زمان:\s*(.*?)\)$/);
+    if (match) {
+      parsed.push({ action: match[1].trim(), estimation: match[2].trim() });
+    } else {
+      parsed.push({ action: cleanLine.trim(), estimation: "" });
+    }
+  }
+  
+  return parsed.length > 0 ? parsed : [{ action: "", estimation: "" }];
+};
 
 export default function App() {
   // Authentication State
@@ -36,8 +61,14 @@ export default function App() {
   const [loginError, setLoginError] = useState("");
 
   // Menu State
-  const [currentView, setCurrentView] = useState<string>("home");
+  const [currentView, setCurrentView] = useState<string>(() => {
+    return localStorage.getItem("org_report_view") || "home";
+  });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem("org_report_view", currentView);
+  }, [currentView]);
 
   // App-wide Data State
   const [users, setUsers] = useState<User[]>([]);
@@ -126,7 +157,7 @@ export default function App() {
   const [subProjectId, setSubProjectId] = useState<number>(0);
   const [activitiesDone, setActivitiesDone] = useState("");
   const [resultsAchieved, setResultsAchieved] = useState("");
-  const [nextActions, setNextActions] = useState("");
+  const [nextActionsList, setNextActionsList] = useState<{ action: string; estimation: string }[]>([{ action: "", estimation: "" }]);
   const [kpiText, setKpiText] = useState("");
   const [subFiles, setSubFiles] = useState<FileList | null>(null);
 
@@ -174,6 +205,15 @@ export default function App() {
       return;
     }
 
+    // Front-end safeguard to prevent duplicate reports
+    const hasAlreadySubmitted = allReports.some(
+      (r) => r.user_id === user?.id && r.project_id === subProjectId && r.period_id === subPeriodId
+    );
+    if (hasAlreadySubmitted) {
+      flashError("شما قبلاً برای این پروژه در این دوره گزارش ثبت کرده‌اید.");
+      return;
+    }
+
     setLoading(true);
     const formData = new FormData();
     formData.append("user_id", user?.id.toString() || "");
@@ -182,7 +222,13 @@ export default function App() {
     formData.append("period_id", subPeriodId.toString());
     formData.append("activities_done", activitiesDone);
     formData.append("results_achieved", resultsAchieved);
-    formData.append("next_actions", nextActions);
+
+    // Serialize bullet points list of actions to a clean text representation
+    const serializedNextActions = nextActionsList
+      .filter((item) => item.action.trim())
+      .map((item) => `• ${item.action.trim()} (تخمین زمان: ${item.estimation.trim() || "تعیین‌نشده"})`)
+      .join("\n");
+    formData.append("next_actions", serializedNextActions);
     formData.append("kpi_text", kpiText);
 
     if (subFiles) {
@@ -201,7 +247,7 @@ export default function App() {
         flashSuccess("گزارش شما با موفقیت ثبت شد.");
         setActivitiesDone("");
         setResultsAchieved("");
-        setNextActions("");
+        setNextActionsList([{ action: "", estimation: "" }]);
         setKpiText("");
         setSubFiles(null);
         // Reset file input value
@@ -219,6 +265,45 @@ export default function App() {
     }
   };
 
+  // --- Project Edit States ---
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
+  const [editProjTitle, setEditProjTitle] = useState("");
+  const [editProjDesc, setEditProjDesc] = useState("");
+  const [editProjCode, setEditProjCode] = useState("");
+
+  const handleOpenEditProject = (proj: Project) => {
+    setEditingProject(proj);
+    setEditProjTitle(proj.title);
+    setEditProjDesc(proj.description || "");
+    setEditProjCode(proj.code);
+  };
+
+  // --- User Edit States ---
+  const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [editUserFullName, setEditUserFullName] = useState("");
+  const [editUserUsername, setEditUserUsername] = useState("");
+  const [editUserRole, setEditUserRole] = useState<"user" | "manager">("user");
+
+  const handleOpenEditUser = (usr: User) => {
+    setEditingUser(usr);
+    setEditUserFullName(usr.full_name);
+    setEditUserUsername(usr.username);
+    setEditUserRole(usr.role);
+  };
+
+  // --- Period Edit States ---
+  const [editingPeriod, setEditingPeriod] = useState<ReportPeriod | null>(null);
+  const [editPeriodTitle, setEditPeriodTitle] = useState("");
+  const [editPeriodStart, setEditPeriodStart] = useState("");
+  const [editPeriodEnd, setEditPeriodEnd] = useState("");
+
+  const handleOpenEditPeriod = (pe: ReportPeriod) => {
+    setEditingPeriod(pe);
+    setEditPeriodTitle(pe.title);
+    setEditPeriodStart(pe.period_start);
+    setEditPeriodEnd(pe.period_end);
+  };
+
   // --- 2. MY REPORTS VIEW STATE ---
   const [mySearch, setMySearch] = useState("");
   const [myProjFilter, setMyProjFilter] = useState<string>("all");
@@ -227,7 +312,7 @@ export default function App() {
   const [editingReport, setEditingReport] = useState<Report | null>(null);
   const [editActivities, setEditActivities] = useState("");
   const [editResults, setEditResults] = useState("");
-  const [editNextActions, setEditNextActions] = useState("");
+  const [editNextActionsList, setEditNextActionsList] = useState<{ action: string; estimation: string }[]>([{ action: "", estimation: "" }]);
   const [editKpiText, setEditKpiText] = useState("");
   const [editNewFiles, setEditNewFiles] = useState<FileList | null>(null);
   const [deletedFileIds, setDeletedFileIds] = useState<number[]>([]);
@@ -236,7 +321,7 @@ export default function App() {
     setEditingReport(rep);
     setEditActivities(rep.activities_done);
     setEditResults(rep.results_achieved);
-    setEditNextActions(rep.next_actions);
+    setEditNextActionsList(parseNextActions(rep.next_actions));
     setEditKpiText(rep.kpi_text);
     setDeletedFileIds([]);
     setEditNewFiles(null);
@@ -250,7 +335,14 @@ export default function App() {
     const formData = new FormData();
     formData.append("activities_done", editActivities);
     formData.append("results_achieved", editResults);
-    formData.append("next_actions", editNextActions);
+    
+    // Serialize next actions list to text block before database push
+    const serializedEditNextActions = editNextActionsList
+      .filter((item) => item.action.trim())
+      .map((item) => `• ${item.action.trim()} (تخمین زمان: ${item.estimation.trim() || "تعیین‌نشده"})`)
+      .join("\n");
+    formData.append("next_actions", serializedEditNextActions);
+    
     formData.append("kpi_text", editKpiText);
     formData.append("deleted_file_ids", JSON.stringify(deletedFileIds));
 
@@ -365,7 +457,6 @@ export default function App() {
   const [newProjCode, setNewProjCode] = useState("");
   const [newProjTitle, setNewProjTitle] = useState("");
   const [newProjDesc, setNewProjDesc] = useState("");
-  const [editingProject, setEditingProject] = useState<Project | null>(null);
 
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -414,6 +505,56 @@ export default function App() {
       }
     } catch (err) {
       flashError("خطا در بروزرسانی وضعیت پروژه.");
+    }
+  };
+
+  const handleDeleteProject = async (projectId: number) => {
+    if (!confirm("آیا از حذف این پروژه اطمینان دارید؟ با حذف پروژه، تمامی گزارش‌های ثبت‌شده برای آن نیز حذف خواهند شد.")) return;
+    try {
+      const res = await fetch(`/api/projects/${projectId}`, {
+        method: "DELETE"
+      });
+      if (res.ok) {
+        flashSuccess("پروژه با موفقیت حذف شد.");
+        fetchData();
+      } else {
+        const err = await res.json();
+        flashError(err.error || "خطا در حذف پروژه.");
+      }
+    } catch (err) {
+      flashError("خطا در ارتباط با سرور.");
+    }
+  };
+
+  const handleUpdateProject = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingProject) return;
+    if (!editProjTitle.trim() || !editProjCode.trim()) {
+      flashError("کد و عنوان پروژه الزامی است.");
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/projects/${editingProject.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: editProjTitle,
+          description: editProjDesc,
+          code: editProjCode,
+        }),
+      });
+
+      if (res.ok) {
+        flashSuccess("پروژه با موفقیت ویرایش شد.");
+        setEditingProject(null);
+        fetchData();
+      } else {
+        const err = await res.json();
+        flashError(err.error || "خطا در ویرایش پروژه.");
+      }
+    } catch (err) {
+      flashError("خطا در ارتباط با سرور.");
     }
   };
 
@@ -496,6 +637,56 @@ export default function App() {
     }
   };
 
+  const handleDeleteUser = async (userId: number) => {
+    if (!confirm("آیا از حذف این کاربر اطمینان دارید؟ با حذف کاربر، تمامی تخصیص‌ها و گزارش‌های ارسال‌شده توسط وی نیز حذف خواهند شد.")) return;
+    try {
+      const res = await fetch(`/api/users/${userId}`, {
+        method: "DELETE"
+      });
+      if (res.ok) {
+        flashSuccess("کاربر با موفقیت حذف شد.");
+        fetchData();
+      } else {
+        const err = await res.json();
+        flashError(err.error || "خطا در حذف کاربر.");
+      }
+    } catch (err) {
+      flashError("خطا در ارتباط با سرور.");
+    }
+  };
+
+  const handleUpdateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUser) return;
+    if (!editUserFullName.trim() || !editUserUsername.trim()) {
+      flashError("نام کاربری و نام خانوادگی الزامی هستند.");
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/users/${editingUser.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          full_name: editUserFullName,
+          username: editUserUsername,
+          role: editUserRole,
+        }),
+      });
+
+      if (res.ok) {
+        flashSuccess("کاربر با موفقیت ویرایش شد.");
+        setEditingUser(null);
+        fetchData();
+      } else {
+        const err = await res.json();
+        flashError(err.error || "خطا در ویرایش کاربر.");
+      }
+    } catch (err) {
+      flashError("خطا در ارتباط با سرور.");
+    }
+  };
+
   const handleResetUserPassword = async (userId: number) => {
     const password_val = prompt("لطفاً رمز عبور جدید را وارد کنید (پیش‌فرض: 123456):", "123456");
     if (password_val === null) return;
@@ -570,6 +761,56 @@ export default function App() {
       }
     } catch (err) {
       flashError("خطا در تغییر وضعیت بازه گزارش.");
+    }
+  };
+
+  const handleDeletePeriod = async (periodId: number) => {
+    if (!confirm("آیا از حذف این بازه گزارش‌دهی اطمینان دارید؟ با حذف این بازه، تمام گزارش‌های ثبت‌شده در آن حذف خواهند شد.")) return;
+    try {
+      const res = await fetch(`/api/report-periods/${periodId}`, {
+        method: "DELETE"
+      });
+      if (res.ok) {
+        flashSuccess("بازه گزارش‌دهی با موفقیت حذف شد.");
+        fetchData();
+      } else {
+        const err = await res.json();
+        flashError(err.error || "خطا در حذف بازه گزارش‌دهی.");
+      }
+    } catch (err) {
+      flashError("خطا در ارتباط با سرور.");
+    }
+  };
+
+  const handleUpdatePeriod = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingPeriod) return;
+    if (!editPeriodTitle.trim() || !editPeriodStart || !editPeriodEnd) {
+      flashError("تکمیل تمامی فیلدها الزامی است.");
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/report-periods/${editingPeriod.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: editPeriodTitle,
+          period_start: editPeriodStart,
+          period_end: editPeriodEnd,
+        }),
+      });
+
+      if (res.ok) {
+        flashSuccess("بازه گزارش‌دهی با موفقیت ویرایش شد.");
+        setEditingPeriod(null);
+        fetchData();
+      } else {
+        const err = await res.json();
+        flashError(err.error || "خطا در ویرایش بازه گزارش‌دهی.");
+      }
+    } catch (err) {
+      flashError("خطا در ارتباط با سرور.");
     }
   };
 
@@ -757,7 +998,7 @@ export default function App() {
               setMobileMenuOpen(false);
             }}
             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
-              currentView === "home" ? "bg-white/10 text-white" : "hover:bg-white/5 hover:text-white"
+              currentView === "home" ? "bg-white/10 text-blue-600 font-semibold" : "hover:bg-white/5 hover:text-white"
             }`}
           >
             <Folder className="w-4 h-4" />
@@ -770,7 +1011,7 @@ export default function App() {
               setMobileMenuOpen(false);
             }}
             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
-              currentView === "submit_report" ? "bg-white/10 text-white" : "hover:bg-white/5 hover:text-white"
+              currentView === "submit_report" ? "bg-white/10 text-blue-600 font-semibold" : "hover:bg-white/5 hover:text-white"
             }`}
           >
             <ClipboardList className="w-4 h-4" />
@@ -783,7 +1024,7 @@ export default function App() {
               setMobileMenuOpen(false);
             }}
             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
-              currentView === "my_reports" ? "bg-white/10 text-white" : "hover:bg-white/5 hover:text-white"
+              currentView === "my_reports" ? "bg-white/10 text-blue-600 font-semibold" : "hover:bg-white/5 hover:text-white"
             }`}
           >
             <FileText className="w-4 h-4" />
@@ -803,7 +1044,7 @@ export default function App() {
                   setMobileMenuOpen(false);
                 }}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
-                  currentView === "manager_dashboard" ? "bg-white/10 text-white" : "hover:bg-white/5 hover:text-white"
+                  currentView === "manager_dashboard" ? "bg-white/10 text-blue-600 font-semibold" : "hover:bg-white/5 hover:text-white"
                 }`}
               >
                 <BarChart3 className="w-4 h-4" />
@@ -816,7 +1057,7 @@ export default function App() {
                   setMobileMenuOpen(false);
                 }}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
-                  currentView === "manage_projects" ? "bg-white/10 text-white" : "hover:bg-white/5 hover:text-white"
+                  currentView === "manage_projects" ? "bg-white/10 text-blue-600 font-semibold" : "hover:bg-white/5 hover:text-white"
                 }`}
               >
                 <Folder className="w-4 h-4" />
@@ -829,7 +1070,7 @@ export default function App() {
                   setMobileMenuOpen(false);
                 }}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
-                  currentView === "deadline_settings" ? "bg-white/10 text-white" : "hover:bg-white/5 hover:text-white"
+                  currentView === "deadline_settings" ? "bg-white/10 text-blue-600 font-semibold" : "hover:bg-white/5 hover:text-white"
                 }`}
               >
                 <Clock className="w-4 h-4" />
@@ -842,7 +1083,7 @@ export default function App() {
                   setMobileMenuOpen(false);
                 }}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
-                  currentView === "manage_users" ? "bg-white/10 text-white" : "hover:bg-white/5 hover:text-white"
+                  currentView === "manage_users" ? "bg-white/10 text-blue-600 font-semibold" : "hover:bg-white/5 hover:text-white"
                 }`}
               >
                 <Users className="w-4 h-4" />
@@ -855,7 +1096,7 @@ export default function App() {
                   setMobileMenuOpen(false);
                 }}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
-                  currentView === "report_periods" ? "bg-white/10 text-white" : "hover:bg-white/5 hover:text-white"
+                  currentView === "report_periods" ? "bg-white/10 text-blue-600 font-semibold" : "hover:bg-white/5 hover:text-white"
                 }`}
               >
                 <Calendar className="w-4 h-4" />
@@ -868,7 +1109,7 @@ export default function App() {
                   setMobileMenuOpen(false);
                 }}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
-                  currentView === "project_allocations" ? "bg-white/10 text-white" : "hover:bg-white/5 hover:text-white"
+                  currentView === "project_allocations" ? "bg-white/10 text-blue-600 font-semibold" : "hover:bg-white/5 hover:text-white"
                 }`}
               >
                 <Settings className="w-4 h-4" />
@@ -911,8 +1152,8 @@ export default function App() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
                 <div className="text-sm font-medium text-slate-500">کاربران فعال سامانه</div>
-                <div className="text-3xl font-bold mt-2 text-slate-950 font-mono">
-                  {users.length > 0 ? users.filter((u) => u.is_active).length : "بیشتر از ۱۰"} نفر
+                <div className="text-3xl font-bold mt-2 text-slate-950">
+                  {toPersianDigits(users.length > 0 ? users.filter((u) => u.is_active).length : "بیشتر از ۱۰")} نفر
                 </div>
                 <div className="text-xs text-green-600 mt-2 flex items-center gap-1 font-medium">
                   <CheckCircle2 className="w-3.5 h-3.5" />
@@ -922,8 +1163,8 @@ export default function App() {
 
               <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
                 <div className="text-sm font-medium text-slate-500">پروژه‌های فعال</div>
-                <div className="text-3xl font-bold mt-2 text-slate-950 font-mono">
-                  {projects.length > 0 ? projects.filter((p) => p.is_active).length : "۳"} پروژه
+                <div className="text-3xl font-bold mt-2 text-slate-950">
+                  {toPersianDigits(projects.length > 0 ? projects.filter((p) => p.is_active).length : "۳")} پروژه
                 </div>
                 <div className="text-xs text-blue-600 mt-2 flex items-center gap-1 font-medium">
                   <Folder className="w-3.5 h-3.5" />
@@ -933,8 +1174,8 @@ export default function App() {
 
               <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
                 <div className="text-sm font-medium text-slate-500">بازه گزارش‌دهی باز</div>
-                <div className="text-3xl font-bold mt-2 text-slate-950 font-mono">
-                  {periods.filter((p) => p.is_open).length} بازه فعال
+                <div className="text-3xl font-bold mt-2 text-slate-950">
+                  {toPersianDigits(periods.filter((p) => p.is_open).length)} بازه فعال
                 </div>
                 <div className="text-xs text-orange-600 mt-2 flex items-center gap-1 font-medium">
                   <Clock className="w-3.5 h-3.5" />
@@ -1000,121 +1241,182 @@ export default function App() {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   <div>
                     <label className="block text-slate-700 text-sm font-medium mb-1.5">نوع گزارش</label>
-                    <select
+                    <CustomSelect
                       value={subReportType}
-                      onChange={(e) => setSubReportType(e.target.value as "weekly" | "monthly")}
-                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
-                    >
-                      <option value="weekly">گزارش هفتگی</option>
-                      <option value="monthly">گزارش ماهانه</option>
-                    </select>
+                      onChange={(val) => setSubReportType(val as "weekly" | "monthly")}
+                      options={[
+                        { value: "weekly", label: "گزارش هفتگی" },
+                        { value: "monthly", label: "گزارش ماهانه" }
+                      ]}
+                    />
                   </div>
 
                   <div>
                     <label className="block text-slate-700 text-sm font-medium mb-1.5">بازه گزارش‌دهی</label>
-                    <select
+                    <CustomSelect
                       value={subPeriodId}
-                      onChange={(e) => setSubPeriodId(parseInt(e.target.value))}
-                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
-                    >
-                      <option value={0}>-- انتخاب بازه --</option>
-                      {periods
-                        .filter((p) => p.report_type === subReportType && p.is_open)
-                        .map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.title} ({p.period_start} تا {p.period_end})
-                          </option>
-                        ))}
-                    </select>
+                      onChange={(val) => setSubPeriodId(Number(val))}
+                      options={[
+                        { value: 0, label: "-- انتخاب بازه --" },
+                        ...periods
+                          .filter((p) => p.report_type === subReportType && p.is_open)
+                          .map((p) => ({
+                            value: p.id,
+                            label: `${p.title} (${formatToShamsi(p.period_start)} تا ${formatToShamsi(p.period_end)})`
+                          }))
+                      ]}
+                    />
                   </div>
 
                   <div>
                     <label className="block text-slate-700 text-sm font-medium mb-1.5">انتخاب پروژه مربوطه</label>
-                    <select
+                    <CustomSelect
                       value={subProjectId}
-                      onChange={(e) => setSubProjectId(parseInt(e.target.value))}
-                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
+                      onChange={(val) => setSubProjectId(Number(val))}
+                      options={userAssignedProjects.map((p) => ({
+                        value: p.id,
+                        label: p.title
+                      }))}
+                    />
+                  </div>
+                </div>
+
+                {allReports.some((r) => r.user_id === user?.id && r.project_id === subProjectId && r.period_id === subPeriodId) ? (
+                  <div className="bg-orange-50 border border-orange-200 text-orange-800 p-6 rounded-2xl flex flex-col items-center justify-center text-center gap-3">
+                    <AlertTriangle className="w-8 h-8 text-orange-600 animate-pulse" />
+                    <h4 className="font-bold text-sm">گزارش قبلاً ثبت شده است</h4>
+                    <p className="text-xs leading-relaxed max-w-md font-medium">
+                      شما قبلاً برای پروژه انتخابی در این بازه گزارش عملکرد ثبت کرده‌اید. امکان ثبت گزارش مجدد وجود ندارد.
+                      در صورت نیاز، می‌توانید این گزارش را از بخش <strong>"گزارش‌های من"</strong> ویرایش و به‌روزرسانی کنید.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setCurrentView("my_reports")}
+                      className="mt-2 bg-orange-600 hover:bg-orange-700 text-white font-semibold text-xs px-4 py-2 rounded-xl transition-all cursor-pointer"
                     >
-                      {userAssignedProjects.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.title}
-                        </option>
-                      ))}
-                    </select>
+                      مشاهده و ویرایش گزارش در بخش گزارش‌های من
+                    </button>
                   </div>
-                </div>
+                ) : (
+                  <>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-slate-700 text-sm font-medium mb-1.5">فعالیت‌های انجام‌شده *</label>
+                        <textarea
+                          required
+                          value={activitiesDone}
+                          onChange={(e) => setActivitiesDone(e.target.value)}
+                          placeholder="لیست فعالیت‌ها، کارهای توسعه داده شده و جلسات در قالب بندهای مرتب..."
+                          rows={4}
+                          className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
+                        />
+                      </div>
 
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-slate-700 text-sm font-medium mb-1.5">فعالیت‌های انجام‌شده *</label>
-                    <textarea
-                      required
-                      value={activitiesDone}
-                      onChange={(e) => setActivitiesDone(e.target.value)}
-                      placeholder="لیست فعالیت‌ها، کارهای توسعه داده شده و جلسات در قالب بندهای مرتب..."
-                      rows={4}
-                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
-                    />
-                  </div>
+                      <div>
+                        <label className="block text-slate-700 text-sm font-medium mb-1.5">نتایج حاصل‌شده</label>
+                        <textarea
+                          value={resultsAchieved}
+                          onChange={(e) => setResultsAchieved(e.target.value)}
+                          placeholder="نتایج ملموس، دستاوردها و خروجی‌هایی که بدست آمد..."
+                          rows={3}
+                          className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
+                        />
+                      </div>
 
-                  <div>
-                    <label className="block text-slate-700 text-sm font-medium mb-1.5">نتایج حاصل‌شده</label>
-                    <textarea
-                      value={resultsAchieved}
-                      onChange={(e) => setResultsAchieved(e.target.value)}
-                      placeholder="نتایج ملموس، دستاوردها و خروجی‌هایی که بدست آمد..."
-                      rows={3}
-                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
-                    />
-                  </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                          <label className="block text-slate-700 text-sm font-medium mb-1.5 flex justify-between items-center">
+                            <span>اقدامات آتی (شرح برنامه + تخمین زمان)</span>
+                            <button
+                              type="button"
+                              onClick={() => setNextActionsList([...nextActionsList, { action: "", estimation: "" }])}
+                              className="text-xs text-blue-600 hover:text-blue-700 font-semibold cursor-pointer flex items-center gap-1"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>افزودن اقدام</span>
+                            </button>
+                          </label>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                      <label className="block text-slate-700 text-sm font-medium mb-1.5">اقدامات آتی (برنامه‌ریزی دوره‌ی بعد)</label>
-                      <textarea
-                        value={nextActions}
-                        onChange={(e) => setNextActions(e.target.value)}
-                        placeholder="کارهایی که در بازه زمانی بعدی قصد انجام آن را دارید..."
-                        rows={3}
-                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
-                      />
+                          <div className="space-y-3 max-h-48 overflow-y-auto pr-1">
+                            {nextActionsList.map((item, index) => (
+                              <div key={index} className="flex gap-2 items-center">
+                                <input
+                                  type="text"
+                                  required
+                                  value={item.action}
+                                  onChange={(e) => {
+                                    const newList = [...nextActionsList];
+                                    newList[index].action = e.target.value;
+                                    setNextActionsList(newList);
+                                  }}
+                                  placeholder="شرح کار آتی (مثلاً تست نهایی ماژول)..."
+                                  className="flex-1 bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-slate-900"
+                                />
+                                <input
+                                  type="text"
+                                  required
+                                  value={item.estimation}
+                                  onChange={(e) => {
+                                    const newList = [...nextActionsList];
+                                    newList[index].estimation = e.target.value;
+                                    setNextActionsList(newList);
+                                  }}
+                                  placeholder="تخمین زمان (مثلاً ۳ روز)..."
+                                  className="w-32 bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5 text-xs text-center focus:outline-none focus:ring-1 focus:ring-slate-900"
+                                />
+                                {nextActionsList.length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setNextActionsList(nextActionsList.filter((_, i) => i !== index));
+                                    }}
+                                    className="text-red-500 hover:bg-red-50 p-1.5 rounded-lg cursor-pointer"
+                                  >
+                                    <X className="w-4 h-4" />
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-slate-700 text-sm font-medium mb-1.5">شاخص‌ها و معیارهای سنجش (KPIs)</label>
+                          <textarea
+                            value={kpiText}
+                            onChange={(e) => setKpiText(e.target.value)}
+                            placeholder="درصد پیشرفت کار، متغیرهای کلیدی انجام فعالیت و آمارها..."
+                            rows={3}
+                            className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
+                          />
+                        </div>
+                      </div>
                     </div>
 
                     <div>
-                      <label className="block text-slate-700 text-sm font-medium mb-1.5">شاخص‌ها و معیارهای سنجش (KPIs)</label>
-                      <textarea
-                        value={kpiText}
-                        onChange={(e) => setKpiText(e.target.value)}
-                        placeholder="درصد پیشرفت کار، متغیرهای کلیدی انجام فعالیت و آمارها..."
-                        rows={3}
-                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
+                      <label className="block text-slate-700 text-sm font-medium mb-1.5">فایل‌های پیوست گزارش (حداکثر ۱۰ مگابایت)</label>
+                      <input
+                        type="file"
+                        id="report_files_input"
+                        multiple
+                        onChange={(e) => setSubFiles(e.target.files)}
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm text-slate-600 file:ml-4 file:bg-slate-900 file:text-white file:border-none file:px-3 file:py-1 file:rounded-lg file:cursor-pointer hover:file:bg-slate-800"
                       />
+                      <p className="text-xs text-slate-400 mt-1">فرمت‌های مجاز: PDF، Word، Excel، تصاویر داکیومنت و زیپ.</p>
                     </div>
-                  </div>
-                </div>
 
-                <div>
-                  <label className="block text-slate-700 text-sm font-medium mb-1.5">فایل‌های پیوست گزارش (حداکثر ۱۰ مگابایت)</label>
-                  <input
-                    type="file"
-                    id="report_files_input"
-                    multiple
-                    onChange={(e) => setSubFiles(e.target.files)}
-                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm text-slate-600 file:ml-4 file:bg-slate-900 file:text-white file:border-none file:px-3 file:py-1 file:rounded-lg file:cursor-pointer hover:file:bg-slate-800"
-                  />
-                  <p className="text-xs text-slate-400 mt-1">فرمت‌های مجاز: PDF، Word، Excel، تصاویر داکیومنت و زیپ.</p>
-                </div>
-
-                <div className="pt-4 border-t border-slate-100 flex justify-end">
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="bg-slate-900 text-white font-medium px-6 py-2.5 rounded-xl hover:bg-slate-800 transition-colors cursor-pointer flex items-center gap-2 disabled:opacity-50"
-                  >
-                    {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                    <span>ثبت نهایی گزارش</span>
-                  </button>
-                </div>
+                    <div className="pt-4 border-t border-slate-100 flex justify-end">
+                      <button
+                        type="submit"
+                        disabled={loading}
+                        className="bg-slate-900 text-white font-medium px-6 py-2.5 rounded-xl hover:bg-slate-800 transition-colors cursor-pointer flex items-center gap-2 disabled:opacity-50"
+                      >
+                        {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                        <span>ثبت نهایی گزارش</span>
+                      </button>
+                    </div>
+                  </>
+                )}
               </form>
             )}
           </div>
@@ -1148,44 +1450,43 @@ export default function App() {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-500 mb-1">بر اساس پروژه</label>
-                <select
+                <CustomSelect
                   value={myProjFilter}
-                  onChange={(e) => setMyProjFilter(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-2 py-1.5 text-xs focus:outline-none"
-                >
-                  <option value="all">همه پروژه‌ها</option>
-                  {projects.map((p) => (
-                    <option key={p.id} value={p.id.toString()}>
-                      {p.title}
-                    </option>
-                  ))}
-                </select>
+                  onChange={setMyProjFilter}
+                  options={[
+                    { value: "all", label: "همه پروژه‌ها" },
+                    ...projects.map((p) => ({
+                      value: p.id.toString(),
+                      label: p.title
+                    }))
+                  ]}
+                />
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-500 mb-1">نوع گزارش</label>
-                <select
+                <CustomSelect
                   value={myTypeFilter}
-                  onChange={(e) => setMyTypeFilter(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-2 py-1.5 text-xs focus:outline-none"
-                >
-                  <option value="all">همه انواع</option>
-                  <option value="weekly">هفتگی</option>
-                  <option value="monthly">ماهانه</option>
-                </select>
+                  onChange={setMyTypeFilter}
+                  options={[
+                    { value: "all", label: "همه انواع" },
+                    { value: "weekly", label: "هفتگی" },
+                    { value: "monthly", label: "ماهانه" }
+                  ]}
+                />
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-500 mb-1">وضعیت ددلاین</label>
-                <select
+                <CustomSelect
                   value={myStatusFilter}
-                  onChange={(e) => setMyStatusFilter(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-2 py-1.5 text-xs focus:outline-none"
-                >
-                  <option value="all">همه وضعیت‌ها</option>
-                  <option value="submitted">ثبت‌شده</option>
-                  <option value="late">تأخیری</option>
-                </select>
+                  onChange={setMyStatusFilter}
+                  options={[
+                    { value: "all", label: "همه وضعیت‌ها" },
+                    { value: "submitted", label: "ثبت‌شده" },
+                    { value: "late", label: "تأخیری" }
+                  ]}
+                />
               </div>
             </div>
 
@@ -1267,12 +1568,26 @@ export default function App() {
                       )}
 
                       <div className="flex justify-end pt-2 border-t border-slate-100">
-                        <button
-                          onClick={() => handleOpenEditReport(rep)}
-                          className="text-xs bg-slate-900 text-white hover:bg-slate-800 px-4 py-1.5 rounded-xl transition-all cursor-pointer font-medium"
-                        >
-                          ویرایش و به‌روزرسانی گزارش
-                        </button>
+                        {(() => {
+                          const now = new Date();
+                          const periodEnd = new Date(rep.period_end);
+                          const gracePeriod = new Date(periodEnd.getTime() + 2 * 24 * 60 * 60 * 1000);
+                          const isEditable = now <= gracePeriod;
+
+                          return isEditable ? (
+                            <button
+                              onClick={() => handleOpenEditReport(rep)}
+                              className="text-xs bg-slate-900 text-white hover:bg-slate-800 px-4 py-1.5 rounded-xl transition-all cursor-pointer font-medium"
+                            >
+                              ویرایش و به‌روزرسانی گزارش
+                            </button>
+                          ) : (
+                            <span className="text-xs text-slate-400 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5 font-medium">
+                              <Clock className="w-3.5 h-3.5" />
+                              <span>مهلت ویرایش گزارش پایان یافته است</span>
+                            </span>
+                          );
+                        })()}
                       </div>
                     </div>
                   ))}
@@ -1319,13 +1634,59 @@ export default function App() {
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
-                        <label className="block text-slate-700 text-xs font-semibold mb-1">اقدامات آتی</label>
-                        <textarea
-                          value={editNextActions}
-                          onChange={(e) => setEditNextActions(e.target.value)}
-                          rows={3}
-                          className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none"
-                        />
+                        <label className="block text-slate-700 text-xs font-semibold mb-1 flex justify-between items-center">
+                          <span>اقدامات آتی (شرح برنامه + تخمین زمان)</span>
+                          <button
+                            type="button"
+                            onClick={() => setEditNextActionsList([...editNextActionsList, { action: "", estimation: "" }])}
+                            className="text-[10px] text-blue-600 hover:text-blue-700 font-semibold cursor-pointer flex items-center gap-0.5"
+                          >
+                            <Plus className="w-3 h-3" />
+                            <span>افزودن اقدام</span>
+                          </button>
+                        </label>
+
+                        <div className="space-y-2 max-h-32 overflow-y-auto pr-1">
+                          {editNextActionsList.map((item, index) => (
+                            <div key={index} className="flex gap-1.5 items-center">
+                              <input
+                                type="text"
+                                required
+                                value={item.action}
+                                onChange={(e) => {
+                                  const newList = [...editNextActionsList];
+                                  newList[index].action = e.target.value;
+                                  setEditNextActionsList(newList);
+                                }}
+                                placeholder="شرح اقدام..."
+                                className="flex-1 bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-[10px] focus:outline-none"
+                              />
+                              <input
+                                type="text"
+                                required
+                                value={item.estimation}
+                                onChange={(e) => {
+                                  const newList = [...editNextActionsList];
+                                  newList[index].estimation = e.target.value;
+                                  setEditNextActionsList(newList);
+                                }}
+                                placeholder="تخمین (مثلاً ۲ روز)..."
+                                className="w-24 bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-[10px] text-center focus:outline-none"
+                              />
+                              {editNextActionsList.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditNextActionsList(editNextActionsList.filter((_, i) => i !== index));
+                                  }}
+                                  className="text-red-500 hover:bg-red-50 p-1 rounded cursor-pointer"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
                       </div>
 
                       <div>
@@ -1421,66 +1782,63 @@ export default function App() {
             <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 grid grid-cols-1 md:grid-cols-4 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-500 mb-1">انتخاب بازه گزارش‌دهی</label>
-                <select
+                <CustomSelect
                   value={dashPeriodId}
-                  onChange={(e) => setDashPeriodId(parseInt(e.target.value))}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-slate-950"
-                >
-                  <option value={0}>-- انتخاب بازه --</option>
-                  {periods.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.title} ({p.report_type === "weekly" ? "هفتگی" : "ماهانه"})
-                    </option>
-                  ))}
-                </select>
+                  onChange={(val) => setDashPeriodId(Number(val))}
+                  options={[
+                    { value: 0, label: "-- انتخاب بازه --" },
+                    ...periods.map((p) => ({
+                      value: p.id,
+                      label: `${p.title} (${p.report_type === "weekly" ? "هفتگی" : "ماهانه"})`
+                    }))
+                  ]}
+                />
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-500 mb-1">فیلتر پروژه</label>
-                <select
+                <CustomSelect
                   value={dashProjId}
-                  onChange={(e) => setDashProjId(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-2 py-1.5 text-xs focus:outline-none"
-                >
-                  <option value="all">همه پروژه‌ها</option>
-                  {projects.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.title}
-                    </option>
-                  ))}
-                </select>
+                  onChange={setDashProjId}
+                  options={[
+                    { value: "all", label: "همه پروژه‌ها" },
+                    ...projects.map((p) => ({
+                      value: String(p.id),
+                      label: p.title
+                    }))
+                  ]}
+                />
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-500 mb-1">فیلتر پرسنل</label>
-                <select
+                <CustomSelect
                   value={dashUserId}
-                  onChange={(e) => setDashUserId(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-2 py-1.5 text-xs focus:outline-none"
-                >
-                  <option value="all">همه کاربران</option>
-                  {users
-                    .filter((u) => u.role === "user")
-                    .map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.full_name}
-                      </option>
-                    ))}
-                </select>
+                  onChange={setDashUserId}
+                  options={[
+                    { value: "all", label: "همه کاربران" },
+                    ...users
+                      .filter((u) => u.role === "user")
+                      .map((u) => ({
+                        value: String(u.id),
+                        label: u.full_name
+                      }))
+                  ]}
+                />
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-500 mb-1">وضعیت دلیوری</label>
-                <select
+                <CustomSelect
                   value={dashStatusFilter}
-                  onChange={(e) => setDashStatusFilter(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-2 py-1.5 text-xs focus:outline-none"
-                >
-                  <option value="all">همه وضعیت‌ها</option>
-                  <option value="submitted">ثبت‌شده</option>
-                  <option value="late">تأخیری</option>
-                  <option value="missing">ثبت‌نشده</option>
-                </select>
+                  onChange={setDashStatusFilter}
+                  options={[
+                    { value: "all", label: "همه وضعیت‌ها" },
+                    { value: "submitted", label: "ثبت‌شده" },
+                    { value: "late", label: "تأخیری" },
+                    { value: "missing", label: "ثبت‌نشده" }
+                  ]}
+                />
               </div>
             </div>
 
@@ -1489,28 +1847,28 @@ export default function App() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
                 <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-200">
                   <span className="text-slate-400 text-xs font-medium">مورد انتظار کل</span>
-                  <div className="text-2xl font-bold mt-1 text-slate-900 font-mono">{dashSummary.total_expected} مورد</div>
+                  <div className="text-2xl font-bold mt-1 text-slate-900">{toPersianDigits(dashSummary.total_expected)} مورد</div>
                 </div>
 
                 <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 border-r-4 border-r-green-500">
                   <span className="text-slate-400 text-xs font-medium">ثبت‌شده به موقع</span>
-                  <div className="text-2xl font-bold mt-1 text-green-600 font-mono">{dashSummary.submitted_count} مورد</div>
+                  <div className="text-2xl font-bold mt-1 text-green-600">{toPersianDigits(dashSummary.submitted_count)} مورد</div>
                 </div>
 
                 <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 border-r-4 border-r-orange-500">
                   <span className="text-slate-400 text-xs font-medium">ثبت‌شده با تأخیر</span>
-                  <div className="text-2xl font-bold mt-1 text-orange-600 font-mono">{dashSummary.late_count} مورد</div>
+                  <div className="text-2xl font-bold mt-1 text-orange-600">{toPersianDigits(dashSummary.late_count)} مورد</div>
                 </div>
 
                 <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 border-r-4 border-r-red-500">
                   <span className="text-slate-400 text-xs font-medium">اقدام نشده (مفقود)</span>
-                  <div className="text-2xl font-bold mt-1 text-red-600 font-mono">{dashSummary.missing_count} مورد</div>
+                  <div className="text-2xl font-bold mt-1 text-red-600">{toPersianDigits(dashSummary.missing_count)} مورد</div>
                 </div>
               </div>
             )}
 
             {/* AI Summary Block */}
-            <div className="bg-gradient-to-br from-indigo-550 to-purple-650 bg-slate-900 rounded-3xl p-6 text-white shadow-xl space-y-4">
+            <div className="bg-gradient-to-br from-slate-800 to-slate-950 border border-slate-700/30 rounded-3xl p-6 text-white shadow-xl space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Sparkles className="w-5 h-5 text-amber-300 animate-pulse" />
@@ -1776,8 +2134,8 @@ export default function App() {
                       <div className="space-y-1.5 max-w-[70%]">
                         <div className="flex items-center gap-2">
                           <span className="font-bold text-slate-900 text-sm">{proj.title}</span>
-                          <code className="bg-slate-100 px-1.5 py-0.5 rounded font-mono text-[10px] font-semibold text-slate-500">
-                            {proj.code}
+                          <code className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold text-slate-500">
+                            {toPersianDigits(proj.code)}
                           </code>
                         </div>
                         <p className="text-slate-500 leading-relaxed text-xs">{proj.description || "بدون توضیحات."}</p>
@@ -1794,7 +2152,7 @@ export default function App() {
                           {proj.is_active ? "فعال" : "غیرفعال"}
                         </span>
 
-                        <button
+                         <button
                           onClick={() => handleToggleProjectStatus(proj)}
                           className={`font-bold px-3 py-1 rounded-xl cursor-pointer ${
                             proj.is_active
@@ -1803,6 +2161,21 @@ export default function App() {
                           }`}
                         >
                           {proj.is_active ? "غیرفعال‌سازی" : "فعال‌سازی"}
+                        </button>
+
+                        <button
+                          onClick={() => handleOpenEditProject(proj)}
+                          className="font-bold px-3 py-1 rounded-xl cursor-pointer text-blue-600 bg-blue-50 hover:bg-blue-100 flex items-center gap-1"
+                        >
+                          <span>ویرایش</span>
+                        </button>
+
+                        <button
+                          onClick={() => handleDeleteProject(proj.id)}
+                          className="font-bold px-3 py-1 rounded-xl cursor-pointer text-red-600 bg-red-50 hover:bg-red-100 flex items-center gap-1"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>حذف</span>
                         </button>
                       </div>
                     </div>
@@ -1824,72 +2197,9 @@ export default function App() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {deadlineSettings.map((dl) => {
-                const daysOfWeek = ["شنبه", "یک‌شنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه"];
-                return (
-                  <div key={dl.id} className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4">
-                    <h3 className="font-bold text-slate-950 border-b border-slate-100 pb-2">
-                      ددلاین {dl.report_type === "weekly" ? "گزارش‌های هفتگی" : "گزارش‌های ماهانه"}
-                    </h3>
-
-                    <div className="space-y-4 text-xs">
-                      {dl.report_type === "weekly" ? (
-                        <div>
-                          <label className="block text-slate-600 font-medium mb-1.5">روز ددلاین در هفته</label>
-                          <select
-                            defaultValue={dl.deadline_day}
-                            id={`dl-day-${dl.id}`}
-                            className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2"
-                          >
-                            {daysOfWeek.map((day, index) => (
-                              <option key={index} value={index}>
-                                {day}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      ) : (
-                        <div>
-                          <label className="block text-slate-600 font-medium mb-1.5">روز ددلاین در ماه</label>
-                          <input
-                            type="number"
-                            min={1}
-                            max={31}
-                            id={`dl-day-${dl.id}`}
-                            defaultValue={dl.deadline_day}
-                            className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-left"
-                          />
-                        </div>
-                      )}
-
-                      <div>
-                        <label className="block text-slate-600 font-medium mb-1.5">ساعت دقیق سررسید ددلاین</label>
-                        <input
-                          type="time"
-                          id={`dl-time-${dl.id}`}
-                          defaultValue={dl.deadline_time}
-                          className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-left"
-                        />
-                      </div>
-
-                      <div className="pt-2">
-                        <button
-                          onClick={() => {
-                            const dayInput = document.getElementById(`dl-day-${dl.id}`) as HTMLSelectElement | HTMLInputElement;
-                            const timeInput = document.getElementById(`dl-time-${dl.id}`) as HTMLInputElement;
-                            if (dayInput && timeInput) {
-                              handleUpdateDeadline(dl.id, parseInt(dayInput.value), timeInput.value);
-                            }
-                          }}
-                          className="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium py-2 rounded-xl text-xs cursor-pointer text-center"
-                        >
-                          ذخیره تنظیمات ددلاین
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+              {deadlineSettings.map((dl) => (
+                <DeadlineCard key={dl.id} dl={dl} onUpdate={handleUpdateDeadline} />
+              ))}
             </div>
           </div>
         )}
@@ -1935,14 +2245,14 @@ export default function App() {
 
                   <div>
                     <label className="block text-slate-700 text-xs font-semibold mb-1">نقش دسترسی کاربر</label>
-                    <select
+                    <CustomSelect
                       value={newUserRole}
-                      onChange={(e) => setNewUserRole(e.target.value as "user" | "manager")}
-                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs"
-                    >
-                      <option value="user">کاربر عادی (پرسنل)</option>
-                      <option value="manager">مدیر سیستم (سرپرست)</option>
-                    </select>
+                      onChange={(val) => setNewUserRole(val as "user" | "manager")}
+                      options={[
+                        { value: "user", label: "کاربر عادی (پرسنل)" },
+                        { value: "manager", label: "مدیر سیستم (سرپرست)" }
+                      ]}
+                    />
                   </div>
 
                   <div>
@@ -2024,6 +2334,23 @@ export default function App() {
                         >
                           بازنشانی رمز
                         </button>
+
+                        <button
+                          onClick={() => handleOpenEditUser(usr)}
+                          className="font-bold px-3 py-1 rounded-xl cursor-pointer text-blue-600 bg-blue-50 hover:bg-blue-100 flex items-center gap-1"
+                        >
+                          <span>ویرایش</span>
+                        </button>
+
+                        {usr.id !== user?.id && (
+                          <button
+                            onClick={() => handleDeleteUser(usr.id)}
+                            className="font-bold px-3 py-1 rounded-xl cursor-pointer text-red-600 bg-red-50 hover:bg-red-100 flex items-center gap-1"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>حذف</span>
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -2062,35 +2389,29 @@ export default function App() {
 
                   <div>
                     <label className="block text-slate-700 text-xs font-semibold mb-1">نوع دوره گزارش‌دهی</label>
-                    <select
+                    <CustomSelect
                       value={newPeriodType}
-                      onChange={(e) => setNewPeriodType(e.target.value as "weekly" | "monthly")}
-                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs"
-                    >
-                      <option value="weekly">هفتگی</option>
-                      <option value="monthly">ماهانه</option>
-                    </select>
+                      onChange={(val) => setNewPeriodType(val as "weekly" | "monthly")}
+                      options={[
+                        { value: "weekly", label: "هفتگی" },
+                        { value: "monthly", label: "ماهانه" }
+                      ]}
+                    />
                   </div>
 
                   <div>
                     <label className="block text-slate-700 text-xs font-semibold mb-1">تاریخ شروع دوره</label>
-                    <input
-                      type="date"
-                      required
+                    <ShamsiDatePicker
                       value={newPeriodStart}
-                      onChange={(e) => setNewPeriodStart(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs text-left"
+                      onChange={setNewPeriodStart}
                     />
                   </div>
 
                   <div>
                     <label className="block text-slate-700 text-xs font-semibold mb-1">تاریخ پایان دوره</label>
-                    <input
-                      type="date"
-                      required
+                    <ShamsiDatePicker
                       value={newPeriodEnd}
-                      onChange={(e) => setNewPeriodEnd(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs text-left"
+                      onChange={setNewPeriodEnd}
                     />
                   </div>
 
@@ -2118,7 +2439,7 @@ export default function App() {
                         <div className="flex items-center gap-3 text-xs text-slate-400 mt-1">
                           <span>نوع: {pe.report_type === "weekly" ? "هفتگی" : "ماهانه"}</span>
                           <span>•</span>
-                          <span>بازه: {pe.period_start} تا {pe.period_end}</span>
+                          <span>بازه: {formatToShamsi(pe.period_start)} تا {formatToShamsi(pe.period_end)}</span>
                         </div>
                       </div>
 
@@ -2143,6 +2464,21 @@ export default function App() {
                         >
                           {pe.is_open ? "بستن بازه" : "باز کردن مجدد"}
                         </button>
+
+                        <button
+                          onClick={() => handleOpenEditPeriod(pe)}
+                          className="font-bold px-3 py-1 rounded-xl cursor-pointer text-blue-600 bg-blue-50 hover:bg-blue-100 flex items-center gap-1"
+                        >
+                          <span>ویرایش</span>
+                        </button>
+
+                        <button
+                          onClick={() => handleDeletePeriod(pe.id)}
+                          className="font-bold px-3 py-1 rounded-xl cursor-pointer text-red-600 bg-red-50 hover:bg-red-100 flex items-center gap-1"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>حذف</span>
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -2163,22 +2499,21 @@ export default function App() {
             </div>
 
             <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-6">
-              <div>
+              <div className="w-full md:w-80">
                 <label className="block text-slate-700 text-sm font-semibold mb-2">انتخاب پرسنل جهت تخصیص</label>
-                <select
+                <CustomSelect
                   value={allocUserId}
-                  onChange={(e) => setAllocUserId(parseInt(e.target.value))}
-                  className="w-full md:w-80 bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-slate-950"
-                >
-                  <option value={0}>-- انتخاب کنید --</option>
-                  {users
-                    .filter((u) => u.role === "user")
-                    .map((usr) => (
-                      <option key={usr.id} value={usr.id}>
-                        {usr.full_name} (@{usr.username})
-                      </option>
-                    ))}
-                </select>
+                  onChange={(val) => setAllocUserId(Number(val))}
+                  options={[
+                    { value: 0, label: "-- انتخاب کنید --" },
+                    ...users
+                      .filter((u) => u.role === "user")
+                      .map((usr) => ({
+                        value: usr.id,
+                        label: `${usr.full_name} (@${usr.username})`
+                      }))
+                  ]}
+                />
               </div>
 
               {allocUserId !== 0 ? (
@@ -2233,7 +2568,183 @@ export default function App() {
             </div>
           </div>
         )}
-      </main>
-    </div>
+            {/* Edit Project Modal */}
+            {editingProject && (
+              <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl border border-slate-200">
+                  <div className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center rounded-t-3xl">
+                    <h3 className="font-bold">ویرایش اطلاعات پروژه</h3>
+                    <button onClick={() => setEditingProject(null)} className="p-1 hover:bg-white/10 rounded-full cursor-pointer text-white">
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+                  <form onSubmit={handleUpdateProject} className="p-6 space-y-4">
+                    <div>
+                      <label className="block text-slate-700 text-xs font-semibold mb-1">کد یونیک پروژه</label>
+                      <input
+                        type="text"
+                        required
+                        value={editProjCode}
+                        onChange={(e) => setEditProjCode(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-700 text-xs font-semibold mb-1">عنوان کامل پروژه</label>
+                      <input
+                        type="text"
+                        required
+                        value={editProjTitle}
+                        onChange={(e) => setEditProjTitle(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-700 text-xs font-semibold mb-1">توضیحات و اهداف کلان</label>
+                      <textarea
+                        value={editProjDesc}
+                        onChange={(e) => setEditProjDesc(e.target.value)}
+                        rows={3}
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none"
+                      />
+                    </div>
+                    <div className="flex gap-3 pt-2">
+                      <button
+                        type="submit"
+                        className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl py-2 text-xs cursor-pointer"
+                      >
+                        ذخیره تغییرات
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingProject(null)}
+                        className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-xl py-2 text-xs cursor-pointer"
+                      >
+                        انصراف
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
+            {/* Edit User Modal */}
+            {editingUser && (
+              <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl border border-slate-200">
+                  <div className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center rounded-t-3xl">
+                    <h3 className="font-bold">ویرایش اطلاعات کاربر</h3>
+                    <button onClick={() => setEditingUser(null)} className="p-1 hover:bg-white/10 rounded-full cursor-pointer text-white">
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+                  <form onSubmit={handleUpdateUser} className="p-6 space-y-4">
+                    <div>
+                      <label className="block text-slate-700 text-xs font-semibold mb-1">نام و نام خانوادگی</label>
+                      <input
+                        type="text"
+                        required
+                        value={editUserFullName}
+                        onChange={(e) => setEditUserFullName(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-700 text-xs font-semibold mb-1">نام کاربری</label>
+                      <input
+                        type="text"
+                        required
+                        value={editUserUsername}
+                        onChange={(e) => setEditUserUsername(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none text-left"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-700 text-xs font-semibold mb-1">نوع سطح دسترسی</label>
+                      <CustomSelect
+                        value={editUserRole}
+                        onChange={(val) => setEditUserRole(val as "user" | "manager")}
+                        options={[
+                          { value: "user", label: "کارشناس عادی" },
+                          { value: "manager", label: "مدیر سیستم (سرپرست)" }
+                        ]}
+                      />
+                    </div>
+                    <div className="flex gap-3 pt-2">
+                      <button
+                        type="submit"
+                        className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl py-2 text-xs cursor-pointer"
+                      >
+                        ذخیره تغییرات
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingUser(null)}
+                        className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-xl py-2 text-xs cursor-pointer"
+                      >
+                        انصراف
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
+            {/* Edit Period Modal */}
+            {editingPeriod && (
+              <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl border border-slate-200">
+                  <div className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center rounded-t-3xl">
+                    <h3 className="font-bold">ویرایش بازه گزارش‌دهی</h3>
+                    <button onClick={() => setEditingPeriod(null)} className="p-1 hover:bg-white/10 rounded-full cursor-pointer text-white">
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+                  <form onSubmit={handleUpdatePeriod} className="p-6 space-y-4">
+                    <div>
+                      <label className="block text-slate-700 text-xs font-semibold mb-1">عنوان بازه (فارسی)</label>
+                      <input
+                        type="text"
+                        required
+                        value={editPeriodTitle}
+                        onChange={(e) => setEditPeriodTitle(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-700 text-xs font-semibold mb-1">تاریخ شروع دوره</label>
+                      <ShamsiDatePicker
+                        value={editPeriodStart}
+                        onChange={setEditPeriodStart}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-700 text-xs font-semibold mb-1">تاریخ پایان دوره</label>
+                      <ShamsiDatePicker
+                        value={editPeriodEnd}
+                        onChange={setEditPeriodEnd}
+                      />
+                    </div>
+                    <div className="flex gap-3 pt-2">
+                      <button
+                        type="submit"
+                        className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl py-2 text-xs cursor-pointer"
+                      >
+                        ذخیره تغییرات
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingPeriod(null)}
+                        className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-xl py-2 text-xs cursor-pointer"
+                      >
+                        انصراف
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+          </main>
+        </div>
   );
 }

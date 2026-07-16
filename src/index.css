@@ -4,6 +4,32 @@
 @theme {
   --font-sans: "Vazirmatn", "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Forest Green Palette overriding default Slate colors */
+  --color-slate-50: #f4f8f5;
+  --color-slate-100: #e4ede7;
+  --color-slate-200: #c8dbcf;
+  --color-slate-300: #a3c1ad;
+  --color-slate-400: #7aa388;
+  --color-slate-500: #548464;
+  --color-slate-600: #41674d;
+  --color-slate-700: #34523e;
+  --color-slate-800: #1c3325;
+  --color-slate-900: #0f2116;
+  --color-slate-950: #08120b;
+
+  /* Gold Accent Palette overriding default Blue colors */
+  --color-blue-50: #fffdf0;
+  --color-blue-100: #fdfae1;
+  --color-blue-200: #faf0b5;
+  --color-blue-300: #f6de7c;
+  --color-blue-400: #f1c748;
+  --color-blue-500: #e5af25;
+  --color-blue-600: #cf9f2d; /* Rich brand gold */
+  --color-blue-700: #a17012;
+  --color-blue-800: #7f5512;
+  --color-blue-900: #684513;
+  --color-blue-950: #3c2407;
 }
 
 /* Custom RTL-friendly animations and styles */
