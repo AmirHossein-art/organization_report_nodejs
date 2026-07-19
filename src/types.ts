@@ -44,6 +44,13 @@ export interface ReportFile {
   created_at: string;
 }
 
+export interface NextAction {
+  id: number;
+  report_id: number;
+  action_text: string;
+  target_date: string; // تاریخ به صورت رشته متنی "YYYY-MM-DD" از API می‌آید
+}
+
 export interface Report {
   id: number;
   user_id: number;
@@ -58,11 +65,11 @@ export interface Report {
   period_end: string;
   activities_done: string;
   results_achieved: string;
-  next_actions: string;
   kpi_text: string;
   status: "submitted" | "late";
   submitted_at: string;
   files: ReportFile[];
+  nextActions?: NextAction[];
 }
 
 export interface DeadlineSetting {

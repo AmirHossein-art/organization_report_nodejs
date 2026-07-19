@@ -93,18 +93,17 @@ model ReportFile {
 model Report {
   id               Int          @id @default(autoincrement())
   user_id          Int
-  user_full_name   String       // برای ذخیره نام کاربر در لحظه ثبت گزارش
+  user_full_name   String
   user_username    String
   project_id       Int
-  project_title    String       // برای ذخیره نام پروژه در لحظه ثبت گزارش
+  project_title    String      
   report_type      ReportType
   period_id        Int
   period_title     String
   period_start     DateTime
   period_end       DateTime
-  activities_done  String       @db.Text // استفاده از نوع متن طولانی در دیتابیس
+  activities_done  String       @db.Text
   results_achieved String       @db.Text
-  next_actions     String       @db.Text
   kpi_text         String       @db.Text
   status           ReportStatus
   submitted_at     DateTime     @default(now())
@@ -113,6 +112,18 @@ model Report {
   project Project      @relation(fields: [project_id], references: [id], onDelete: Cascade)
   period  ReportPeriod @relation(fields: [period_id], references: [id], onDelete: Cascade)
   files   ReportFile[]
+
+  nextActions      NextAction[]
+}
+
+// مدل جدید برای اقدامات آتی با تاریخ سررسید اجباری
+model NextAction {
+  id          Int      @id @default(autoincrement())
+  report_id   Int
+  action_text String   @db.Text
+  target_date DateTime // ذخیره دقیق تاریخ سررسید به جای رشته متنی
+
+  report      Report   @relation(fields: [report_id], references: [id], onDelete: Cascade)
 }
 
 // ۷. جدول تنظیمات ددلاین‌ها
