@@ -119,6 +119,33 @@ function serializeReport(report: any) {
   };
 }
 
+// 🔮 تابع محاسباتی ددلاین هوشمند بر اساس تنظیمات مدیریتی دیتابیس
+function getDeadlineDate(periodEnd: Date, deadlineDay: number, deadlineTime: string, reportType: "weekly" | "monthly"): Date {
+  const deadlineDate = new Date(periodEnd);
+  
+  if (reportType === "weekly") {
+    // در جاوااسکریپت: 0 = یکشنبه، 1 = دوشنبه، ...، 6 = شنبه
+    // حرکت رو به جلو از فردای پایان دوره برای پیدا کردن روز ددلاین مشخص شده
+    deadlineDate.setDate(deadlineDate.getDate() + 1);
+    while (deadlineDate.getDay() !== deadlineDay) {
+      deadlineDate.setDate(deadlineDate.getDate() + 1);
+    }
+  } else {
+    // گزارش ماهانه: deadlineDay عدد روز از ماه است (مثلاً 5 برای پنجم ماه بعد)
+    // اگر عدد روز ددلاین کوچک‌تر یا مساوی روز پایان دوره باشد، یعنی مربوط به ماه بعد است
+    if (deadlineDay <= periodEnd.getDate()) {
+      deadlineDate.setMonth(deadlineDate.getMonth() + 1);
+    }
+    deadlineDate.setDate(deadlineDay);
+  }
+
+  // اعمال فرمت ساعت و دقیقه "HH:MM" تنظیم شده توسط مدیر
+  const [hours, minutes] = deadlineTime.split(":").map(Number);
+  deadlineDate.setHours(hours || 0, minutes || 0, 0, 0);
+  
+  return deadlineDate;
+}
+
 function formatNextActionsForPrompt(nextActions: any[] | undefined): string {
   if (!Array.isArray(nextActions) || nextActions.length === 0) {
     return "ثبت نشده";
@@ -665,12 +692,21 @@ app.post("/api/reports", upload.array("files"), async (req, res) => {
     if (deadline) {
       try {
         const now = new Date();
-        const periodEnd = new Date(period.period_end);
-        const gracePeriod = new Date(periodEnd.getTime() + 2 * 24 * 60 * 60 * 1000); // 2 days after period ends
-        if (now > gracePeriod) {
+        // محاسبه ددلاین واقعی با تابع جدید
+        const deadlineDate = getDeadlineDate(
+          new Date(period.period_end),
+          deadline.deadline_day,
+          deadline.deadline_time,
+          report_type as "weekly" | "monthly"
+        );
+        
+        // اگر زمان فعلی از ددلاین گذشته باشد، گزارش تأخیری ثبت می‌شود
+        if (now > deadlineDate) {
           status = "late";
         }
-      } catch (_) {}
+      } catch (err) {
+        console.error("Error calculating dynamic deadline for POST:", err);
+      }
     }
 
     const uploadedFiles = req.files && Array.isArray(req.files) ? req.files : [];
@@ -731,11 +767,23 @@ app.put("/api/reports/:id", upload.array("files"), async (req, res) => {
 
     const period = await prisma.reportPeriod.findUnique({ where: { id: existingReport.period_id } });
     if (period) {
-      const now = new Date();
-      const periodEnd = new Date(period.period_end);
-      const gracePeriod = new Date(periodEnd.getTime() + 2 * 24 * 60 * 60 * 1000);
-      if (now > gracePeriod) {
-        return res.status(400).json({ error: "مهلت ویرایش این گزارش به پایان رسیده است." });
+      const deadline = await prisma.deadlineSetting.findFirst({
+        where: { report_type: existingReport.report_type as any }
+      });
+      
+      if (deadline) {
+        const now = new Date();
+        // محاسبه ددلاین واقعی بر اساس نوع گزارش ثبت‌شده
+        const deadlineDate = getDeadlineDate(
+          new Date(period.period_end),
+          deadline.deadline_day,
+          deadline.deadline_time,
+          existingReport.report_type as "weekly" | "monthly"
+        );
+        
+        if (now > deadlineDate) {
+          return res.status(400).json({ error: "مهلت ویرایش این گزارش به پایان رسیده است." });
+        }
       }
     }
 
