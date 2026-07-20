@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import { User, Project, ReportPeriod, Report, DeadlineSetting } from "./types";
 import Sidebar from "./components/Sidebar";
+import Login from "./views/Login";
 
 // وارد کردن تمام ویوهای ماژولار (که در پوشه views می‌سازیم)
 import HomeDashboard from "./views/HomeDashboard";
@@ -62,8 +63,15 @@ export default function App() {
   };
 
   if (!user) {
-    // اینجا فرم لاگین قدیمی‌ات را که در App.old.tsx داری قرار می‌دهی
-    return <p className="text-center p-10">لطفاً وارد شوید...</p>; 
+    return (
+      <Login 
+        onLoginSuccess={(loggedInUser) => {
+          setUser(loggedInUser);
+          localStorage.setItem("org_report_user", JSON.stringify(loggedInUser));
+          setCurrentView("home");
+        }} 
+      />
+    );
   }
 
   return (
