@@ -53,6 +53,79 @@ const upload = multer({
 
 // -----------------------------
 
+type NextActionInput = {
+  action_text: string;
+  target_date: string;
+};
+
+class NextActionsValidationError extends Error {}
+
+function parseNextActions(rawNextActions: unknown): { action_text: string; target_date: Date }[] {
+  if (rawNextActions === undefined || rawNextActions === null || rawNextActions === "") {
+    return [];
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = typeof rawNextActions === "string" ? JSON.parse(rawNextActions) : rawNextActions;
+  } catch {
+    throw new NextActionsValidationError("ساختار JSON اقدامات آتی معتبر نیست.");
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new NextActionsValidationError("ساختار اقدامات آتی باید آرایه JSON باشد.");
+  }
+
+  return parsed.map((item: NextActionInput, index: number) => {
+    const actionText = typeof item?.action_text === "string" ? item.action_text.trim() : "";
+    const targetDate = typeof item?.target_date === "string" ? item.target_date : "";
+
+    if (!actionText || !/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
+      throw new NextActionsValidationError(`اقدام آتی شماره ${index + 1} شرح یا تاریخ معتبر ندارد.`);
+    }
+
+    const date = new Date(`${targetDate}T00:00:00.000Z`);
+    if (Number.isNaN(date.getTime())) {
+      throw new NextActionsValidationError(`تاریخ اقدام آتی شماره ${index + 1} معتبر نیست.`);
+    }
+
+    return {
+      action_text: actionText,
+      target_date: date,
+    };
+  });
+}
+
+function serializeReport(report: any) {
+  return {
+    ...report,
+    period_start: report.period_start.toISOString().split("T")[0],
+    period_end: report.period_end.toISOString().split("T")[0],
+    submitted_at: report.submitted_at.toISOString(),
+    nextActions: Array.isArray(report.nextActions)
+      ? report.nextActions.map((action: any) => ({
+          ...action,
+          target_date: action.target_date.toISOString().split("T")[0],
+        }))
+      : report.nextActions,
+  };
+}
+
+function formatNextActionsForPrompt(nextActions: any[] | undefined): string {
+  if (!Array.isArray(nextActions) || nextActions.length === 0) {
+    return "ثبت نشده";
+  }
+
+  return nextActions
+    .map((action) => {
+      const targetDate = action.target_date instanceof Date
+        ? action.target_date.toISOString().split("T")[0]
+        : String(action.target_date || "").split("T")[0];
+      return `- ${action.action_text} (تاریخ هدف: ${targetDate})`;
+    })
+    .join("\n");
+}
+
 // -----------------------------
 // API ENDPOINTS
 // -----------------------------
@@ -466,15 +539,10 @@ app.put("/api/deadline-settings/:id", async (req, res) => {
 app.get("/api/reports", async (req, res) => {
   try {
     const reports = await prisma.report.findMany({
-      include: { files: true },
+      include: { files: true, nextActions: true },
       orderBy: { id: "desc" }
     });
-    res.json(reports.map(r => ({
-      ...r,
-      period_start: r.period_start.toISOString().split("T")[0],
-      period_end: r.period_end.toISOString().split("T")[0],
-      submitted_at: r.submitted_at.toISOString()
-    })));
+    res.json(reports.map(serializeReport));
   } catch (error) {
     console.error("Error fetching reports:", error);
     res.status(500).json({ error: "خطا در دریافت گزارش‌ها از دیتابیس" });
@@ -493,6 +561,7 @@ app.post("/api/reports", upload.array("files"), async (req, res) => {
       next_actions,
       kpi_text,
     } = req.body;
+    const parsedNextActions = parseNextActions(next_actions);
 
     const user = await prisma.user.findUnique({ where: { id: parseInt(user_id) } });
     const project = await prisma.project.findUnique({ where: { id: parseInt(project_id) } });
@@ -531,6 +600,7 @@ app.post("/api/reports", upload.array("files"), async (req, res) => {
       } catch (_) {}
     }
 
+    const uploadedFiles = req.files && Array.isArray(req.files) ? req.files : [];
     const newReport = await prisma.report.create({
       data: {
         user_id: user.id,
@@ -545,38 +615,32 @@ app.post("/api/reports", upload.array("files"), async (req, res) => {
         period_end: period.period_end,
         activities_done,
         results_achieved,
-        next_actions,
         kpi_text,
         status: status as any,
-      }
+        nextActions: parsedNextActions.length
+          ? {
+              create: parsedNextActions,
+            }
+          : undefined,
+        files: uploadedFiles.length
+          ? {
+              create: uploadedFiles.map((file) => ({
+                filename: file.filename,
+                original_filename: file.originalname,
+                file_size: file.size,
+              })),
+            }
+          : undefined,
+      },
+      include: { files: true, nextActions: true }
     });
 
-    // Process uploaded files if any
-    const reportFilesList: any[] = [];
-    if (req.files && Array.isArray(req.files)) {
-      for (const file of req.files) {
-        const rFile = await prisma.reportFile.create({
-          data: {
-            report_id: newReport.id,
-            filename: file.filename,
-            original_filename: file.originalname,
-            file_size: file.size,
-          }
-        });
-        reportFilesList.push(rFile);
-      }
-    }
-
-    res.json({
-      ...newReport,
-      period_start: newReport.period_start.toISOString().split("T")[0],
-      period_end: newReport.period_end.toISOString().split("T")[0],
-      submitted_at: newReport.submitted_at.toISOString(),
-      files: reportFilesList,
-    });
+    res.json(serializeReport(newReport));
   } catch (error) {
     console.error("Error creating report:", error);
-    res.status(500).json({ error: "خطا در ثبت گزارش در دیتابیس" });
+    res.status(error instanceof NextActionsValidationError ? 400 : 500).json({
+      error: error instanceof NextActionsValidationError ? error.message : "خطا در ثبت گزارش در دیتابیس",
+    });
   }
 });
 
@@ -584,6 +648,8 @@ app.put("/api/reports/:id", upload.array("files"), async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const { activities_done, results_achieved, next_actions, kpi_text } = req.body;
+    const shouldUpdateNextActions = next_actions !== undefined;
+    const parsedNextActions = shouldUpdateNextActions ? parseNextActions(next_actions) : [];
 
     const existingReport = await prisma.report.findUnique({ where: { id } });
     if (!existingReport) {
@@ -612,45 +678,60 @@ app.put("/api/reports/:id", upload.array("files"), async (req, res) => {
           if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
         } catch (_) {}
       }
-      await prisma.reportFile.deleteMany({
-        where: { id: { in: deletedIds }, report_id: id }
-      });
     }
 
-    // Handle newly uploaded files
-    if (req.files && Array.isArray(req.files)) {
-      for (const file of req.files) {
-        await prisma.reportFile.create({
-          data: {
+    const deletedFileIds = req.body.deleted_file_ids
+      ? JSON.parse(req.body.deleted_file_ids).map((fid: any) => parseInt(fid))
+      : [];
+    const uploadedFiles = req.files && Array.isArray(req.files) ? req.files : [];
+
+    const updated = await prisma.$transaction(async (tx) => {
+      if (deletedFileIds.length) {
+        await tx.reportFile.deleteMany({
+          where: { id: { in: deletedFileIds }, report_id: id }
+        });
+      }
+
+      if (uploadedFiles.length) {
+        await tx.reportFile.createMany({
+          data: uploadedFiles.map((file) => ({
             report_id: id,
             filename: file.filename,
             original_filename: file.originalname,
             file_size: file.size,
-          }
+          }))
         });
       }
-    }
 
-    const updated = await prisma.report.update({
-      where: { id },
-      data: {
-        activities_done: activities_done !== undefined ? activities_done : undefined,
-        results_achieved: results_achieved !== undefined ? results_achieved : undefined,
-        next_actions: next_actions !== undefined ? next_actions : undefined,
-        kpi_text: kpi_text !== undefined ? kpi_text : undefined,
-      },
-      include: { files: true }
+      if (shouldUpdateNextActions) {
+        await tx.nextAction.deleteMany({ where: { report_id: id } });
+        if (parsedNextActions.length) {
+          await tx.nextAction.createMany({
+            data: parsedNextActions.map((action) => ({
+              report_id: id,
+              ...action,
+            }))
+          });
+        }
+      }
+
+      return tx.report.update({
+        where: { id },
+        data: {
+          activities_done: activities_done !== undefined ? activities_done : undefined,
+          results_achieved: results_achieved !== undefined ? results_achieved : undefined,
+          kpi_text: kpi_text !== undefined ? kpi_text : undefined,
+        },
+        include: { files: true, nextActions: true }
+      });
     });
 
-    res.json({
-      ...updated,
-      period_start: updated.period_start.toISOString().split("T")[0],
-      period_end: updated.period_end.toISOString().split("T")[0],
-      submitted_at: updated.submitted_at.toISOString(),
-    });
+    res.json(serializeReport(updated));
   } catch (error) {
     console.error("Error updating report:", error);
-    res.status(500).json({ error: "خطا در ویرایش گزارش در دیتابیس" });
+    res.status(error instanceof NextActionsValidationError ? 400 : 500).json({
+      error: error instanceof NextActionsValidationError ? error.message : "خطا در ویرایش گزارش در دیتابیس",
+    });
   }
 });
 
@@ -696,7 +777,8 @@ app.post("/api/reports/analyze", async (req, res) => {
 پروژه: ${r.project_title}
 فعالیت‌ها: ${r.activities_done}
 نتایج: ${r.results_achieved}
-اقدامات آتی: ${r.next_actions}
+اقدامات آتی:
+${formatNextActionsForPrompt(r.nextActions)}
 شاخص‌ها: ${r.kpi_text}
 `;
     })

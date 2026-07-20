@@ -51,6 +51,12 @@ export default function MyReports({ projects, allReports, user, onRefresh }: MyR
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingReport) return;
+    const hasInvalidAction = editNextActions.some((action) => !action.action_text.trim() || !action.target_date);
+    if (hasInvalidAction) {
+      alert("لطفاً شرح و تاریخ دقیق برنامه‌ریزی را برای تمامی اقدامات آتی مشخص کنید.");
+      return;
+    }
+
     setLoading(true);
 
     const formData = new FormData();

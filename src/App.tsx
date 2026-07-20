@@ -75,7 +75,7 @@ export default function App() {
       <main className="flex-1 p-6 md:p-8 max-w-7xl mx-auto w-full">
         {currentView === "home" && <HomeDashboard users={users} projects={projects} periods={periods} user={user} />}
         {currentView === "submit_report" && <SubmitReport projects={projects} periods={periods} user={user} onRefresh={fetchData} />}
-        {currentView === "my_reports" && <MyReports projects={projects} allReports={allReports} user={user} />}
+        {currentView === "my_reports" && <MyReports projects={projects} allReports={allReports} user={user} onRefresh={fetchData} />}
         
         {/* روت‌های مدیریتی */}
         {user.role === "manager" && (
