@@ -1,4 +1,4 @@
-import "dotenv/config"; // ۱. اول از همه متغیرهای محیطی لود شوند
+import "dotenv/config";
 import express from "express";
 import path from "path";
 import fs from "fs";
@@ -6,6 +6,13 @@ import cors from "cors";
 import multer from "multer";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
+
+import bcrypt from "bcrypt";
+const SALT_ROUNDS = 10;
+
+import jwt from "jsonwebtoken";
+import cookieParser from "cookie-parser";
+const JWT_SECRET = process.env.JWT_SECRET || "SUPER_SECRET_KEY_FOR_TRAFFIC_ORG_2026";
 
 // ایمپورت‌های جدید برای پریزما ۷ و پایگاه داده
 import { PrismaClient } from "@prisma/client";
@@ -17,6 +24,7 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
+app.use(cookieParser());
 
 // ۲. ساخت استخر اتصالات (Connection Pool) برای PostgreSQL
 const pool = new pg.Pool({
@@ -138,7 +146,7 @@ app.post("/api/auth/login", async (req, res) => {
   try {
     const { username, password } = req.body;
 
-    // ۱. پیدا کردن کاربر در دیتابیس بر اساس نام کاربری منحصربه‌فرد
+    // ۱. پیدا کردن کاربر در دیتابیس بر اساس نام کاربری
     const user = await prisma.user.findUnique({
       where: { username: username }
     });
@@ -150,12 +158,27 @@ app.post("/api/auth/login", async (req, res) => {
       });
     }
 
-    // ۳. بررسی صحت رمز عبور (در حال حاضر به صورت متن ساده مقایسه می‌شود)
-    if (password !== user.password) {
+    // ۳. بررسی صحت رمز عبور با Bcrypt
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
       return res.status(401).json({ error: "نام کاربری یا رمز عبور اشتباه است." });
     }
 
-    // ۴. ارسال مشخصات کاربر به فرانت‌اِند برای ایجاد نشست فعال
+    // 🌟 ۴. ساخت توکن JWT حاوی مشخصات کاربر
+    const token = jwt.sign(
+      { id: user.id, username: user.username, role: user.role },
+      JWT_SECRET,
+      { expiresIn: "30d" } // توکن تا ۳۰ روز معتبر است
+    );
+
+    // 🌟 ۵. قرار دادن توکن در کوکی امن HttpOnly و ارسال پاسخ به فرانت‌اِند
+    res.cookie("token", token, {
+      httpOnly: true,                          // قفل جاوااسکریپت (محافظت در برابر هک XSS)
+      secure: process.env.NODE_ENV === "production", // فعال شدن SSL فقط در محیط واقعی
+      sameSite: "strict",                      // محافظت در برابر حملات CSRF
+      maxAge: 30 * 24 * 60 * 60 * 1000,        // طول عمر کوکی هم‌گام با توکن (۳۰ روز)
+    });
+
     res.json({
       user: {
         id: user.id,
@@ -172,6 +195,50 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
+app.post("/api/auth/logout", (req, res) => {
+  // پاک کردن کوکی توکن از روی مرورگر کاربر
+  res.clearCookie("token", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+  });
+  res.json({ success: true, message: "با موفقیت از سیستم خارج شدید." });
+});
+
+app.get("/api/auth/me", async (req, res) => {
+  try {
+    // خواندن توکن از کوکی‌های ریکوئست
+    const token = req.cookies.token;
+    if (!token) {
+      return res.status(401).json({ error: "عدم دسترسی، لطفا ابتدا وارد شوید." });
+    }
+
+    // تایید و رمزگشایی توکن JWT
+    const decoded = jwt.verify(token, JWT_SECRET) as { id: number; username: string; role: string };
+    
+    // پیدا کردن اطلاعات تازه کاربر از دیتابیس
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id }
+    });
+
+    if (!user || !user.is_active) {
+      return res.status(401).json({ error: "حساب کاربری یافت نشد یا غیرفعال است." });
+    }
+
+    res.json({
+      user: {
+        id: user.id,
+        username: user.username,
+        full_name: user.full_name,
+        role: user.role,
+        must_change_password: user.must_change_password,
+      },
+    });
+  } catch (err) {
+    res.status(401).json({ error: "توکن نامعتبر یا منقضی شده است." });
+  }
+});
+
 app.post("/api/auth/change-password", async (req, res) => {
   try {
     const { userId, newPassword } = req.body;
@@ -185,11 +252,12 @@ app.post("/api/auth/change-password", async (req, res) => {
       return res.status(404).json({ error: "کاربر مورد نظر یافت نشد." });
     }
 
-    // ۲. بروزرسانی رمز عبور، تغییر وضعیت اجبار تغییر پسورد و ثبت تاریخ تغییر
+    // ۲. هش کردن رمز عبور جدید و بروزرسانی آن در دیتابیس
+    const hashedNewPassword = await bcrypt.hash(newPassword, SALT_ROUNDS);
     await prisma.user.update({
       where: { id: parseInt(userId) },
       data: {
-        password: newPassword,
+        password: hashedNewPassword,
         must_change_password: false, // دیگر نیازی به تغییر رمز اجباری در ورودهای بعدی نیست
         password_changed_at: new Date(), // ذخیره تاریخ دقیق تغییر رمز به زمان فعلی دیتابیس
       }
@@ -230,14 +298,16 @@ app.post("/api/users", async (req, res) => {
       return res.status(400).json({ error: "نام کاربری تکراری است." });
     }
 
-    // ۲. ساخت کاربر جدید در دیتابیس PostgreSQL
+    // ۲. هش کردن رمز عبور اولیه و ساخت کاربر جدید در دیتابیس PostgreSQL
+    const rawPassword = password || "123456";
+    const hashedPassword = await bcrypt.hash(rawPassword, SALT_ROUNDS);
+
     const newUser = await prisma.user.create({
       data: {
         username,
         full_name,
         role: role || "user", // در پریزما به حروف کوچک/بزرگ Enum دقت کن
-        // رمز عبور پیش‌فرض ۱۲۳۴۵۶ در نظر گرفته می‌شود
-        password: password || "123456", 
+        password: hashedPassword,
         is_active: true,
         must_change_password: must_change_password !== undefined ? must_change_password : true,
       },
@@ -301,10 +371,13 @@ app.post("/api/users/:id/reset-password", async (req, res) => {
       return res.status(404).json({ error: "کاربر پیدا نشد." });
     }
 
+    const rawResetPassword = temporary_password || "123456";
+    const hashedResetPassword = await bcrypt.hash(rawResetPassword, SALT_ROUNDS);
+
     await prisma.user.update({
       where: { id },
       data: {
-        password: temporary_password || "123456",
+        password: hashedResetPassword,
         must_change_password: true
       }
     });
@@ -1007,8 +1080,41 @@ app.delete("/api/report-periods/:id", async (req, res) => {
 });
 
 // -----------------------------
+// manager and ahmadi users password fix for security
+// -----------------------------
+
+// 👇 این تابع موقت را دقیقاً قبل از startServer اضافه کن 👇
+//async function fixExistingUsers() {
+  //try {
+    // کلمه عبور دلخواه (مثلاً همان 123456 پیش‌فرض) را هش می‌کنیم
+//    const hashedPassword = await bcrypt.hash("123456", 10);
+    
+    // بروزرسانی کاربر manager
+//    await prisma.user.updateMany({
+//      where: { username: "manager" },
+//      data: { password: hashedPassword }
+//    });
+    
+    // بروزرسانی کاربر ahmadi
+//    await prisma.user.updateMany({
+//      where: { username: "ahmadi" },
+//      data: { password: hashedPassword }
+//    });
+//    
+//    console.log("🟢 [امنیت] رمز عبور کاربران manager و ahmadi با موفقیت به صورت هش‌شده بروزرسانی شد.");
+//  } catch (err) {
+//    console.error("🔴 خطا در بروزرسانی امنیتی کاربران قدیمی:", err);
+//  }
+//}
+
+// صدا زدن تابع برای یک‌بار اجرا در زمان بوت شدن سرور
+//fixExistingUsers();
+// 👆 ==================================================== 👆
+
+// -----------------------------
 // VITE OR STATIC FRONTEND SERVING
 // -----------------------------
+
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

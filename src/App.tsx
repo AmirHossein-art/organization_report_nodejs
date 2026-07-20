@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { User, Project, ReportPeriod, Report, DeadlineSetting } from "./types";
 import Sidebar from "./components/Sidebar";
 import Login from "./views/Login";
+import GatewayPortal from "./views/GatewayPortal";
 
 // وارد کردن تمام ویوهای ماژولار (که در پوشه views می‌سازیم)
 import HomeDashboard from "./views/HomeDashboard";
@@ -16,10 +17,10 @@ import ReportPeriods from "./views/ReportPeriods";
 import ProjectAllocations from "./views/ProjectAllocations";
 
 export default function App() {
-  const [user, setUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem("org_report_user");
-    return saved ? JSON.parse(saved) : null;
-  });
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true); // استیت جدید برای جلوگیری از پرش صفحه در زمان بررسی کوکی
+
+  const [showLogin, setShowLogin] = useState(false);
   
   const [currentView, setCurrentView] = useState<string>(() => {
     return localStorage.getItem("org_report_view") || "home";
@@ -52,17 +53,74 @@ export default function App() {
     }
   };
 
+  // ۱. بررسی وضعیت کوکی امن به محض بوت شدن کامپوننت
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((res) => {
+        if (res.ok) return res.json();
+        throw new Error("عدم وجود کوکی معتبر");
+      })
+      .then((data) => {
+        setUser(data.user);
+      })
+      .catch(() => {
+        setUser(null);
+      })
+      .finally(() => {
+        setAuthLoading(false);
+      });
+  }, []);
+
+  // ۲. واکشی داده‌های پروژه‌ها و گزارش‌ها به محض تایید کاربر
   useEffect(() => {
     if (user) fetchData();
   }, [user]);
 
-  const handleLogout = () => {
-    setUser(null);
-    localStorage.removeItem("org_report_user");
-    setCurrentView("home");
+  const handleLogout = async () => {
+    try {
+      // صدا زدن اِندپویند بک‌اِند برای حذف فیزیکی کوکی از مرورگر
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch (err) {
+      console.error("خطا در خروج از سرور:", err);
+    } finally {
+      setUser(null);
+      setCurrentView("home");
+    }
   };
 
+  // نمایش یک لودینگ شیک با تم سازمانی در زمان بررسی وضعیت کوکی
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-900 text-white font-sans" dir="rtl">
+        <div className="text-center space-y-3">
+          <div className="w-10 h-10 border-4 border-amber-400 border-t-transparent rounded-full animate-spin mx-auto"></div>
+          <p className="text-xs text-slate-400 font-medium">در حال ایمن‌سازی و بررسی نشست کاربری سازمان...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // گارد ورود کاربر (دروازه ورود و لاگین)
   if (!user) {
+    if (!showLogin) {
+      return <GatewayPortal onSelectTraffic={() => setShowLogin(true)} />;
+    }
+    
+    return (
+      <Login 
+        onLoginSuccess={(loggedInUser) => {
+          setUser(loggedInUser);
+          setCurrentView("home");
+        }} 
+      />
+    );
+  }
+
+  if (!user) {
+    if (!showLogin) {
+      return <GatewayPortal onSelectTraffic={() => setShowLogin(true)} />;
+    }
+
     return (
       <Login 
         onLoginSuccess={(loggedInUser) => {
@@ -81,8 +139,25 @@ export default function App() {
 
       {/*بخش نمایش داینامیک ویوها براساس انتخاب کاربر */}
       <main className="flex-1 p-6 md:p-8 max-w-7xl mx-auto w-full">
-        {currentView === "home" && <HomeDashboard users={users} projects={projects} periods={periods} user={user} />}
-        {currentView === "submit_report" && <SubmitReport projects={projects} periods={periods} user={user} onRefresh={fetchData} />}
+        {currentView === "home" && (
+          <HomeDashboard 
+            user={user} 
+            users={users} 
+            projects={projects} 
+            periods={periods} 
+            allReports={allReports} 
+          />
+        )}
+        
+        {currentView === "submit_report" && (
+          <SubmitReport 
+            projects={projects} 
+            periods={periods} 
+            user={user} 
+            allReports={allReports} // پروپ جدید اضافه شده از کدهای اصلی
+            onRefresh={fetchData} 
+          />
+        )}
         {currentView === "my_reports" && <MyReports projects={projects} allReports={allReports} user={user} onRefresh={fetchData} />}
         
         {/* روت‌های مدیریتی */}
