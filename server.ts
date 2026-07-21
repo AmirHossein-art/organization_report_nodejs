@@ -5,13 +5,14 @@ import fs from "fs";
 import cors from "cors";
 import multer from "multer";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI } from "@google/genai";
+import { OpenAI } from "openai";
 
 import bcrypt from "bcrypt";
 const SALT_ROUNDS = 10;
 
 import jwt from "jsonwebtoken";
 import cookieParser from "cookie-parser";
+
 const JWT_SECRET = process.env.JWT_SECRET || "SUPER_SECRET_KEY_FOR_TRAFFIC_ORG_2026";
 
 // ایمپورت‌های جدید برای پریزما ۷ و پایگاه داده
@@ -21,6 +22,17 @@ import pg from "pg";
 
 const PORT = 3000;
 const app = express();
+
+// 🟢 تعریف کلاینت هوش مصنوعی مجهز به هدرهای استاندارد OpenRouter
+const aiClient = new OpenAI({
+  apiKey: process.env.AI_API_KEY || "",
+  baseURL: process.env.AI_BASE_URL,
+  defaultHeaders: {
+    "HTTP-Referer": "http://localhost:3000",
+    "X-Title": "Organization Report System",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+  },
+});
 
 app.use(cors());
 app.use(express.json());
@@ -161,66 +173,108 @@ function formatNextActionsForPrompt(nextActions: any[] | undefined): string {
     .join("\n");
 }
 
-// -----------------------------
-// API ENDPOINTS
-// -----------------------------
-
 // Serve uploaded files
 app.use("/uploads", express.static(uploadDir));
 
-// --- Auth Endpoints ---
-app.post("/api/auth/login", async (req, res) => {
+// --- AI Service Endpoint (Robust Universal JSON Parser) ---
+app.post("/api/reports/analyze", async (req, res) => {
+  const { period_title, reports } = req.body;
+
+  const submittedReports = Array.isArray(reports) 
+    ? reports.filter((r: any) => r.activities_done && r.activities_done.trim() !== "") 
+    : [];
+
+  if (submittedReports.length === 0) {
+    return res.status(400).json({ error: "هیچ گزارش ثبت‌شده‌ای برای تحلیل در این دوره یافت نشد." });
+  }
+
+  const reportsText = submittedReports
+    .map((r, index) => {
+      return `--- گزارش ${index + 1} ---
+نویسنده: ${r.user_full_name}
+پروژه: ${r.project_title}
+فعالیت‌ها: ${r.activities_done}
+نتایج: ${r.results_achieved || "ثبت نشده"}
+اقدامات آتی: ${formatNextActionsForPrompt(r.nextActions)}
+شاخص‌ها (KPIs): ${r.kpi_text || "ثبت نشده"}`;
+    })
+    .join("\n\n");
+
+  const systemPrompt = `شما یک دستیار هوشمند و ارشد مدیریت استراتژیک در سازمان حمل‌ونقل و ترافیک هستید.
+وظیفه شما تحلیل دقیق گزارش‌های عملکرد پرسنل و ارائه خروجی کاملاً ساختاریافته به فرمت JSON است.
+
+پاسخ شما باید حتماً و فقط یک جی‌سون معتبر با کلید ریشه "analysis" باشد. نمونه ساختار مورد انتظار:
+{
+  "analysis": {
+    "health_score": 85,
+    "overall_status": "پایدار",
+    "executive_summary": "متن خلاصه مدیریتی در دو پاراگراف...",
+    "key_achievements": ["دستاورد ۱", "دستاورد ۲"],
+    "risks_and_delays": [
+      { "project_title": "عنوان پروژه", "risk_level": "high", "description": "شرح دقیق موانع" }
+    ],
+    "actionable_recommendations": ["پیشنهاد ۱", "پیشنهاد ۲"]
+  }
+}
+نکته بسیار مهم: هیچ متن اضافی، مقدمه، مؤخره یا علامت‌های اضافی قبل و بعد از JSON ننویسید.`;
+
+  const userPrompt = `گزارش‌های عملکرد بازه "${period_title}":\n\n${reportsText}`;
+
+  // 🔮 تابع استخراج و پاک‌سازی هوشمند JSON از پاسخ‌های متنی
+  const parseJsonFromText = (rawText: string) => {
+    // ۱. پاک‌سازی علامت‌های markdown مثل ```json و ```
+    let cleaned = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
+    
+    // ۲. یافتن محدوده دقیق { ... } برای حذف هرگونه متن اضافی احتمالی
+    const firstBrace = cleaned.indexOf("{");
+    const lastBrace = cleaned.lastIndexOf("}");
+    
+    if (firstBrace !== -1 && lastBrace !== -1) {
+      cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+    }
+    
+    return JSON.parse(cleaned);
+  };
+
+  const fetchWithRetry = async (retries = 3, delay = 1000): Promise<any> => {
+    const modelName = process.env.AI_MODEL_NAME;
+
+    if (!modelName) {
+      throw new Error("متغیر AI_MODEL_NAME در فایل .env تعریف نشده است.");
+    }
+
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const completion = await aiClient.chat.completions.create({
+          model: modelName,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt }
+          ],
+          temperature: 0.0, // مقدار کم جهت حفظ ثبات خروجی
+          seed:42,
+        });
+
+        const rawContent = completion.choices[0]?.message?.content || "";
+        const parsed = parseJsonFromText(rawContent);
+        return parsed.analysis ? parsed.analysis : parsed;
+      } catch (err: any) {
+        console.warn(`⚠️ تلاش ${attempt} از ${retries} با خطا مواجه شد (${err.message || err}). در حال تلاش مجدد...`);
+        if (attempt === retries) throw err;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  };
+
   try {
-    const { username, password } = req.body;
-
-    // ۱. پیدا کردن کاربر در دیتابیس بر اساس نام کاربری
-    const user = await prisma.user.findUnique({
-      where: { username: username }
-    });
-
-    // ۲. بررسی وجود کاربر و فعال بودن حساب کاربری او
-    if (!user || !user.is_active) {
-      return res.status(401).json({ 
-        error: "نام کاربری یا رمز عبور اشتباه است، یا حساب کاربری غیرفعال می‌باشد." 
-      });
-    }
-
-    // ۳. بررسی صحت رمز عبور با Bcrypt
-    const isPasswordValid = await bcrypt.compare(password, user.password);
-    if (!isPasswordValid) {
-      return res.status(401).json({ error: "نام کاربری یا رمز عبور اشتباه است." });
-    }
-
-    // 🌟 ۴. ساخت توکن JWT حاوی مشخصات کاربر
-    const token = jwt.sign(
-      { id: user.id, username: user.username, role: user.role },
-      JWT_SECRET,
-      { expiresIn: "30d" } // توکن تا ۳۰ روز معتبر است
-    );
-
-    // 🌟 ۵. قرار دادن توکن در کوکی امن HttpOnly و ارسال پاسخ به فرانت‌اِند
-    res.cookie("token", token, {
-      httpOnly: true,                          // قفل جاوااسکریپت (محافظت در برابر هک XSS)
-      secure: process.env.NODE_ENV === "production", // فعال شدن SSL فقط در محیط واقعی
-      sameSite: "strict",                      // محافظت در برابر حملات CSRF
-      maxAge: 30 * 24 * 60 * 60 * 1000,        // طول عمر کوکی هم‌گام با توکن (۳۰ روز)
-    });
-
-    res.json({
-      user: {
-        id: user.id,
-        username: user.username,
-        full_name: user.full_name,
-        role: user.role,
-        must_change_password: user.must_change_password,
-      },
-    });
-
-  } catch (error) {
-    console.error("Login error:", error);
-    res.status(500).json({ error: "خطا در برقراری ارتباط با سرور احراز هویت" });
+    const analysisJson = await fetchWithRetry();
+    res.json({ analysis: analysisJson });
+  } catch (err: any) {
+    console.error("AI analysis final error:", err);
+    res.status(500).json({ error: `خطا در تحلیل هوش مصنوعی: ${err.message || err}` });
   }
 });
+
 
 app.post("/api/auth/logout", (req, res) => {
   // پاک کردن کوکی توکن از روی مرورگر کاربر
@@ -883,58 +937,74 @@ app.delete("/api/report-files/:id", async (req, res) => {
   }
 });
 
-// --- AI Service Endpoint (Gemini-3.5-flash) ---
+// -----------------------------
+// API ENDPOINTS
+// -----------------------------
+// --- AI Service Endpoint (Universal OpenAI Format) ---
 app.post("/api/reports/analyze", async (req, res) => {
   const { period_title, reports } = req.body;
 
-  if (!reports || !Array.isArray(reports) || reports.length === 0) {
-    return res.status(400).json({ error: "داده‌های گزارش برای تحلیل کافی نیست." });
+  const submittedReports = Array.isArray(reports) 
+    ? reports.filter((r: any) => r.activities_done && r.activities_done.trim() !== "") 
+    : [];
+
+  if (submittedReports.length === 0) {
+    return res.status(400).json({ error: "هیچ گزارش ثبت‌شده‌ای برای تحلیل در این دوره یافت نشد." });
   }
 
-  const reportsText = reports
+  const reportsText = submittedReports
     .map((r, index) => {
       return `--- گزارش ${index + 1} ---
 نویسنده: ${r.user_full_name}
 پروژه: ${r.project_title}
 فعالیت‌ها: ${r.activities_done}
-نتایج: ${r.results_achieved}
-اقدامات آتی:
-${formatNextActionsForPrompt(r.nextActions)}
-شاخص‌ها: ${r.kpi_text}
-`;
+نتایج: ${r.results_achieved || "ثبت نشده"}
+اقدامات آتی: ${formatNextActionsForPrompt(r.nextActions)}
+شاخص‌ها (KPIs): ${r.kpi_text || "ثبت نشده"}`;
     })
-    .join("\n");
+    .join("\n\n");
 
-  const systemPrompt = `شما یک دستیار هوشمند مدیریت پروژه هستید.
-وظیفه شما این است که گزارش‌های ارائه‌شده توسط پرسنل را مطالعه کرده و یک خلاصه مدیریتی ۲ پاراگرافی ارائه دهید.
-در پاراگراف اول: وضعیت کلی پیشرفت پروژه‌ها را خلاصه کنید.
-در پاراگراف دوم: ریسک‌ها، تأخیرها یا مشکلاتی که در گزارش‌ها می‌بینید را برجسته کنید.
-پاسخ باید کاملاً به زبان فارسی رسمی و اداری باشد.`;
+  const systemPrompt = `شما یک دستیار هوشمند و ارشد مدیریت پروژه در سازمان حمل‌ونقل و ترافیک هستید.
+وظیفه شما تحلیل دقیق گزارش‌های عملکرد پرسنل و ارائه خروجی کاملاً ساختاریافته به فرمت JSON است.
 
-  const userPrompt = `گزارش‌های بازه ${period_title}:\n${reportsText}`;
+پاسخ شما باید حتماً یک کلید ریشه به نام "analysis" داشته باشد. نمونه ساختار مورد انتظار:
+{
+  "analysis": {
+    "health_score": 85,
+    "overall_status": "پایدار",
+    "executive_summary": "متن خلاصه مدیریتی در دو پاراگراف...",
+    "key_achievements": ["دستاورد ۱", "دستاورد ۲"],
+    "risks_and_delays": [
+      { "project_title": "عنوان پروژه", "risk_level": "high", "description": "شرح دقیق موانع" }
+    ],
+    "actionable_recommendations": ["پیشنهاد ۱", "پیشنهاد ۲"]
+  }
+}
+نکته مهم: خروجی باید فقط و فقط یک JSON معتبر به زبان فارسی باشد.`;
+
+  const userPrompt = `گزارش‌های عملکرد بازه "${period_title}":\n\n${reportsText}`;
 
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({
-        error: "کلید API مربوط به Gemini تنظیم نشده است. لطفاً آن را در بخش تنظیمات وارد کنید.",
-      });
-    }
+    const modelName = process.env.AI_MODEL_NAME || "llama-3.3-70b-versatile";
 
-    const ai = new GoogleGenAI({ apiKey });
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: userPrompt,
-      config: {
-        systemInstruction: systemPrompt,
-        temperature: 0.7,
-      },
+    const completion = await aiClient.chat.completions.create({
+      model: modelName,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt }
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0.0,
+      //seed: 42,
     });
 
-    const analysisText = response.text || "تحلیلی بازگردانده نشد.";
-    res.json({ analysis: analysisText });
+    const rawContent = completion.choices[0]?.message?.content || "{}";
+    const parsed = JSON.parse(rawContent);
+    const analysisJson = parsed.analysis ? parsed.analysis : parsed;
+
+    res.json({ analysis: analysisJson });
   } catch (err: any) {
-    console.error("Gemini analysis error:", err);
+    console.error("AI analysis error:", err);
     res.status(500).json({ error: `خطا در تحلیل هوش مصنوعی: ${err.message || err}` });
   }
 });
