@@ -40,7 +40,6 @@ const adapter = new PrismaPg(pool);
 // ۴. ساخت کلاینت پریزما با آداپتور مربوطه
 const prisma = new PrismaClient({ adapter });
 
-
 // Set up file storage for report attachments
 const uploadDir = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(uploadDir)) {
@@ -479,6 +478,60 @@ ${previousReportsText}
   } catch (err: any) {
     console.error("Single Report Audit Error:", err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// 🟢 اندپوینت ورود کاربران به سیستم
+app.post("/api/auth/login", async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({ error: "لطفاً نام کاربری و رمز عبور را وارد کنید." });
+    }
+
+    // ۱. پیدا کردن کاربر در دیتابیس
+    const user = await prisma.user.findUnique({
+      where: { username: username.trim() },
+    });
+
+    if (!user || !user.is_active) {
+      return res.status(401).json({ error: "نام کاربری یا رمز عبور نادرست است." });
+    }
+
+    // ۲. مقایسه رمز عبور وارد شده با هش bcrypt
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      return res.status(401).json({ error: "نام کاربری یا رمز عبور نادرست است." });
+    }
+
+    // ۳. ساخت توکن JWT
+    const token = jwt.sign(
+      { id: user.id, username: user.username, role: user.role },
+      JWT_SECRET,
+      { expiresIn: "1d" }
+    );
+
+    // ۴. ست کردن توکن در کوکی مرورگر
+    res.cookie("token", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+    });
+
+    // ۵. بازگرداندن اطلاعات کاربر
+    res.json({
+      user: {
+        id: user.id,
+        username: user.username,
+        full_name: user.full_name,
+        role: user.role,
+        must_change_password: user.must_change_password,
+      },
+    });
+  } catch (err: any) {
+    console.error("Login Error:", err);
+    res.status(500).json({ error: "خطا در برقراری ارتباط با سرور یا دیتابیس." });
   }
 });
 

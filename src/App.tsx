@@ -158,8 +158,15 @@ export default function App() {
             onRefresh={fetchData} 
           />
         )}
-        {currentView === "my_reports" && <MyReports projects={projects} allReports={allReports} user={user} onRefresh={fetchData} />}
-        
+        {currentView === "my_reports" && (
+        <MyReports 
+          currentUser={user} 
+          reports={allReports} 
+          projects={projects} 
+          periods={periods} 
+          onRefresh={fetchData} 
+        />
+)}
         {/* روت‌های مدیریتی */}
         {user.role === "manager" && (
           <>
