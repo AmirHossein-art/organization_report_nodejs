@@ -10,7 +10,12 @@ import {
   RefreshCw, 
   Search,
   ShieldAlert,
-  Lightbulb
+  Lightbulb,
+  ShieldCheck,
+  Clock,
+  Target,
+  Cpu,
+  X
 } from "lucide-react";
 import { ReportPeriod, Project, User } from "../types";
 import { CustomSelect } from "../components";
@@ -34,6 +39,272 @@ interface AiAnalysisResult {
   actionable_recommendations: string[];
 }
 
+// ساختار داده ممیزی اختصاصی یک گزارش
+interface SingleReportAuditResult {
+  executive_summary: string;
+  kpis_evaluation: Array<{
+    kpi_name: string;
+    previous_value: string;
+    current_value: string;
+    has_kpi: boolean;
+  }>;
+  recommendations: string[];
+  future_actions_with_deadlines: Array<{
+    action: string;
+    deadline: string;
+  }>;
+  repetitiveness_assessment: {
+    similarity_percentage: number;
+    is_duplicate_risk: boolean;
+    analysis_details: string;
+  };
+  strategic_alignment: {
+    is_aligned: boolean;
+    value_creation: string;
+    wbs_matching_task: string;
+    alignment_analysis: string;
+  };
+}
+
+// =================================================================
+// 🛍️ کامپوننت کشوی جانبی ممیزی هوشمند تک‌گزارش (Audit Drawer)
+// =================================================================
+function SingleReportAuditDrawer({
+  reportId,
+  reportTitle,
+  isOpen,
+  onClose,
+}: {
+  reportId: number | null;
+  reportTitle: string;
+  isOpen: boolean;
+  onClose: () => void;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [auditData, setAuditData] = useState<SingleReportAuditResult | null>(null);
+  const [modelUsed, setModelUsed] = useState<string>("");
+  const [error, setError] = useState<string>("");
+
+  const runSingleReportAudit = async () => {
+    if (!reportId) return;
+    setLoading(true);
+    setError("");
+    setAuditData(null);
+
+    try {
+      const res = await fetch("/api/reports/analyze-single", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          report_id: reportId,
+          excel_file_name: "بهبود UI طرح ترافیک.xlsx" 
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setAuditData(data.analysis);
+        setModelUsed(data.model_used || "Gemini AI");
+      } else {
+        setError(data.error || "خطا در ارزیابی گزارش.");
+      }
+    } catch (err) {
+      setError("ارتباط با سرور برقرار نشد.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen && reportId) {
+      runSingleReportAudit();
+    }
+  }, [isOpen, reportId]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 overflow-hidden bg-slate-900/50 backdrop-blur-xs transition-opacity animate-fade-in">
+      <div className="absolute inset-y-0 left-0 max-w-full flex pl-10">
+        <div className="w-screen max-w-2xl bg-white shadow-2xl flex flex-col dir-rtl">
+          
+          {/* هدر کشو */}
+          <div className="p-5 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center border border-amber-500/30">
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-sm">ممیزی و ارزیابی استراتژیک گزارش</h3>
+                <p className="text-[11px] text-slate-400 mt-0.5">{reportTitle}</p>
+              </div>
+            </div>
+            <button 
+              onClick={onClose}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          {/* بدنه اصلی محتوا */}
+          <div className="flex-1 overflow-y-auto p-5 space-y-5 bg-slate-50/50">
+            {loading && (
+              <div className="py-20 text-center space-y-3">
+                <RefreshCw className="w-10 h-10 text-amber-500 animate-spin mx-auto" />
+                <p className="text-xs font-medium text-slate-600">در حال ممیزی گزارش با WBS و سابقه کاربر...</p>
+              </div>
+            )}
+
+            {error && (
+              <div className="p-4 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            {auditData && (
+              <>
+                {/* نشانگر مدل استفاده شده */}
+                {modelUsed && (
+                  <div className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-slate-200 text-xs font-mono text-slate-600 shadow-2xs">
+                    <span className="flex items-center gap-2 text-[11px]">
+                      <Cpu className="w-4 h-4 text-emerald-600" />
+                      موتور پردازشگر: <strong>{modelUsed}</strong>
+                    </span>
+                    <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 text-[10px] font-bold">فعال</span>
+                  </div>
+                )}
+
+                {/* ۱. کارت سنجش اصالت و شباهت (بند ۵) */}
+                <div className={`p-4 rounded-2xl border transition-all ${
+                  auditData.repetitiveness_assessment.is_duplicate_risk 
+                    ? "bg-rose-50/80 border-rose-200 text-rose-900" 
+                    : "bg-emerald-50/80 border-emerald-200 text-emerald-900"
+                }`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-bold text-xs flex items-center gap-2">
+                      <ShieldCheck className="w-4 h-4" />
+                      سنجش اصالت و شباهت‌سنجی متنی
+                    </span>
+                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                      auditData.repetitiveness_assessment.is_duplicate_risk 
+                        ? "bg-rose-200 text-rose-800" 
+                        : "bg-emerald-200 text-emerald-800"
+                    }`}>
+                      {auditData.repetitiveness_assessment.similarity_percentage}٪ شباهت به سابقه
+                    </span>
+                  </div>
+                  <p className="text-xs leading-relaxed opacity-90">
+                    {auditData.repetitiveness_assessment.analysis_details}
+                  </p>
+                </div>
+
+                {/* ۲. کارت تطابق استراتژیک و خلق فایده (بند ۶) */}
+                <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs space-y-2.5">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                    <span className="font-bold text-slate-800 text-xs flex items-center gap-2">
+                      <Target className="w-4 h-4 text-indigo-600" />
+                      تطابق استراتژیک با WBS مرجع
+                    </span>
+                    <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-md text-[10px] border border-indigo-100 font-bold">
+                      خلق فایده: {auditData.strategic_alignment.value_creation}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    {auditData.strategic_alignment.alignment_analysis}
+                  </p>
+                  <div className="text-[11px] bg-slate-50 p-2 rounded-lg text-slate-500 border border-slate-100">
+                    📍 بسته کاری مرتبط: <strong>{auditData.strategic_alignment.wbs_matching_task}</strong>
+                  </div>
+                </div>
+
+                {/* ۳. کارت خلاصه مدیریتی (بند ۱) */}
+                <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs space-y-2">
+                  <h4 className="font-bold text-slate-800 text-xs flex items-center gap-2 border-b border-slate-100 pb-2">
+                    <FileText className="w-4 h-4 text-amber-500" />
+                    خلاصه مدیریتی اقدامات
+                  </h4>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    {auditData.executive_summary}
+                  </p>
+                </div>
+
+                {/* ۴. جدول مقایسه شاخص‌ها (بند ۲) */}
+                <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs space-y-3">
+                  <h4 className="font-bold text-slate-800 text-xs flex items-center gap-2 border-b border-slate-100 pb-2">
+                    <TrendingUp className="w-4 h-4 text-blue-600" />
+                    پایش و مقایسه شاخص‌ها (KPIs)
+                  </h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs text-right border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50 text-slate-400 border-b border-slate-100">
+                          <th className="p-2">عنوان شاخص</th>
+                          <th className="p-2">سابقه قبلی</th>
+                          <th className="p-2">مقدار فعلی</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {auditData.kpis_evaluation.map((kpi, i) => (
+                          <tr key={i} className="hover:bg-slate-50">
+                            <td className="p-2 font-medium text-slate-800">{kpi.kpi_name}</td>
+                            <td className="p-2 text-slate-400">{kpi.previous_value}</td>
+                            <td className="p-2 font-bold text-emerald-600">
+                              {kpi.has_kpi ? kpi.current_value : <span className="text-rose-500">فاقد شاخص</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* ۵. اقدامات آتی و ددلاین‌ها (بند ۴) */}
+                <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs space-y-3">
+                  <h4 className="font-bold text-slate-800 text-xs flex items-center gap-2 border-b border-slate-100 pb-2">
+                    <Clock className="w-4 h-4 text-amber-600" />
+                    برنامه آتی و مهلت‌های زمانی (Deadlines)
+                  </h4>
+                  <div className="space-y-2">
+                    {auditData.future_actions_with_deadlines.map((act, i) => (
+                      <div key={i} className="flex items-center justify-between bg-slate-50 p-2.5 rounded-xl text-xs border border-slate-100">
+                        <span className="text-slate-700">{act.action}</span>
+                        <span className="bg-amber-100 text-amber-800 px-2 py-0.5 rounded-md font-mono font-bold text-[10px]">
+                          📅 {act.deadline}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* ۶. پیشنهادات اصلاحی هوش مصنوعی (بند ۳) */}
+                <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs space-y-3">
+                  <h4 className="font-bold text-slate-800 text-xs flex items-center gap-2 border-b border-slate-100 pb-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    پیشنهادات و اقدامات اصلاحی
+                  </h4>
+                  <ul className="space-y-2">
+                    {auditData.recommendations.map((rec, i) => (
+                      <li key={i} className="text-xs text-slate-600 flex items-start gap-2 bg-emerald-50/30 p-2 rounded-xl">
+                        <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full mt-1.5 shrink-0"></span>
+                        <span>{rec}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =================================================================
+// 🚀 کامپوننت اصلی داشبورد مدیریتی
+// =================================================================
 export default function ManagerDashboard({ periods, projects, users }: ManagerDashboardProps) {
   const [selectedPeriodId, setSelectedPeriodId] = useState<number>(0);
   const [selectedProjectId, setSelectedProjectId] = useState<number>(0);
@@ -42,10 +313,14 @@ export default function ManagerDashboard({ periods, projects, users }: ManagerDa
   const [summaryData, setSummaryData] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
 
-  // استیت تحلیل هوش مصنوعی Gemini
+  // استیت تحلیل کلی دوره
   const [aiAnalysis, setAiAnalysis] = useState<AiAnalysisResult | null>(null);
   const [aiLoading, setAiLoading] = useState<boolean>(false);
   const [aiError, setAiError] = useState<string>("");
+
+  // 🌟 استیت‌های ممیزی اختصاصی تک‌گزارش (Drawer)
+  const [auditDrawerOpen, setAuditDrawerOpen] = useState<boolean>(false);
+  const [selectedAuditReport, setSelectedAuditReport] = useState<{ id: number; title: string } | null>(null);
 
   // انتخاب اولین بازه فعال به صورت خودکار
   useEffect(() => {
@@ -59,7 +334,7 @@ export default function ManagerDashboard({ periods, projects, users }: ManagerDa
   const fetchSummary = async () => {
     if (!selectedPeriodId) return;
     setLoading(true);
-    setAiAnalysis(null); // ریست کردن تحلیل قبلی زمان تغییر بازه
+    setAiAnalysis(null);
     setAiError("");
     try {
       let url = `/api/dashboard/summary?period_id=${selectedPeriodId}`;
@@ -82,11 +357,10 @@ export default function ManagerDashboard({ periods, projects, users }: ManagerDa
     fetchSummary();
   }, [selectedPeriodId, selectedProjectId, selectedUserId]);
 
-  // متد ارسال دیتا به Gemini AI
+  // متد ارسال دیتا به AI جهت تحلیل کلی
   const handleRunAiAnalysis = async () => {
     if (!summaryData || !summaryData.rows) return;
 
-    // استخراج تمام گزارش‌های واقعیِ ثبت‌شده در این دوره
     const submittedReports = summaryData.rows
       .filter((r: any) => r.report !== null)
       .map((r: any) => r.report);
@@ -217,16 +491,16 @@ export default function ManagerDashboard({ periods, projects, users }: ManagerDa
         </div>
       )}
 
-      {/* 🌟 بخش بنر و کنترل پردازش هوشمند Gemini AI */}
+      {/* 🌟 بخش بنر و کنترل پردازش هوشمند کلان */}
       <div className="bg-gradient-to-r from-emerald-950 via-slate-900 to-emerald-950 rounded-3xl p-6 text-white shadow-xl relative overflow-hidden border border-emerald-500/20">
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 relative z-10">
           <div className="space-y-1">
             <h3 className="text-lg font-bold flex items-center gap-2 text-amber-400">
               <Sparkles className="w-5 h-5" />
-              <span>تحلیل و پردازش هوشمند گزارشات با Gemini AI</span>
+              <span>تحلیل و پردازش هوشمند کلان با AI</span>
             </h3>
             <p className="text-slate-300 text-xs">
-              تجمیع خودکار متون گزارش‌ها، سنجش درصد سلامت پروژه‌ها، استخراج ریسک‌ها و ارائه راهکارهای مدیریتی
+              تجمیع خودکار تمام متون، سنجش درصد سلامت پروژه‌ها، استخراج ریسک‌ها و ارائه راهکارهای کلی مدیریتی
             </p>
           </div>
 
@@ -238,7 +512,7 @@ export default function ManagerDashboard({ periods, projects, users }: ManagerDa
             {aiLoading ? (
               <>
                 <RefreshCw className="w-4 h-4 animate-spin text-slate-950" />
-                <span>در حال تحلیل هوشمند داده‌ها...</span>
+                <span>در حال تحلیل کلان داده‌ها...</span>
               </>
             ) : (
               <>
@@ -249,7 +523,6 @@ export default function ManagerDashboard({ periods, projects, users }: ManagerDa
           </button>
         </div>
 
-        {/* نمایش پیام خطا اگر گزارشی ثبت نشده باشد */}
         {aiError && (
           <div className="mt-4 bg-rose-500/10 border border-rose-500/30 text-rose-300 p-3 rounded-xl text-xs flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0" />
@@ -258,13 +531,10 @@ export default function ManagerDashboard({ periods, projects, users }: ManagerDa
         )}
       </div>
 
-      {/* 📊 رندر اتاق کنترل هوشمند (خروجی ساختاریافته JSON از Gemini) */}
+      {/* 📊 خروجی تحلیل کلان دوره */}
       {aiAnalysis && (
         <div className="space-y-6 animate-fade-in">
-          
-          {/* کارت‌های شاخص سلامت و خلاصه کلان */}
           <div className="grid grid-cols-1 md:grid-cols-12 gap-5">
-            {/* گیج امتیاز سلامت کل */}
             <div className="md:col-span-4 bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs flex flex-col justify-between text-center relative overflow-hidden">
               <span className="text-slate-400 text-xs font-bold block">شاخص سلامت کلی پروژه‌ها</span>
               
@@ -290,7 +560,6 @@ export default function ManagerDashboard({ periods, projects, users }: ManagerDa
               </div>
             </div>
 
-            {/* خلاصه مدیریتی ارائه‌شده توسط AI */}
             <div className="md:col-span-8 bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-3">
               <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2 border-b border-slate-100 pb-3">
                 <TrendingUp className="w-4 h-4 text-emerald-700" />
@@ -302,10 +571,7 @@ export default function ManagerDashboard({ periods, projects, users }: ManagerDa
             </div>
           </div>
 
-          {/* ماتریس ریسک‌ها + دستاوردها + پیشنهادات */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            
-            {/* کارت دستاوردها */}
             <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs space-y-3">
               <h4 className="font-bold text-slate-900 text-xs flex items-center gap-2 border-b border-slate-100 pb-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600" />
@@ -321,7 +587,6 @@ export default function ManagerDashboard({ periods, projects, users }: ManagerDa
               </ul>
             </div>
 
-            {/* کارت ریسک‌ها و تأخیرها */}
             <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs space-y-3">
               <h4 className="font-bold text-slate-900 text-xs flex items-center gap-2 border-b border-slate-100 pb-2">
                 <AlertTriangle className="w-4 h-4 text-amber-600" />
@@ -346,7 +611,6 @@ export default function ManagerDashboard({ periods, projects, users }: ManagerDa
               </div>
             </div>
 
-            {/* کارت پیشنهادات اجرایی */}
             <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs space-y-3">
               <h4 className="font-bold text-slate-900 text-xs flex items-center gap-2 border-b border-slate-100 pb-2">
                 <Lightbulb className="w-4 h-4 text-amber-500" />
@@ -361,12 +625,11 @@ export default function ManagerDashboard({ periods, projects, users }: ManagerDa
                 ))}
               </ul>
             </div>
-
           </div>
         </div>
       )}
 
-      {/* جدول نظارتی کامل پایش عملکرد پرسنل */}
+      {/* جدول نظارتی کامل پایش عملکرد پرسنل به همراه عملیات ممیزی */}
       <div className="bg-white rounded-3xl border border-slate-200/80 shadow-xs overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
           <h3 className="font-bold text-slate-900 text-xs flex items-center gap-2">
@@ -394,6 +657,7 @@ export default function ManagerDashboard({ periods, projects, users }: ManagerDa
                   <th className="p-4">پروژه</th>
                   <th className="p-4">وضعیت نهایی</th>
                   <th className="p-4">توضیحات / جزئیات</th>
+                  <th className="p-4">عملیات ممیزی</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -415,6 +679,27 @@ export default function ManagerDashboard({ periods, projects, users }: ManagerDa
                     <td className="p-4 text-slate-500 max-w-xs truncate">
                       {row.report ? row.report.activities_done : "-"}
                     </td>
+
+                    {/* 🌟 ستون جدید دکمه ممیزی هوشمند تک گزارش */}
+                    <td className="p-4">
+                      {row.report ? (
+                        <button
+                          onClick={() => {
+                            setSelectedAuditReport({
+                              id: row.report.id,
+                              title: `گزارش ${row.user_full_name} - ${row.project_title}`,
+                            });
+                            setAuditDrawerOpen(true);
+                          }}
+                          className="flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 px-3 py-1.5 rounded-xl border border-amber-200/80 text-[11px] font-bold transition-all cursor-pointer shadow-2xs"
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                          <span>ممیزی هوشمند</span>
+                        </button>
+                      ) : (
+                        <span className="text-slate-300 text-[11px]">-</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -422,6 +707,14 @@ export default function ManagerDashboard({ periods, projects, users }: ManagerDa
           </div>
         )}
       </div>
+
+      {/* 🌟 رندر کشوی جانبی ممیزی اختصاصی تک گزارش */}
+      <SingleReportAuditDrawer
+        reportId={selectedAuditReport?.id || null}
+        reportTitle={selectedAuditReport?.title || ""}
+        isOpen={auditDrawerOpen}
+        onClose={() => setAuditDrawerOpen(false)}
+      />
 
     </div>
   );

@@ -6,6 +6,7 @@ import cors from "cors";
 import multer from "multer";
 import { createServer as createViteServer } from "vite";
 import { OpenAI } from "openai";
+import { parseExcelWBS } from "./src/utils/wbsParser";
 
 import bcrypt from "bcrypt";
 const SALT_ROUNDS = 10;
@@ -23,16 +24,6 @@ import pg from "pg";
 const PORT = 3000;
 const app = express();
 
-// 🟢 تعریف کلاینت هوش مصنوعی مجهز به هدرهای استاندارد OpenRouter
-const aiClient = new OpenAI({
-  apiKey: process.env.AI_API_KEY || "",
-  baseURL: process.env.AI_BASE_URL,
-  defaultHeaders: {
-    "HTTP-Referer": "http://localhost:3000",
-    "X-Title": "Organization Report System",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-  },
-});
 
 app.use(cors());
 app.use(express.json());
@@ -69,6 +60,35 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+});
+
+// 🟢 ساخت پوشه wbs_files و تنظیمات ذخیره‌سازی فایل اکسل
+const wbsStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(process.cwd(), "wbs_files");
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    // ذخیره فایل با نام یکتا برای جلوگیری از اوررایت شدن
+    const ext = path.extname(file.originalname);
+    const uniqueName = `wbs_project_${Date.now()}${ext}`;
+    cb(null, uniqueName);
+  },
+});
+
+const uploadWBS = multer({
+  storage: wbsStorage,
+  fileFilter: (req, file, cb) => {
+    // فقط اجازه آپلود فایل‌های اکسل داده می‌شود
+    if (file.originalname.match(/\.(xlsx|xls)$/)) {
+      cb(null, true);
+    } else {
+      cb(new Error("فقط فایل‌های اکسل (xlsx, xls) مجاز هستند."));
+    }
+  },
 });
 
 // -----------------------------
@@ -176,31 +196,138 @@ function formatNextActionsForPrompt(nextActions: any[] | undefined): string {
 // Serve uploaded files
 app.use("/uploads", express.static(uploadDir));
 
-// --- AI Service Endpoint (Robust Universal JSON Parser) ---
-app.post("/api/reports/analyze", async (req, res) => {
-  const { period_title, reports } = req.body;
+// =================================================================
+// 🔮 سیستم مرکزی فراخوانی هوش مصنوعی (مجهز به Fallback و ترجمه خطای فارسی)
+// =================================================================
+async function callAiWithFallback(systemPrompt: string, userPrompt: string) {
+  // لیست پروایدرهای فعال بر اساس فایل .env
+  const providers = [
+    {
+      id: "sambanova",
+      name: "SambaNova (Llama 3.3 70B)",
+      baseURL: process.env.AI_BASE_URL_1 || process.env.AI_BASE_URL || "https://api.sambanova.ai/v1",
+      apiKey: process.env.AI_API_KEY_1 || process.env.AI_API_KEY,
+      model: process.env.AI_MODEL_1 || process.env.AI_MODEL_NAME || "Meta-Llama-3.3-70B-Instruct",
+    },
+    {
+      id: "cerebras",
+      name: "Cerebras (Llama 3.3 70B)",
+      baseURL: process.env.AI_BASE_URL_2 || "https://api.cerebras.ai/v1",
+      apiKey: process.env.AI_API_KEY_2,
+      model: process.env.AI_MODEL_2 || "llama-3.3-70b",
+    },
+    {
+      id: "gemini",
+      name: "Google AI Studio (gemini-1.5-flash)",
+      baseURL: process.env.AI_BASE_URL_3 || "https://generativelanguage.googleapis.com/v1beta/openai/",
+      apiKey: process.env.AI_API_KEY_3,
+      model: process.env.AI_MODEL_3 || "gemini-1.5-flash",
+    },
+  ].filter((p) => p.apiKey && p.apiKey.trim() !== "");
 
-  const submittedReports = Array.isArray(reports) 
-    ? reports.filter((r: any) => r.activities_done && r.activities_done.trim() !== "") 
-    : [];
-
-  if (submittedReports.length === 0) {
-    return res.status(400).json({ error: "هیچ گزارش ثبت‌شده‌ای برای تحلیل در این دوره یافت نشد." });
+  if (providers.length === 0) {
+    throw new Error("هیچ کلید API فعال برای هوش مصنوعی در فایل .env یافت نشد. لطفاً تنظیمات .env را بررسی کنید.");
   }
 
-  const reportsText = submittedReports
-    .map((r, index) => {
-      return `--- گزارش ${index + 1} ---
+  // 🧹 پاک‌سازی متون HTML (مثل صفحات مسدودی Cloudflare) و تبدیل به ارور تک‌خطی
+  const formatPersianError = (err: any, providerName: string) => {
+    const status = err?.status || err?.statusCode;
+    let msg = err?.message || String(err || "");
+
+    if (typeof msg === "string" && (msg.includes("<!DOCTYPE") || msg.includes("<html") || msg.includes("Cloudflare"))) {
+      return `تامین‌کننده «${providerName}»: درخواست توسط فایروال یا محدودیت شبکه/آی‌پی مسدود شد (خطای 403 Cloudflare).`;
+    }
+
+    if (status === 429 || msg.includes("429") || msg.includes("Rate limit")) {
+      return `تامین‌کننده «${providerName}»: سقف تعداد درخواست مجاز در دقیقه یا روز به پایان رسیده است.`;
+    }
+    if (status === 401 || msg.includes("401") || msg.includes("Unauthorized")) {
+      return `تامین‌کننده «${providerName}»: کلید API وارد شده نامعتبر است.`;
+    }
+    
+    return `تامین‌کننده «${providerName}»: ${msg.substring(0, 120)}`;
+  };
+
+  const parseJsonFromText = (rawText: string) => {
+    let cleaned = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
+    const firstBrace = cleaned.indexOf("{");
+    const lastBrace = cleaned.lastIndexOf("}");
+    if (firstBrace !== -1 && lastBrace !== -1) {
+      cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+    }
+    return JSON.parse(cleaned);
+  };
+
+  const providerErrorLogs: string[] = [];
+
+  for (const provider of providers) {
+    try {
+      console.log(`🤖 در حال درخواست پردازش از: ${provider.name}...`);
+
+      const client = new OpenAI({
+        apiKey: provider.apiKey,
+        baseURL: provider.baseURL,
+        defaultHeaders: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0",
+        },
+      });
+
+      const completion = await client.chat.completions.create({
+        model: provider.model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0.0,
+      });
+
+      const rawContent = completion.choices[0]?.message?.content || "";
+      const parsed = parseJsonFromText(rawContent);
+      const analysisData = parsed.analysis ? parsed.analysis : parsed;
+
+      return {
+        analysis: analysisData,
+        model_used: provider.name,
+      };
+
+    } catch (err: any) {
+      const persianErr = formatPersianError(err, provider.name);
+      console.warn(`⚠️ ${persianErr} -> در حال سوئیچ به تامین‌کننده بعدی...`);
+      providerErrorLogs.push(persianErr);
+    }
+  }
+
+  throw new Error(`تمامی تامین‌کنندگان هوش مصنوعی ناموفق بودند:\n` + providerErrorLogs.join("\n"));
+}
+
+// =================================================================
+// 1️⃣ اندپوینت تحلیل کلی و کلان دوره
+// =================================================================
+app.post("/api/reports/analyze", async (req, res) => {
+  try {
+    const { period_title, reports } = req.body;
+
+    const submittedReports = Array.isArray(reports) 
+      ? reports.filter((r: any) => r.activities_done && r.activities_done.trim() !== "") 
+      : [];
+
+    if (submittedReports.length === 0) {
+      return res.status(400).json({ error: "هیچ گزارش ثبت‌شده‌ای برای تحلیل در این دوره یافت نشد." });
+    }
+
+    const reportsText = submittedReports
+      .map((r, index) => {
+        return `--- گزارش ${index + 1} ---
 نویسنده: ${r.user_full_name}
 پروژه: ${r.project_title}
 فعالیت‌ها: ${r.activities_done}
 نتایج: ${r.results_achieved || "ثبت نشده"}
 اقدامات آتی: ${formatNextActionsForPrompt(r.nextActions)}
 شاخص‌ها (KPIs): ${r.kpi_text || "ثبت نشده"}`;
-    })
-    .join("\n\n");
+      })
+      .join("\n\n");
 
-  const systemPrompt = `شما یک دستیار هوشمند و ارشد مدیریت استراتژیک در سازمان حمل‌ونقل و ترافیک هستید.
+    const systemPrompt = `شما یک دستیار هوشمند و ارشد مدیریت استراتژیک در سازمان حمل‌ونقل و ترافیک هستید.
 وظیفه شما تحلیل دقیق گزارش‌های عملکرد پرسنل و ارائه خروجی کاملاً ساختاریافته به فرمت JSON است.
 
 پاسخ شما باید حتماً و فقط یک جی‌سون معتبر با کلید ریشه "analysis" باشد. نمونه ساختار مورد انتظار:
@@ -218,63 +345,142 @@ app.post("/api/reports/analyze", async (req, res) => {
 }
 نکته بسیار مهم: هیچ متن اضافی، مقدمه، مؤخره یا علامت‌های اضافی قبل و بعد از JSON ننویسید.`;
 
-  const userPrompt = `گزارش‌های عملکرد بازه "${period_title}":\n\n${reportsText}`;
+    const userPrompt = `گزارش‌های عملکرد بازه "${period_title}":\n\n${reportsText}`;
 
-  // 🔮 تابع استخراج و پاک‌سازی هوشمند JSON از پاسخ‌های متنی
-  const parseJsonFromText = (rawText: string) => {
-    // ۱. پاک‌سازی علامت‌های markdown مثل ```json و ```
-    let cleaned = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
-    
-    // ۲. یافتن محدوده دقیق { ... } برای حذف هرگونه متن اضافی احتمالی
-    const firstBrace = cleaned.indexOf("{");
-    const lastBrace = cleaned.lastIndexOf("}");
-    
-    if (firstBrace !== -1 && lastBrace !== -1) {
-      cleaned = cleaned.substring(firstBrace, lastBrace + 1);
-    }
-    
-    return JSON.parse(cleaned);
-  };
+    const result = await callAiWithFallback(systemPrompt, userPrompt);
+    res.json(result);
 
-  const fetchWithRetry = async (retries = 3, delay = 1000): Promise<any> => {
-    const modelName = process.env.AI_MODEL_NAME;
-
-    if (!modelName) {
-      throw new Error("متغیر AI_MODEL_NAME در فایل .env تعریف نشده است.");
-    }
-
-    for (let attempt = 1; attempt <= retries; attempt++) {
-      try {
-        const completion = await aiClient.chat.completions.create({
-          model: modelName,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt }
-          ],
-          temperature: 0.0, // مقدار کم جهت حفظ ثبات خروجی
-          seed:42,
-        });
-
-        const rawContent = completion.choices[0]?.message?.content || "";
-        const parsed = parseJsonFromText(rawContent);
-        return parsed.analysis ? parsed.analysis : parsed;
-      } catch (err: any) {
-        console.warn(`⚠️ تلاش ${attempt} از ${retries} با خطا مواجه شد (${err.message || err}). در حال تلاش مجدد...`);
-        if (attempt === retries) throw err;
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
-    }
-  };
-
-  try {
-    const analysisJson = await fetchWithRetry();
-    res.json({ analysis: analysisJson });
   } catch (err: any) {
-    console.error("AI analysis final error:", err);
-    res.status(500).json({ error: `خطا در تحلیل هوش مصنوعی: ${err.message || err}` });
+    console.error("AI Global Analysis Error:", err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
+
+// =================================================================
+// 2️⃣ اندپوینت ممیزی اختصاصی تک‌گزارش (بر اساس WBS اکسل)
+// =================================================================
+app.post("/api/reports/analyze-single", async (req, res) => {
+  try {
+    const { report_id } = req.body;
+
+    if (!report_id) {
+      return res.status(400).json({ error: "شناسه گزارش (report_id) ارسال نشده است." });
+    }
+
+    const currentReport = await prisma.report.findUnique({
+      where: { id: Number(report_id) },
+      include: {
+        user: true,
+        project: true,
+        nextActions: true,
+      },
+    });
+
+    if (!currentReport) {
+      return res.status(404).json({ error: "گزارش مورد نظر یافت نشد." });
+    }
+
+    const previousReports = await prisma.report.findMany({
+      where: {
+        user_id: currentReport.user_id,
+        project_id: currentReport.project_id,
+        id: { lt: currentReport.id },
+      },
+      orderBy: { submitted_at: "desc" },
+      take: 3,
+      include: { nextActions: true },
+    });
+
+    const previousReportsText = previousReports.length > 0
+      ? previousReports.map((r, i) => `--- گزارش سابقه ${i + 1} ---
+فعالیت‌ها: ${r.activities_done}
+نتایج: ${r.results_achieved || "ثبت نشده"}
+شاخص‌ها: ${r.kpi_text || "ثبت نشده"}`).join("\n\n")
+      : "هیچ گزارش قبلی برای این کاربر ثبت نشده است (اولین گزارش کاربر).";
+
+    const projectWbsFileName = (currentReport.project as any)?.wbs_file_name;
+    let wbsContextText = "سند WBS اکسل برای این پروژه بارگذاری نشده است.";
+
+    if (projectWbsFileName) {
+      const excelFilePath = path.join(process.cwd(), "wbs_files", projectWbsFileName);
+      try {
+        if (fs.existsSync(excelFilePath)) {
+          const parsed = parseExcelWBS(excelFilePath);
+          wbsContextText = parsed.formattedPromptText;
+        }
+      } catch (e: any) {
+        console.warn("خطا در خواندن فایل اکسل WBS:", e.message);
+      }
+    }
+
+    const systemPrompt = `شما یک ارزیاب و ممیز ارشد مدیریت استراتژیک، کنترل پروژه و ترافیک شهری هستید.
+وظیفه شما ارزیابی دقیق "یک گزارش عملکرد" در برابر "سند استراتژیک و WBS مرجع پروژه" و "سابقه گزارش‌های قبلی کاربر" است.
+
+پاسخ شما باید حتماً و فقط یک جی‌سون (JSON) معتبر با کلید ریشه "analysis" باشد. ساختار مورد انتظار:
+
+{
+  "analysis": {
+    "executive_summary": "خلاصه مدیریتی پروژه با محوریت مهم‌ترین اقدامات انجام‌شده در این گزارش...",
+    "kpis_evaluation": [
+      {
+        "kpi_name": "نام شاخص ذکر شده",
+        "previous_value": "مقدار سابقه قبلی یا 'ثبت نشده در سابقه'",
+        "current_value": "مقدار فعلی یا 'فاقد شاخص'",
+        "has_kpi": true
+      }
+    ],
+    "recommendations": [
+      "پیشنهاد و اقدام کارآمد ۱ با توجه به داده‌های ورودی...",
+      "پیشنهاد ۲..."
+    ],
+    "future_actions_with_deadlines": [
+      {
+        "action": "شرح اقدام آتی",
+        "deadline": "تاریخ هدف (مثلاً ۱۴۰۵/۰۵/۱۰) یا 'تعیین‌نشده'"
+      }
+    ],
+    "repetitiveness_assessment": {
+      "similarity_percentage": 15,
+      "is_duplicate_risk": false,
+      "analysis_details": "توضیح کوتاه در مورد اینکه آیا گزارش کپی‌برداری از گزارش‌های قبلی است یا خیر."
+    },
+    "strategic_alignment": {
+      "is_aligned": true,
+      "value_creation": "عالی / متوسط / ضعیف",
+      "wbs_matching_task": "کد یا نام بسته کاری WBS مرتبط",
+      "alignment_analysis": "بررسی تطابق استراتژیک فعالیت با هدف پروژه و خلق فایده آن."
+    }
+  }
+}
+نکته مهم: خروجی باید فقط JSON معتبر به زبان فارسی باشد بدون هیچ عبارت اضافه یا Markdown.`;
+
+    const userPrompt = `
+🏢 **سند مرجع WBS و اهداف استراتژیک پروژه:**
+${wbsContextText}
+
+---
+📜 **سابقه گزارش‌های قبلی همین کارشناس (جهت بررسی شباهت و کپی‌برداری):**
+${previousReportsText}
+
+---
+📝 **گزارش عملکرد جاری (جهت ممیزی و ارزیابی):**
+نویسنده: ${currentReport.user_full_name || (currentReport.user as any)?.name}
+پروژه: ${currentReport.project_title || (currentReport.project as any)?.title}
+فعالیت‌های انجام‌شده: ${currentReport.activities_done}
+نتایج حاصله: ${currentReport.results_achieved || "ثبت نشده"}
+شاخص‌های کلیدی (KPIs): ${currentReport.kpi_text || "ثبت نشده"}
+اقدامات آتی: ${currentReport.nextActions?.map((a: any) => `${a.action_text || a.title} (ددلاین: ${a.target_date || "ندارد"})`).join(", ") || "ثبت نشده"}
+`;
+
+    const result = await callAiWithFallback(systemPrompt, userPrompt);
+    res.json(result);
+
+  } catch (err: any) {
+    console.error("Single Report Audit Error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 app.post("/api/auth/logout", (req, res) => {
   // پاک کردن کوکی توکن از روی مرورگر کاربر
@@ -483,9 +689,10 @@ app.get("/api/projects", async (_req, res) => {
   }
 });
 
-app.post("/api/projects", async (req, res) => {
+app.post("/api/projects", uploadWBS.single("wbs_file"), async (req, res) => {
   try {
     const { title, description, code } = req.body;
+    const wbsFileName = req.file ? req.file.filename : null;
 
     const existing = await prisma.project.findUnique({ where: { code } });
     if (existing) {
@@ -497,7 +704,8 @@ app.post("/api/projects", async (req, res) => {
         title,
         description: description || "",
         code,
-        is_active: true
+        is_active: true,
+        wbs_file_name: wbsFileName,
       }
     });
 
@@ -508,10 +716,11 @@ app.post("/api/projects", async (req, res) => {
   }
 });
 
-app.put("/api/projects/:id", async (req, res) => {
+app.put("/api/projects/:id", uploadWBS.single("wbs_file"), async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const { title, description, code, is_active } = req.body;
+    const wbsFileName = req.file ? req.file.filename : undefined;
 
     const existing = await prisma.project.findUnique({ where: { id } });
     if (!existing) {
@@ -531,7 +740,8 @@ app.put("/api/projects/:id", async (req, res) => {
         title: title !== undefined ? title : undefined,
         description: description !== undefined ? description : undefined,
         code: code !== undefined ? code : undefined,
-        is_active: is_active !== undefined ? is_active : undefined
+        is_active: is_active !== undefined ? is_active : undefined,
+        wbs_file_name: wbsFileName !== undefined ? wbsFileName : undefined, // 👈 ذخیره فایل جدید در صورت آپلود
       }
     });
 
@@ -937,77 +1147,6 @@ app.delete("/api/report-files/:id", async (req, res) => {
   }
 });
 
-// -----------------------------
-// API ENDPOINTS
-// -----------------------------
-// --- AI Service Endpoint (Universal OpenAI Format) ---
-app.post("/api/reports/analyze", async (req, res) => {
-  const { period_title, reports } = req.body;
-
-  const submittedReports = Array.isArray(reports) 
-    ? reports.filter((r: any) => r.activities_done && r.activities_done.trim() !== "") 
-    : [];
-
-  if (submittedReports.length === 0) {
-    return res.status(400).json({ error: "هیچ گزارش ثبت‌شده‌ای برای تحلیل در این دوره یافت نشد." });
-  }
-
-  const reportsText = submittedReports
-    .map((r, index) => {
-      return `--- گزارش ${index + 1} ---
-نویسنده: ${r.user_full_name}
-پروژه: ${r.project_title}
-فعالیت‌ها: ${r.activities_done}
-نتایج: ${r.results_achieved || "ثبت نشده"}
-اقدامات آتی: ${formatNextActionsForPrompt(r.nextActions)}
-شاخص‌ها (KPIs): ${r.kpi_text || "ثبت نشده"}`;
-    })
-    .join("\n\n");
-
-  const systemPrompt = `شما یک دستیار هوشمند و ارشد مدیریت پروژه در سازمان حمل‌ونقل و ترافیک هستید.
-وظیفه شما تحلیل دقیق گزارش‌های عملکرد پرسنل و ارائه خروجی کاملاً ساختاریافته به فرمت JSON است.
-
-پاسخ شما باید حتماً یک کلید ریشه به نام "analysis" داشته باشد. نمونه ساختار مورد انتظار:
-{
-  "analysis": {
-    "health_score": 85,
-    "overall_status": "پایدار",
-    "executive_summary": "متن خلاصه مدیریتی در دو پاراگراف...",
-    "key_achievements": ["دستاورد ۱", "دستاورد ۲"],
-    "risks_and_delays": [
-      { "project_title": "عنوان پروژه", "risk_level": "high", "description": "شرح دقیق موانع" }
-    ],
-    "actionable_recommendations": ["پیشنهاد ۱", "پیشنهاد ۲"]
-  }
-}
-نکته مهم: خروجی باید فقط و فقط یک JSON معتبر به زبان فارسی باشد.`;
-
-  const userPrompt = `گزارش‌های عملکرد بازه "${period_title}":\n\n${reportsText}`;
-
-  try {
-    const modelName = process.env.AI_MODEL_NAME || "llama-3.3-70b-versatile";
-
-    const completion = await aiClient.chat.completions.create({
-      model: modelName,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt }
-      ],
-      response_format: { type: "json_object" },
-      temperature: 0.0,
-      //seed: 42,
-    });
-
-    const rawContent = completion.choices[0]?.message?.content || "{}";
-    const parsed = JSON.parse(rawContent);
-    const analysisJson = parsed.analysis ? parsed.analysis : parsed;
-
-    res.json({ analysis: analysisJson });
-  } catch (err: any) {
-    console.error("AI analysis error:", err);
-    res.status(500).json({ error: `خطا در تحلیل هوش مصنوعی: ${err.message || err}` });
-  }
-});
 
 // --- Manager Dashboard Status Summary Helper ---
 app.get("/api/dashboard/summary", async (req, res) => {
