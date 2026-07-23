@@ -627,7 +627,7 @@ app.get("/api/users", async (_req, res) => {
 
 app.post("/api/users", async (req, res) => {
   try {
-    const { username, full_name, role, password, must_change_password } = req.body;
+    const { username, full_name, role, job_title, password, must_change_password } = req.body;
 
     // ۱. بررسی تکراری نبودن نام کاربری در دیتابیس
     const existingUser = await prisma.user.findUnique({
@@ -647,6 +647,7 @@ app.post("/api/users", async (req, res) => {
         username,
         full_name,
         role: role || "user", // در پریزما به حروف کوچک/بزرگ Enum دقت کن
+        job_title: job_title ? job_title.trim() : null,
         password: hashedPassword,
         is_active: true,
         must_change_password: must_change_password !== undefined ? must_change_password : true,
@@ -665,7 +666,7 @@ app.post("/api/users", async (req, res) => {
 app.put("/api/users/:id", async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { full_name, username, role, is_active } = req.body;
+    const { full_name, username, role,job_title, is_active } = req.body;
 
     const existingUser = await prisma.user.findUnique({
       where: { id: id }
@@ -690,6 +691,7 @@ app.put("/api/users/:id", async (req, res) => {
         full_name: full_name !== undefined ? full_name : undefined,
         username: username !== undefined ? username : undefined,
         role: role !== undefined ? role : undefined,
+        job_title: job_title !== undefined ? job_title: undefined,
         is_active: is_active !== undefined ? is_active : undefined,
       }
     });
@@ -745,21 +747,42 @@ app.get("/api/projects", async (_req, res) => {
 app.post("/api/projects", uploadWBS.single("wbs_file"), async (req, res) => {
   try {
     const { title, description, code } = req.body;
-    const wbsFileName = req.file ? req.file.filename : null;
+    const file = req.file;
 
-    const existing = await prisma.project.findUnique({ where: { code } });
-    if (existing) {
+   // ۱. بررسی تکراری بودن کد پروژه
+    const existingCode = await prisma.project.findUnique({ 
+      where: { code: code.trim() } 
+    });
+    if (existingCode) {
+      if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path); // پاک کردن فایل آپلود شده
       return res.status(400).json({ error: "کد پروژه تکراری است." });
     }
 
+    // ۲. 🟢 بررسی تکراری بودن نام فایل اکسل در تمامی پروژه‌های سامانه
+    if (file) {
+      const duplicateFileProject = await prisma.project.findFirst({
+        where: { wbs_file_name: file.originalname }
+      });
+
+      if (duplicateFileProject) {
+        // حذف فایل آپلود شده موقت از پوشه uploads جهت جلوگیری از پر شدن حافظه
+        if (fs.existsSync(file.path)) {
+          fs.unlinkSync(file.path);
+        }
+        return res.status(400).json({ 
+          error: `فایلی با نام «${file.originalname}» قبلاً برای پروژه «${duplicateFileProject.title}» بارگذاری شده است. لطفاً نام فایل را تغییر دهید.` 
+        });
+      }
+    }
+
+    // ۳. ایجاد پروژه در دیتابیس
     const newProject = await prisma.project.create({
       data: {
-        title,
-        description: description || "",
-        code,
-        is_active: true,
-        wbs_file_name: wbsFileName,
-      }
+        code: code.trim(),
+        title: title.trim(),
+        description: description ? description.trim() : null,
+        wbs_file_name: file ? file.originalname : null,
+      },
     });
 
     res.json(newProject);
@@ -769,39 +792,94 @@ app.post("/api/projects", uploadWBS.single("wbs_file"), async (req, res) => {
   }
 });
 
-app.put("/api/projects/:id", uploadWBS.single("wbs_file"), async (req, res) => {
+app.put("/api/projects/:id", upload.single("wbs_file"), async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { title, description, code, is_active } = req.body;
-    const wbsFileName = req.file ? req.file.filename : undefined;
+    const { title, code, description, remove_wbs_file } = req.body;
+    const file = req.file;
 
-    const existing = await prisma.project.findUnique({ where: { id } });
-    if (!existing) {
-      return res.status(404).json({ error: "پروژه پیدا نشد." });
+    // ۱. بررسی وجود پروژه
+    const existingProject = await prisma.project.findUnique({
+      where: { id },
+    });
+
+    if (!existingProject) {
+      if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
+      return res.status(404).json({ error: "پروژه مورد نظر یافت نشد." });
     }
 
-    if (code !== undefined && code !== existing.code) {
-      const dupeProj = await prisma.project.findUnique({ where: { code } });
-      if (dupeProj) {
+    // ۲. بررسی تکراری نبودن کد پروژه
+    if (code && code.trim() !== existingProject.code) {
+      const dupeCode = await prisma.project.findUnique({
+        where: { code: code.trim() },
+      });
+      if (dupeCode) {
+        if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
         return res.status(400).json({ error: "کد پروژه تکراری است." });
       }
     }
 
-    const updated = await prisma.project.update({
+    let updatedWbsFileName: string | null = existingProject.wbs_file_name;
+
+    // بررسی اینکه آیا درخواست حذف فایل صادر شده است یا خیر
+    const isRemoveRequested = 
+      remove_wbs_file === "true" || 
+      remove_wbs_file === true || 
+      String(remove_wbs_file) === "true";
+
+    // حالت الف: فایل جدید بارگذاری شده است
+    if (file) {
+      // چک تکراری نبودن نام فایل جدید در سایر پروژه‌ها
+      const duplicateFileProject = await prisma.project.findFirst({
+        where: {
+          wbs_file_name: file.originalname,
+          id: { not: id },
+        },
+      });
+
+      if (duplicateFileProject) {
+        if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+        return res.status(400).json({
+          error: `فایلی با نام «${file.originalname}» قبلاً برای پروژه «${duplicateFileProject.title}» ثبت شده است.`,
+        });
+      }
+
+      // حذف فایل فیزیکی قبلی از پوشه uploads
+      if (existingProject.wbs_file_name) {
+        const oldFilePath = path.join(process.cwd(), "uploads", existingProject.wbs_file_name);
+        if (fs.existsSync(oldFilePath)) {
+          try { fs.unlinkSync(oldFilePath); } catch (e) { console.error("Error deleting old file:", e); }
+        }
+      }
+
+      updatedWbsFileName = file.originalname;
+    } 
+    // حالت ب: فایل جدیدی نیست و درخواست حذف فایل فعلی داده شده است
+    else if (isRemoveRequested) {
+      if (existingProject.wbs_file_name) {
+        const oldFilePath = path.join(process.cwd(), "uploads", existingProject.wbs_file_name);
+        if (fs.existsSync(oldFilePath)) {
+          try { fs.unlinkSync(oldFilePath); } catch (e) { console.error("Error deleting file from disk:", e); }
+        }
+      }
+      updatedWbsFileName = null; // 🟢 صریحاً null ست می‌شود تا در دیتابیس پاک گردد
+    }
+
+    // ۳. به‌روزرسانی پروژه در دیتابیس
+    const updatedProject = await prisma.project.update({
       where: { id },
       data: {
-        title: title !== undefined ? title : undefined,
-        description: description !== undefined ? description : undefined,
-        code: code !== undefined ? code : undefined,
-        is_active: is_active !== undefined ? is_active : undefined,
-        wbs_file_name: wbsFileName !== undefined ? wbsFileName : undefined, // 👈 ذخیره فایل جدید در صورت آپلود
-      }
+        title: title !== undefined ? title.trim() : undefined,
+        code: code !== undefined ? code.trim() : undefined,
+        description: description !== undefined ? description.trim() : undefined,
+        wbs_file_name: updatedWbsFileName, // اعمال تغییر (نام جدید یا null یا مقدار قبلی)
+      },
     });
 
-    res.json(updated);
+    res.json(updatedProject);
   } catch (error) {
     console.error("Error updating project:", error);
-    res.status(500).json({ error: "خطا در ویرایش پروژه در دیتابیس" });
+    res.status(500).json({ error: "خطا در ویرایش اطلاعات پروژه در دیتابیس" });
   }
 });
 
@@ -878,39 +956,75 @@ app.put("/api/report-periods/:id", async (req, res) => {
   }
 });
 
-// --- User Project Assignments ---
-app.get("/api/user-projects", async (req, res) => {
+// DELETE a report period and all its reports cascades
+app.delete("/api/report-periods/:id", async (req, res) => {
   try {
-    const allocations = await prisma.userProject.findMany({
-      orderBy: { id: "asc" }
-    });
-    res.json(allocations);
+    const id = parseInt(req.params.id);
+
+    // Find all reports in this period
+    const reports = await prisma.report.findMany({ where: { period_id: id } });
+    const reportIds = reports.map((r) => r.id);
+
+    // Delete physical uploads
+    await cleanPhysicalFilesForReports(reportIds);
+
+    // Delete period from PostgreSQL (Prisma onDelete: Cascade deletes reports)
+    await prisma.reportPeriod.delete({ where: { id } });
+
+    res.json({ success: true, message: "بازه گزارش‌دهی و تمامی داده‌های مربوطه با موفقیت حذف شدند." });
   } catch (error) {
-    console.error("Error fetching user projects:", error);
-    res.status(500).json({ error: "خطا در دریافت تخصیص‌های پروژه‌ها" });
+    console.error("Error deleting period:", error);
+    res.status(500).json({ error: "خطا در حذف بازه گزارش‌دهی از دیتابیس" });
   }
 });
 
-app.post("/api/user-projects/sync", async (req, res) => {
+// --- User Project Assignments ---
+// ۱. دریافت تمامی تخصیص‌های فعلی دیتابیس
+// ۱. دریافت تمامی تخصیص‌های فعلی دیتابیس
+app.get("/api/user-projects", async (req, res) => {
   try {
-    const { user_id, project_ids } = req.body;
-
-    await prisma.$transaction([
-      prisma.userProject.deleteMany({ where: { user_id: parseInt(user_id) } }),
-      ...(Array.isArray(project_ids) ? project_ids.map(projId =>
-        prisma.userProject.create({
-          data: {
-            user_id: parseInt(user_id),
-            project_id: parseInt(projId)
-          }
-        })
-      ) : [])
-    ]);
-
-    res.json({ success: true, message: "پروژه‌های تخصیص‌یافته به کاربر همگام‌سازی شدند." });
+    const allocations = await prisma.userProject.findMany();
+    // خروجی شامل: [{ id: 1, user_id: 2, project_id: 5 }, ...]
+    res.json(allocations);
   } catch (error) {
-    console.error("Error syncing user projects:", error);
-    res.status(500).json({ error: "خطا در بروزرسانی تخصیص پروژه‌ها در دیتابیس" });
+    console.error("Error fetching user projects:", error);
+    res.status(500).json({ error: "خطا در دریافت تخصیص‌های پروژه." });
+  }
+});
+
+// ۲. ذخیره و به‌روزرسانی لیست پروژه‌های یک کاربر
+app.post("/api/users/:user_id/projects", async (req, res) => {
+  try {
+    const user_id = Number(req.params.user_id);
+    const { projectIds } = req.body; // آرایه‌ای از ID پروژه‌ها [1, 2, 5]
+
+    if (isNaN(user_id)) {
+      return res.status(400).json({ error: "شناسه کاربر نامعتبر است." });
+    }
+
+    // ۱. حذف تمامی تخصیص‌های قبلی این کاربر
+    await prisma.userProject.deleteMany({
+      where: { user_id }
+    });
+
+    // ۲. یکتا کردن پروژه ها با Set برای جلوگیری از اختصاص تکراری یک پروژه به یک فرد
+    if (Array.isArray(projectIds) && projectIds.length > 0) {
+      const uniqueProjectIds = Array.from(new Set(projectIds.map(Number)));
+
+      for (const project_id of uniqueProjectIds) {
+        await prisma.userProject.create({
+          data: {
+            user_id,
+            project_id
+          }
+        });
+      }
+    }
+
+    res.json({ success: true, message: "تخصیص پروژه‌ها با موفقیت بروزرسانی شد." });
+  } catch (error) {
+    console.error("Error updating user projects:", error);
+    res.status(500).json({ error: "خطا در ذخیره‌سازی تخصیص پروژه‌ها در دیتابیس." });
   }
 });
 
@@ -1367,28 +1481,44 @@ app.delete("/api/projects/:id", async (req, res) => {
   }
 });
 
-// DELETE a report period and all its reports cascades
-app.delete("/api/report-periods/:id", async (req, res) => {
+// 🔒 اندپوینت تغییر اجباری رمز عبور موقت توسط کاربر
+app.post("/api/auth/change-password", async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const { user_id, newPassword } = req.body;
 
-    // Find all reports in this period
-    const reports = await prisma.report.findMany({ where: { period_id: id } });
-    const reportIds = reports.map((r) => r.id);
+    if (!user_id || !newPassword || newPassword.length < 6) {
+      return res.status(400).json({ error: "رمز عبور جدید باید حداقل ۶ کاراکتر باشد." });
+    }
 
-    // Delete physical uploads
-    await cleanPhysicalFilesForReports(reportIds);
+    // ۱. هش کردن رمز عبور جدید
+    const hashedPassword = await bcrypt.hash(newPassword, SALT_ROUNDS);
 
-    // Delete period from PostgreSQL (Prisma onDelete: Cascade deletes reports)
-    await prisma.reportPeriod.delete({ where: { id } });
+    // ۲. آپدیت کاربر و غیرفعال کردن پرچم تغییر اجباری
+    const updatedUser = await prisma.user.update({
+      where: { id: Number(user_id) },
+      data: {
+        password: hashedPassword,
+        must_change_password: false,
+        password_changed_at: new Date(),
+      },
+    });
 
-    res.json({ success: true, message: "بازه گزارش‌دهی و تمامی داده‌های مربوطه با موفقیت حذف شدند." });
+    res.json({ 
+      success: true, 
+      message: "رمز عبور شما با موفقیت به روزرسانی شد.",
+      user: {
+        id: updatedUser.id,
+        username: updatedUser.username,
+        full_name: updatedUser.full_name,
+        role: updatedUser.role,
+        must_change_password: false
+      }
+    });
   } catch (error) {
-    console.error("Error deleting period:", error);
-    res.status(500).json({ error: "خطا در حذف بازه گزارش‌دهی از دیتابیس" });
+    console.error("Error changing password:", error);
+    res.status(500).json({ error: "خطا در تغییر رمز عبور در دیتابیس." });
   }
 });
-
 // -----------------------------
 // manager and ahmadi users password fix for security
 // -----------------------------

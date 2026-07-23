@@ -29,6 +29,7 @@ model User {
   full_name            String
   password             String        @default("123456")
   role                 Role          @default(user)
+  job_title            String?
   is_active            Boolean       @default(true)
   must_change_password Boolean       @default(true)
   password_changed_at  DateTime?

@@ -1,6 +1,6 @@
 // src/views/GatewayPortal.tsx
 import { useState } from "react";
-import { ShieldCheck, Truck, Cpu, ArrowLeft } from "lucide-react";
+import { ShieldCheck, Brain, Cpu, ArrowLeft } from "lucide-react";
 
 export default function GatewayPortal({ onSelectTraffic }: { onSelectTraffic: () => void }) {
   const [selectedTenant, setSelectedTenant] = useState<"traffic" | "new_unit" | null>(null);
@@ -56,7 +56,7 @@ export default function GatewayPortal({ onSelectTraffic }: { onSelectTraffic: ()
                   className="bg-white p-5 rounded-2xl border border-slate-200 hover:border-emerald-700 hover:shadow-md transition-all cursor-pointer text-center space-y-3 group"
                 >
                   <div className="w-12 h-12 bg-emerald-50 text-emerald-700 rounded-2xl flex items-center justify-center mx-auto group-hover:bg-emerald-700 group-hover:text-white transition-all">
-                    <Truck className="w-6 h-6" />
+                    <Brain className="w-6 h-6" />
                   </div>
                   <h4 className="font-bold text-slate-800 text-xs">واحد استراتژی</h4>
                   <p className="text-[10px] text-slate-400 leading-relaxed">سامانه پایش  پروژه‌های استراتژیک</p>

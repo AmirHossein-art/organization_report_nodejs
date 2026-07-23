@@ -4,8 +4,9 @@ import { User, Project, ReportPeriod, Report, DeadlineSetting } from "./types";
 import Sidebar from "./components/Sidebar";
 import Login from "./views/Login";
 import GatewayPortal from "./views/GatewayPortal";
+import MustChangePasswordModal from "./components/MustChangePasswordModal"; // 🟢 اضافه شدن مودال تغییر رمز
 
-// وارد کردن تمام ویوهای ماژولار (که در پوشه views می‌سازیم)
+// وارد کردن تمام ویوهای ماژولار
 import HomeDashboard from "./views/HomeDashboard";
 import SubmitReport from "./views/SubmitReport";
 import MyReports from "./views/MyReports";
@@ -18,8 +19,7 @@ import ProjectAllocations from "./views/ProjectAllocations";
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [authLoading, setAuthLoading] = useState(true); // استیت جدید برای جلوگیری از پرش صفحه در زمان بررسی کوکی
-
+  const [authLoading, setAuthLoading] = useState(true);
   const [showLogin, setShowLogin] = useState(false);
   
   const [currentView, setCurrentView] = useState<string>(() => {
@@ -78,7 +78,6 @@ export default function App() {
 
   const handleLogout = async () => {
     try {
-      // صدا زدن اِندپویند بک‌اِند برای حذف فیزیکی کوکی از مرورگر
       await fetch("/api/auth/logout", { method: "POST" });
     } catch (err) {
       console.error("خطا در خروج از سرور:", err);
@@ -88,7 +87,7 @@ export default function App() {
     }
   };
 
-  // نمایش یک لودینگ شیک با تم سازمانی در زمان بررسی وضعیت کوکی
+  // لودینگ در زمان بررسی نشست کاربری
   if (authLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-900 text-white font-sans" dir="rtl">
@@ -116,28 +115,22 @@ export default function App() {
     );
   }
 
-  if (!user) {
-    if (!showLogin) {
-      return <GatewayPortal onSelectTraffic={() => setShowLogin(true)} />;
-    }
-
-    return (
-      <Login 
-        onLoginSuccess={(loggedInUser) => {
-          setUser(loggedInUser);
-          localStorage.setItem("org_report_user", JSON.stringify(loggedInUser));
-          setCurrentView("home");
-        }} 
-      />
-    );
-  }
-
   return (
     <div className="min-h-screen flex flex-col md:flex-row bg-slate-50/50 font-sans" dir="rtl">
+      {/* 🔒 لایه مودال تغییر اجباری رمز عبور در صورت فعال بودن پرچم */}
+      {user && user.must_change_password && (
+        <MustChangePasswordModal
+          user={user}
+          onSuccess={(updatedUser) => {
+            setUser(updatedUser);
+          }}
+        />
+      )}
+
       {/* سایدبار ناوبری سیستم */}
       <Sidebar user={user} currentView={currentView} setCurrentView={setCurrentView} onLogout={handleLogout} />
 
-      {/*بخش نمایش داینامیک ویوها براساس انتخاب کاربر */}
+      {/* بخش نمایش داینامیک ویوها براساس انتخاب کاربر */}
       <main className="flex-1 p-6 md:p-8 max-w-7xl mx-auto w-full">
         {currentView === "home" && (
           <HomeDashboard 
@@ -154,19 +147,22 @@ export default function App() {
             projects={projects} 
             periods={periods} 
             user={user} 
-            allReports={allReports} // پروپ جدید اضافه شده از کدهای اصلی
+            allReports={allReports} 
+            onRefresh={fetchData}
+            onNavigate={(view) => setCurrentView(view)} // 🟢 اصلاح‌شده به setCurrentView
+          />
+        )}
+
+        {currentView === "my_reports" && (
+          <MyReports 
+            currentUser={user} 
+            reports={allReports} 
+            projects={projects} 
+            periods={periods} 
             onRefresh={fetchData} 
           />
         )}
-        {currentView === "my_reports" && (
-        <MyReports 
-          currentUser={user} 
-          reports={allReports} 
-          projects={projects} 
-          periods={periods} 
-          onRefresh={fetchData} 
-        />
-)}
+
         {/* روت‌های مدیریتی */}
         {user.role === "manager" && (
           <>

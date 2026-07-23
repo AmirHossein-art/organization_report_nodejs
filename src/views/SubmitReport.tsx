@@ -1,8 +1,8 @@
 // src/views/SubmitReport.tsx
 import { useState, useEffect } from "react";
-import { Plus, X, CheckCircle2, AlertTriangle, RefreshCw, AlertCircle, Clock } from "lucide-react";
+import { Plus, X, CheckCircle2, AlertTriangle, RefreshCw, AlertCircle, Clock, ShieldCheck, BarChart3, FolderGit2, ArrowLeft } from "lucide-react";
 import { Project, ReportPeriod, User, Report } from "../types";
-import { CustomSelect, ShamsiDatePicker } from ".././components";
+import { CustomSelect, ShamsiDatePicker } from "../components";
 
 interface SubmitReportProps {
   projects: Project[];
@@ -10,6 +10,7 @@ interface SubmitReportProps {
   user: User;
   allReports: Report[];
   onRefresh: () => void;
+  onNavigate?: (tab: string) => void; // 🟢 اضافه شدن پروپ تغییر تب
 }
 
 interface NextActionInput {
@@ -17,7 +18,7 @@ interface NextActionInput {
   target_date: string; 
 }
 
-export default function SubmitReport({ projects, periods, user, allReports, onRefresh }: SubmitReportProps) {
+export default function SubmitReport({ projects, periods, user, allReports, onRefresh, onNavigate }: SubmitReportProps) {
   const [subReportType, setSubReportType] = useState<"weekly" | "monthly">("weekly");
   const [subPeriodId, setSubPeriodId] = useState<number>(0);
   const [subProjectId, setSubProjectId] = useState<number>(0);
@@ -141,6 +142,89 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
     }
   };
 
+  // 🟢 نمایش کارت اختصاصی و شیک برای مدیر سیستم (به‌جای فرم ثبت گزارش)
+  if (user?.role === "manager") {
+    return (
+      <div className="space-y-6 animate-fade-in text-xs font-sans dir-rtl text-right my-4">
+        {/* هرو کارت شیک و مدرن مدیر */}
+        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 border border-slate-800/80 p-8 shadow-2xl text-white">
+          
+          {/* نور پس‌زمینه تزئینی */}
+          <div className="absolute -left-10 -bottom-10 w-60 h-60 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
+          <div className="absolute -right-10 -top-10 w-60 h-60 bg-blue-500/10 rounded-full blur-3xl pointer-events-none"></div>
+
+          <div className="relative z-10 space-y-6">
+            
+            {/* نشانگر نقش مدیر */}
+            <div className="flex items-center justify-between">
+              <span className="inline-flex items-center gap-2 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-3.5 py-1.5 rounded-full text-[11px] font-bold backdrop-blur-md">
+                <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                <span>پنل ویژه مدیران ارشد و ناظرین استراتژیک</span>
+              </span>
+
+              <span className="text-slate-400 text-[11px] font-sans">
+                پورتال پایش سازمان
+              </span>
+            </div>
+
+            {/* متن اصلی */}
+            <div className="space-y-2 max-w-2xl">
+              <h2 className="text-xl font-extrabold text-white leading-tight">
+                جناب آقای {user.full_name}؛ شما در وضعیت «نظارت و مدیریت ارشد» قرار دارید
+              </h2>
+              <p className="text-slate-300 text-xs leading-relaxed font-light">
+                فرم درج عملکرد زیر برای ثبت گزارش‌های اجرایی مسئولین پروژه‌ها طراحی شده است. حساب کاربری شما دارای سطح دسترسی عالی جهت **ممیزی هوش مصنوعی، بررسی انحراف برنامه، و تخصیص سطح دسترسی‌ها** می‌باشد.
+              </p>
+            </div>
+
+            {/* میانبرهای سریع مدیریتی */}
+            <div className="pt-2 grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <button
+                onClick={() => onNavigate && onNavigate("manager_dashboard")}
+                className="bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl p-3.5 transition-all flex items-center justify-between group cursor-pointer"
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
+                    <BarChart3 className="w-4 h-4" />
+                  </div>
+                  <span className="font-bold text-slate-200 text-xs">پیشخوان پایش کل</span>
+                </div>
+                <ArrowLeft className="w-4 h-4 text-slate-400 group-hover:-translate-x-1 transition-transform" />
+              </button>
+
+              <button
+                onClick={() => onNavigate && onNavigate("project_allocations")}
+                className="bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl p-3.5 transition-all flex items-center justify-between group cursor-pointer"
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center">
+                    <FolderGit2 className="w-4 h-4" />
+                  </div>
+                  <span className="font-bold text-slate-200 text-xs">تخصیص پروژه‌ها</span>
+                </div>
+                <ArrowLeft className="w-4 h-4 text-slate-400 group-hover:-translate-x-1 transition-transform" />
+              </button>
+
+              <button
+                onClick={() => onNavigate && onNavigate("my_reports")}
+                className="bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl p-3.5 transition-all flex items-center justify-between group cursor-pointer"
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-purple-500/20 text-purple-400 flex items-center justify-center">
+                    <ShieldCheck className="w-4 h-4" />
+                  </div>
+                  <span className="font-bold text-slate-200 text-xs">ممیزی هوشمند WBS</span>
+                </div>
+                <ArrowLeft className="w-4 h-4 text-slate-400 group-hover:-translate-x-1 transition-transform" />
+              </button>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 animate-fade-in">
       {/* پیام‌های وضعیت */}
@@ -227,7 +311,6 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
               </p>
             </div>
           ) : subPeriodId === 0 ? (
-            /* 🟢 کارت جدید: اگر بازه انتخاب نشده باشد (روی حالت 0)، فرم مخفی شده و این پیام شیک با تم طلایی نشان داده می‌شود */
             <div className="bg-amber-50/60 border border-amber-200 text-amber-900 p-8 rounded-2xl flex flex-col items-center justify-center text-center gap-3 animate-fade-in">
               <Clock className="w-8 h-8 text-amber-600 animate-pulse" />
               <h4 className="font-bold text-sm">بازه گزارش‌دهی انتخاب نشده است</h4>
@@ -236,7 +319,6 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
               </p>
             </div>
           ) : (
-            /* اگر بازه انتخاب شده بود و گزارش هم تکراری نبود، کل فرم با پالت سبز رندر می‌شود */
             <>
               {/* فیلد فعالیت‌های انجام شده */}
               <div className="space-y-2">
@@ -262,7 +344,6 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* 🛠️ فیکس دیت‌پیکر: کلاس اسکرول پدربزرگ حذف شد تا تقویم بیرون بزند */}
                 <div className="bg-slate-50/50 p-5 rounded-2xl border border-slate-200/60 space-y-4">
                   <div className="flex justify-between items-center border-b border-slate-200 pb-2">
                     <label className="text-sm font-bold text-slate-850">اقدامات آتی و برنامه پیش‌رو</label>
@@ -276,7 +357,6 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
                     </button>
                   </div>
 
-                  {/* حذف اسکرول کادر پدربزرگ برای رهایی کامل دیت‌پیکر شمسی */}
                   <div className="space-y-3 pr-1">
                     {nextActions.map((item, index) => (
                       <div key={index} className="flex flex-col md:flex-row gap-3 items-end md:items-center bg-white p-3 rounded-xl border border-slate-200/70 shadow-2xs">

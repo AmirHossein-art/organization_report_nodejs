@@ -193,3 +193,4 @@ exports/
 .vscode/
 
 /src/generated/prisma
+/wbs_files

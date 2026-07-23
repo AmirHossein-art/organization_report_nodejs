@@ -29,7 +29,7 @@ export default function HomeDashboard({ user, users, projects, periods, allRepor
       <div className="bg-gradient-to-r from-emerald-950 via-slate-900 to-emerald-950 rounded-3xl p-6 md:p-8 text-white shadow-xl relative overflow-hidden border border-emerald-500/10">
         <div className="absolute -right-10 -top-10 w-40 h-40 bg-amber-500/5 rounded-full blur-2xl"></div>
         <div className="space-y-3 relative z-10">
-          <span className="bg-amber-500/20 backdrop-blur-xs text-amber-400 text-[10px] px-3 py-1 rounded-full font-bold border border-amber-500/20">
+          <span className="bg-amber-500/20 backdrop-blur-xs text-amber-400 text-[10px] px-3 py-1 rounded-full mb-3 inline-block font-bold border border-amber-500/20">
             نسخه جدید ماژولار ۱.۱.۰
           </span>
           <h2 className="text-xl md:text-2xl font-extrabold flex items-center gap-2">
@@ -135,7 +135,7 @@ export default function HomeDashboard({ user, users, projects, periods, allRepor
             </li>
             <li className="flex items-center gap-3">
               <span className="w-1.5 h-1.5 bg-amber-500 rounded-full flex-shrink-0"></span>
-              کنترل ماتریس دسترسی و تخصیص دقیق پروژه‌های مصوب به کارشناسان سازمان
+              کنترل ماتریس دسترسی و تخصیص دقیق پروژه‌های مصوب به معاونین سازمان
             </li>
             <li className="flex items-center gap-3">
               <span className="w-1.5 h-1.5 bg-amber-500 rounded-full flex-shrink-0"></span>

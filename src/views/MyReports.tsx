@@ -539,9 +539,9 @@ function ManagerVisualBubbleExplorer() {
         <div>
           <h2 className="text-xl font-black text-slate-900 flex items-center gap-2">
             <Sparkles className="w-6 h-6 text-amber-500" />
-            <span>آرشیو لایه‌ای و کاوشگر دیداری تمامی پروژه‌ها</span>
+            <span>کاوشگر دیداری تمامی پروژه‌ها</span>
           </h2>
-          <p className="text-slate-500 text-xs mt-1">
+          <p className="text-slate-500 text-xs mt-5">
             مشاهده گزارش‌های خام با کلیک روی حباب، و ممیزی مستقیم WBS با دکمه طلایی
           </p>
         </div>
@@ -552,7 +552,7 @@ function ManagerVisualBubbleExplorer() {
             className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-4 py-2 rounded-2xl text-xs flex items-center gap-2 transition-all cursor-pointer shadow-md shrink-0"
           >
             <ArrowRight className="w-4 h-4" />
-            <span>بازگشت به نمای تمام پروژه‌ها ↩️</span>
+            <span>بازگشت به نمای تمام پروژه‌ها </span>
           </button>
         ) : (
           <div className="relative w-full md:w-64">
