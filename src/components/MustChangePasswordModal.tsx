@@ -18,6 +18,11 @@ export default function MustChangePasswordModal({ user, onSuccess }: MustChangeP
     e.preventDefault();
     setErrorMsg("");
 
+    if (!user || !user.id) {
+      setErrorMsg("اطلاعات کاربر یافت نشد. لطفاً مجدداً وارد شوید.");
+      return;
+    }
+
     if (newPassword.length < 6) {
       setErrorMsg("رمز عبور جدید باید حداقل ۶ کاراکتر باشد.");
       return;

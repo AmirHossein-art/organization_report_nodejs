@@ -579,38 +579,6 @@ app.get("/api/auth/me", async (req, res) => {
   }
 });
 
-app.post("/api/auth/change-password", async (req, res) => {
-  try {
-    const { userId, newPassword } = req.body;
-
-    // ۱. بررسی وجود کاربر با شناسه ارسال شده
-    const user = await prisma.user.findUnique({
-      where: { id: parseInt(userId) }
-    });
-
-    if (!user) {
-      return res.status(404).json({ error: "کاربر مورد نظر یافت نشد." });
-    }
-
-    // ۲. هش کردن رمز عبور جدید و بروزرسانی آن در دیتابیس
-    const hashedNewPassword = await bcrypt.hash(newPassword, SALT_ROUNDS);
-    await prisma.user.update({
-      where: { id: parseInt(userId) },
-      data: {
-        password: hashedNewPassword,
-        must_change_password: false, // دیگر نیازی به تغییر رمز اجباری در ورودهای بعدی نیست
-        password_changed_at: new Date(), // ذخیره تاریخ دقیق تغییر رمز به زمان فعلی دیتابیس
-      }
-    });
-
-    res.json({ success: true, message: "رمز عبور با موفقیت تغییر یافت." });
-
-  } catch (error) {
-    console.error("Change password error:", error);
-    res.status(500).json({ error: "خطا در ذخیره‌سازی رمز عبور جدید در دیتابیس" });
-  }
-});
-
 // --- User Management ---
 app.get("/api/users", async (_req, res) => {
   try {
@@ -1320,7 +1288,7 @@ app.get("/api/dashboard/summary", async (req, res) => {
   try {
     const periodId = parseInt(req.query.period_id as string);
     const projectId = req.query.project_id ? parseInt(req.query.project_id as string) : null;
-    const userId = req.query.user_id ? parseInt(req.query.user_id as string) : null;
+    const user_id = req.query.user_id ? parseInt(req.query.user_id as string) : null;
 
     const period = await prisma.reportPeriod.findUnique({ where: { id: periodId } });
     if (!period) {
@@ -1349,7 +1317,7 @@ app.get("/api/dashboard/summary", async (req, res) => {
     let expectedPairs: any[] = [];
     for (const up of userProjects) {
       if (projectId && up.project_id !== projectId) continue;
-      if (userId && up.user_id !== userId) continue;
+      if (user_id && up.user_id !== user_id) continue;
 
       expectedPairs.push({
         user: up.user,
@@ -1481,25 +1449,68 @@ app.delete("/api/projects/:id", async (req, res) => {
   }
 });
 
-// 🔒 اندپوینت تغییر اجباری رمز عبور موقت توسط کاربر
+// تابع کمکی تبدیل اعداد فارسی/عربی به انگلیسی و حذف فاصله‌های اضافی
+const toEnglishDigits = (str: string): string => {
+  if (!str) return "";
+  return str
+    .replace(/[۰-۹]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".indexOf(d).toString())
+    .replace(/[٠-٩]/g, (d) => "٠١٢٣٤٥٦٧٨٩".indexOf(d).toString())
+    .trim();
+};
+
+// 🔒 تنها اندپوینت معتبر تغییر اجباری رمز عبور موقت توسط کاربر
 app.post("/api/auth/change-password", async (req, res) => {
   try {
-    const { user_id, newPassword } = req.body;
+    const { user_id, userId, newPassword } = req.body;
+    const targetId = Number(user_id || userId);
 
-    if (!user_id || !newPassword || newPassword.length < 6) {
+    if (!targetId || isNaN(targetId)) {
+      return res.status(400).json({ error: "شناسه کاربر ارسال نشده یا نامعتبر است." });
+    }
+
+    // ۱. نرم‌افزارسازی کلمه عبور ارسالی (تبدیل کیبورد فارسی به انگلیسی)
+    const normalizedPassword = toEnglishDigits(newPassword || "");
+
+    if (!normalizedPassword || normalizedPassword.length < 6) {
       return res.status(400).json({ error: "رمز عبور جدید باید حداقل ۶ کاراکتر باشد." });
     }
 
-    // ۱. هش کردن رمز عبور جدید
-    const hashedPassword = await bcrypt.hash(newPassword, SALT_ROUNDS);
+    // ۲. بررسی وجود کاربر در دیتابیس
+    const existingUser = await prisma.user.findUnique({
+      where: { id: targetId },
+    });
 
-    // ۲. آپدیت کاربر و غیرفعال کردن پرچم تغییر اجباری
+    if (!existingUser) {
+      return res.status(404).json({ error: "کاربر مورد نظر در سیستم یافت نشد." });
+    }
+
+    // ۳. بررسی عدم تکراری بودن رمز عبور جدید با رمز فعلی
+    let isSamePassword = false;
+    if (
+      existingUser.password.startsWith("$2a$") || 
+      existingUser.password.startsWith("$2b$") || 
+      existingUser.password.startsWith("$2y$")
+    ) {
+      isSamePassword = await bcrypt.compare(normalizedPassword, existingUser.password);
+    } else {
+      isSamePassword = (normalizedPassword === existingUser.password);
+    }
+
+    if (isSamePassword) {
+      return res.status(400).json({ 
+        error: "رمز عبور جدید نمی‌تواند مشابه رمز عبور موقت فعلی باشد. لطفاً رمز جدیدی وارد نمایید." 
+      });
+    }
+
+    // ۴. هش کردن رمز عبور جدید
+    const hashedPassword = await bcrypt.hash(normalizedPassword, 10);
+
+    // ۵. به‌روزرسانی رمز عبور در دیتابیس
     const updatedUser = await prisma.user.update({
-      where: { id: Number(user_id) },
+      where: { id: targetId },
       data: {
         password: hashedPassword,
         must_change_password: false,
-        password_changed_at: new Date(),
       },
     });
 
@@ -1511,14 +1522,16 @@ app.post("/api/auth/change-password", async (req, res) => {
         username: updatedUser.username,
         full_name: updatedUser.full_name,
         role: updatedUser.role,
+        job_title: updatedUser.job_title,
         must_change_password: false
       }
     });
   } catch (error) {
-    console.error("Error changing password:", error);
-    res.status(500).json({ error: "خطا در تغییر رمز عبور در دیتابیس." });
+    console.error("Change password error:", error);
+    res.status(500).json({ error: "خطا در ذخیره‌سازی رمز عبور جدید در دیتابیس." });
   }
 });
+
 // -----------------------------
 // manager and ahmadi users password fix for security
 // -----------------------------
