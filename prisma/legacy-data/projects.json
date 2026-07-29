@@ -1,0 +1,140 @@
+[
+  {
+    "code": "STR-TRAFFIC-DATA-MGMT",
+    "title": "توسعه و به‌روزرسانی رصدخانه",
+    "aliases": [
+      "پروژه توسعه و به روزرسانی رصدخانه"
+    ],
+    "description": null,
+    "isActive": true
+  },
+  {
+    "code": "STR-SUBURBAN-TRANSPORT",
+    "title": "ساماندهی حمل‌ونقل شهرهای حومه‌ای",
+    "aliases": [
+      "ساماندهی حمل ونقل شهرهای حومه ای"
+    ],
+    "description": null,
+    "isActive": true
+  },
+  {
+    "code": "STR-HOV-CHAMRAN-IMAMALI-HEMMAT",
+    "title": "HOV بزرگراه‌های چمران و امام علی (ع) و همت",
+    "description": null,
+    "isActive": true
+  },
+  {
+    "code": "STR-TRAFFIC-PLAN-UX",
+    "title": "بهبود تجربه کاربران طرح ترافیک",
+    "description": null,
+    "isActive": true
+  },
+  {
+    "code": "STR-EV-CHARGING",
+    "title": "توسعه جایگاه‌های شارژ خودرو برقی",
+    "description": null,
+    "isActive": true
+  },
+  {
+    "code": "STR-PARKING-INTEGRATED-OPS",
+    "title": "یکپارچه‌سازی بهره‌برداری از پارکینگ‌ها",
+    "description": null,
+    "isActive": true
+  },
+  {
+    "code": "STR-CURBSIDE-PARKING-AUCTIONS",
+    "title": "مزایدات جدید پارک حاشیه‌ای",
+    "description": null,
+    "isActive": true
+  },
+  {
+    "code": "STR-CURBSIDE-PARKING-BILLING",
+    "title": "بیلینگ و وصول قراردادهای فعلی پارک حاشیه‌ای",
+    "description": null,
+    "isActive": true
+  },
+  {
+    "code": "STR-TRAFFIC-STUDY-LOCAL-DIRECTION",
+    "title": "ارائه مدل اجرایی مدیریت جهت حرکت معابر محلی با هدف بهبود عملکرد ترافیکی محلات",
+    "description": null,
+    "isActive": true
+  },
+  {
+    "code": "STR-TRAFFIC-SAFETY-ANALYTICS",
+    "title": "سیستم تحلیل و مدیریت ایمنی ترافیک در شبکه معابر شهر تهران",
+    "description": null,
+    "isActive": true
+  },
+  {
+    "code": "STR-GREEN-COURIER-OPERATIONS",
+    "title": "پیک سبز",
+    "description": null,
+    "isActive": true
+  },
+  {
+    "code": "STR-VITALITY-ROUTE",
+    "title": "احداث مسیر سرزندگی در کریدور غربی-شرقی",
+    "description": null,
+    "isActive": true
+  },
+  {
+    "code": "STR-BICYCLE-STATIONS",
+    "title": "طراحی، جانمایی، ساخت و نصب جایگاه‌های دوچرخه در نقاط جاذب سفر",
+    "description": null,
+    "isActive": true
+  },
+  {
+    "code": "STR-CLEAN-TRANSPORT-SUBSIDY",
+    "title": "اعطای یارانه حمل‌ونقل پاک در شهر تهران",
+    "description": null,
+    "isActive": true
+  },
+  {
+    "code": "STR-ACTIVE-TRANSPORT-GEN-Z",
+    "title": "ترویج حمل‌ونقل فعال در نسل Z",
+    "aliases": [
+      "تسهیلات حمل و نقل پاک"
+    ],
+    "description": null,
+    "isActive": true
+  },
+  {
+    "code": "STR-ACTIVE-SHARING-SYSTEM",
+    "title": "بهره‌برداری و راه‌اندازی سیستم اشتراکی فعال در مسیر سرزندگی",
+    "description": null,
+    "isActive": true
+  },
+  {
+    "code": "STR-CLEAN-TRANSPORT-COMPANY-GUIDELINE",
+    "title": "تدوین دستورالعمل ساماندهی شرکت‌های حمل‌ونقل پاک برای خدمات دوچرخه اشتراکی تهران",
+    "description": null,
+    "isActive": true
+  },
+  {
+    "code": "STR-TRAFFIC-EDUCATION-MEDIA",
+    "title": "برنامه‌های آموزشی، ترویجی و تبلیغی با تصویر شهر",
+    "description": null,
+    "isActive": true
+  },
+  {
+    "code": "STR-GREEN-COURIER-LUNCH",
+    "title": "راه‌اندازی سامانه پیک سبز شهرداری تهران",
+    "aliases": [
+      "راه اندازی پیک سبز"
+    ],
+    "description": null,
+    "isActive": true
+  },
+  {
+    "code": "STR-TRAFFIC-EDUCATION-PARKS",
+    "title": "تجهیز پارک آموزش ترافیک",
+    "description": null,
+    "isActive": true
+  },
+  {
+    "code": "STR-TRAFFIC-PR",
+    "title": "تبلیغات ترافیک (روابط عمومی)",
+    "description": null,
+    "isActive": true
+  }
+]

@@ -35,7 +35,7 @@ export default function HomeDashboard({ user, users, projects, periods, allRepor
           <h2 className="text-xl md:text-2xl font-extrabold flex items-center gap-2">
             <span>{user.full_name}</span>
             <span className="text-amber-400 font-normal text-sm bg-white/5 px-2.5 py-0.5 rounded-lg border border-white/5">
-              {isManager ? "مدیر سیستم" : "کارشناس فنی"}
+              {isManager ? "مدیر سیستم" : " معاون محترم"}
             </span>
           </h2>
           <p className="text-slate-300 text-xs md:text-sm max-w-6xl leading-relaxed">

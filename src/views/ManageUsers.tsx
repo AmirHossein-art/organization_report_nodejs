@@ -146,7 +146,7 @@ export default function ManageUsers({ users = [], onRefresh }: ManageUsersProps)
               required 
               value={newUsername} 
               onChange={(e) => setNewUsername(e.target.value)} 
-              placeholder="نام کاربری (انگلیسی)" 
+              placeholder="نام کاربری (انگلیسی) یا شماره همراه" 
               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-right dir-rtl text-xs" 
             />
             <input 
@@ -300,7 +300,7 @@ export default function ManageUsers({ users = [], onRefresh }: ManageUsersProps)
                 required 
                 value={editUserUsername} 
                 onChange={(e) => setEditUserUsername(e.target.value)} 
-                placeholder="نام کاربری"
+                placeholder=" نام کاربری یا شماره همراه"
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-right dir-rtl text-xs" 
               />
               <input 
