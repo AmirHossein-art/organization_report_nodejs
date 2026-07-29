@@ -21,6 +21,9 @@ import {
 } from "lucide-react";
 import { User, Report, Project, ReportPeriod } from "../types";
 
+import ProjectBubbleNode from "../components/ProjectBubbleNode";
+import ProjectNextActionsModal, { NextActionItem } from "../components/ProjectNextActionsDrawer";
+
 // 🌐 تابع کمکی تبدیل اعداد انگلیسی به فارسی
 export const toPersianDigits = (n: string | number | undefined | null): string => {
   if (n === undefined || n === null) return "";
@@ -455,57 +458,77 @@ function SingleReportAuditModal({
 // =================================================================
 // 🚀 ۳. کاوشگر دیداری مدیر (Visual Explorer)
 // =================================================================
+// جایگزین بخش ManagerVisualBubbleExplorer در MyReports.tsx
+
 function ManagerVisualBubbleExplorer() {
   const [projectClusters, setProjectClusters] = useState<any[]>([]);
+  const [nextActions, setNextActions] = useState<NextActionItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
   // استیت‌های لایه‌بندی
   const [activeProjectLayer, setActiveProjectLayer] = useState<any | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
 
-  // استیت مودال مشاهده گزارش خام
+  // استیت مودال‌ها
   const [rawModalOpen, setRawModalOpen] = useState<boolean>(false);
   const [selectedRawReport, setSelectedRawReport] = useState<any | null>(null);
 
-  // استیت مودال ممیزی AI
   const [auditModalOpen, setAuditModalOpen] = useState<boolean>(false);
   const [selectedAuditReport, setSelectedAuditReport] = useState<{ id: number; title: string } | null>(null);
 
+  const [actionsModalOpen, setActionsModalOpen] = useState<boolean>(false);
+  const [selectedProjectForActions, setSelectedProjectForActions] = useState<Project | null>(null);
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const [projRes, repRes, actionsRes] = await Promise.all([
+        fetch("/api/projects"),
+        fetch("/api/reports"),
+        fetch("/api/next-actions"),
+      ]);
+
+      const fetchedProjects = projRes.ok ? await projRes.json() : [];
+      const fetchedReports = repRes.ok ? await repRes.json() : [];
+      const fetchedNextActions = actionsRes.ok ? await actionsRes.json() : [];
+
+      setNextActions(fetchedNextActions);
+
+      const combined = (fetchedProjects || []).map((p: any) => {
+        const matchingReports = (fetchedReports || []).filter(
+          (r: any) => r.project_id === p.id || r.project_title === p.title
+        );
+        return {
+          ...p,
+          project_title: p.title,
+          reports: matchingReports,
+        };
+      });
+
+      setProjectClusters(combined);
+    } catch (err) {
+      console.error("Error fetching visual data:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      try {
-        const [projRes, repRes] = await Promise.all([
-          fetch("/api/projects"),
-          fetch("/api/reports")
-        ]);
-
-        const fetchedProjects = projRes.ok ? await projRes.json() : [];
-        const fetchedReports = repRes.ok ? await repRes.json() : [];
-
-        const combined = (fetchedProjects || []).map((p: any) => {
-          const matchingReports = (fetchedReports || []).filter(
-            (r: any) => r.project_id === p.id || r.project_title === p.title
-          );
-          return {
-            id: p.id,
-            project_title: p.title,
-            code: p.code,
-            description: p.description,
-            wbs_file_name: p.wbs_file_name,
-            reports: matchingReports,
-          };
-        });
-
-        setProjectClusters(combined);
-      } catch (err) {
-        console.error("Error fetching visual data:", err);
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchData();
   }, []);
+
+  const handleToggleActionStatus = async (actionId: number, currentStatus: boolean) => {
+    try {
+      const res = await fetch(`/api/next-actions/${actionId}/toggle`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_completed: !currentStatus }),
+      });
+      if (res.ok) fetchData();
+    } catch (err) {
+      alert("خطا در به‌روزرسانی وضعیت اقدام.");
+    }
+  };
 
   const filteredProjects = projectClusters.filter((p: any) =>
     (p.project_title || "").includes(searchQuery) ||
@@ -520,10 +543,14 @@ function ManagerVisualBubbleExplorer() {
     setAuditModalOpen(true);
   };
 
+  const handleOpenProjectActionsModal = (proj: any) => {
+    setSelectedProjectForActions(proj as Project);
+    setActionsModalOpen(true);
+  };
+
   return (
     <div className="space-y-6 animate-fade-in text-right dir-rtl font-sans">
       
-      {/* 🔮 انیمیشن شناور زنده حباب‌ها */}
       <style>{`
         @keyframes gentleFloat {
           0%, 100% { transform: translateY(0px); }
@@ -534,15 +561,15 @@ function ManagerVisualBubbleExplorer() {
         }
       `}</style>
 
-      {/* هدر بالای کاوشگر */}
+      {/* هدر کاوشگر */}
       <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-2xs flex flex-col md:flex-row justify-between md:items-center gap-4">
         <div>
           <h2 className="text-xl font-black text-slate-900 flex items-center gap-2">
             <Sparkles className="w-6 h-6 text-amber-500" />
             <span>کاوشگر دیداری تمامی پروژه‌ها</span>
           </h2>
-          <p className="text-slate-500 text-xs mt-5">
-            مشاهده گزارش‌های خام با کلیک روی حباب، و ممیزی مستقیم WBS با دکمه طلایی
+          <p className="text-slate-500 text-xs mt-1">
+            مشاهده گزارش‌های خام با کلیک روی دکمه داخلی، و ممیزی مستقیم WBS با دکمه طلایی
           </p>
         </div>
 
@@ -552,7 +579,7 @@ function ManagerVisualBubbleExplorer() {
             className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-4 py-2 rounded-2xl text-xs flex items-center gap-2 transition-all cursor-pointer shadow-md shrink-0"
           >
             <ArrowRight className="w-4 h-4" />
-            <span>بازگشت به نمای تمام پروژه‌ها </span>
+            <span>بازگشت به نمای تمام پروژه‌ها</span>
           </button>
         ) : (
           <div className="relative w-full md:w-64">
@@ -568,52 +595,36 @@ function ManagerVisualBubbleExplorer() {
         )}
       </div>
 
-      {/* 🌟 بوم اصلی روشن */}
-      <div className="bg-slate-50/80 rounded-3xl p-8 md:p-14 border border-slate-200/90 relative min-h-[480px] overflow-visible flex items-center justify-center shadow-inner">
+      {/* 🌟 بوم اصلی کاوشگر با کنترل سرریز (Overflow Protection) */}
+      <div className="bg-slate-50/80 rounded-3xl p-6 md:p-10 border border-slate-200/90 relative min-h-[480px] overflow-hidden flex items-center justify-center shadow-inner">
         <div className="absolute inset-0 bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] [background-size:20px_20px] opacity-40 rounded-3xl pointer-events-none"></div>
 
         {loading ? (
           <div className="text-center text-slate-500 text-xs flex items-center justify-center gap-2 z-10">
             <RefreshCw className="w-6 h-6 animate-spin text-emerald-600" />
-            <span>در حال دریافت و ساخت منظومه دیداری پروژه‌ها...</span>
+            <span>در حال دریافت و ساخت منظومه دیداری پروژه‌ها و سیارک‌ها...</span>
           </div>
         ) : !activeProjectLayer ? (
           
-          /* 🌟 لایه ۱: حباب‌های پروژه‌های کلان */
-          <div className="relative z-10 w-full flex flex-wrap items-center justify-center gap-10 md:gap-14 pt-12 pb-8">
+          /* 🌟 لایه ۱: چیدمان متوازن با گپ مناسب و امکان اسکرول عمودی بدون برش حباب‌ها */
+          <div className="relative z-10 w-full flex flex-wrap items-center justify-center gap-x-12 gap-y-16 py-8 max-h-[72vh] overflow-y-auto px-4">
             {filteredProjects.length === 0 ? (
               <div className="text-slate-400 text-xs text-center">هیچ پروژه‌ای تعریف نشده است.</div>
             ) : (
-              filteredProjects.map((proj: any, idx: number) => {
-                const reportCount = proj.reports.length;
-                const bubbleStyle = reportCount > 0
-                  ? "from-emerald-600 to-teal-800 border-emerald-400/80 shadow-emerald-600/30"
-                  : "from-amber-500 to-amber-700 border-amber-300/80 shadow-amber-500/30";
+              filteredProjects.map((proj: any) => {
+                const projActions = nextActions.filter((a) => a.project?.id === proj.id);
+                const hasLate = proj.reports.some((r: any) => r.status === "late");
 
                 return (
-                  <button
-                    key={idx}
-                    onClick={() => setActiveProjectLayer(proj)}
-                    style={{
-                      animationDelay: `${(idx % 4) * 0.7}s`,
-                      animationDuration: `${4 + (idx % 3) * 0.5}s`
-                    }}
-                    className={`bubble-floating w-44 h-44 md:w-52 md:h-52 rounded-full bg-gradient-to-br ${bubbleStyle} border-4 shadow-2xl flex flex-col items-center justify-center text-center p-4 text-white transition-all duration-300 transform hover:scale-110 hover:-translate-y-2 cursor-pointer relative group`}
-                  >
-                    <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center mb-1">
-                      <FolderKanban className="w-5 h-5 text-white" />
-                    </div>
-
-                    <span className="font-black text-xs md:text-sm line-clamp-2 px-2">{proj.project_title}</span>
-                    
-                    <div className="mt-2 text-[10px] bg-black/30 backdrop-blur-md px-3 py-1 rounded-full font-bold">
-                      {toPersianDigits(reportCount)} گزارش ثبت‌شده
-                    </div>
-
-                    <span className="text-[10px] text-amber-300 font-extrabold mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      کلیک جهت ورود و مشاهده 🔍
-                    </span>
-                  </button>
+                  <ProjectBubbleNode
+                    key={proj.id}
+                    project={proj as Project}
+                    actions={projActions}
+                    reportsCount={proj.reports.length}
+                    hasLateReports={hasLate}
+                    onOpenModal={() => handleOpenProjectActionsModal(proj)}
+                    onOpenReportsLayer={() => setActiveProjectLayer(proj)}
+                  />
                 );
               })
             )}
@@ -621,8 +632,8 @@ function ManagerVisualBubbleExplorer() {
 
         ) : (
 
-          /* 🌟 لایه ۲: حباب‌های گزارش‌های زمان‌بندی‌شده یک پروژه */
-          <div className="relative z-10 w-full flex flex-wrap items-center justify-center gap-8 md:gap-12 pt-16 pb-8">
+          /* 🌟 لایه ۲: گزارش‌های یک پروژه */
+          <div className="relative z-10 w-full flex flex-wrap items-center justify-center gap-8 md:gap-12 py-10 max-h-[72vh] overflow-y-auto px-4">
             {activeProjectLayer.reports.length === 0 ? (
               <div className="text-slate-600 text-xs text-center bg-white p-8 rounded-3xl border border-slate-200 shadow-xs space-y-2">
                 <p className="font-bold text-slate-800">هیچ گزارشی برای پروژه «{activeProjectLayer.project_title}» ثبت نشده است.</p>
@@ -638,7 +649,6 @@ function ManagerVisualBubbleExplorer() {
                 return (
                   <div key={idx} className="group relative flex flex-col items-center">
                     
-                    {/* کارت شناور راهنما (Tooltip) */}
                     <div className="absolute bottom-full mb-3 right-1/2 translate-x-1/2 w-72 bg-white text-slate-800 p-4 rounded-2xl shadow-2xl border border-slate-200/90 text-xs opacity-0 scale-95 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto transition-all duration-200 z-50 space-y-2 backdrop-blur-md dir-rtl">
                       <div className="flex justify-between items-center border-b border-slate-100 pb-2">
                         <span className="font-extrabold text-emerald-800">{rep.user_full_name || rep.user_username}</span>
@@ -649,18 +659,8 @@ function ManagerVisualBubbleExplorer() {
                       <p className="text-[11px] text-slate-600 line-clamp-2 leading-relaxed">
                         <strong>خلاصه فعالیت:</strong> {rep.activities_done}
                       </p>
-                      
-                      <div className="pt-2 border-t border-slate-100 text-center space-y-1">
-                        <span className="text-[10px] text-emerald-700 font-bold block">
-                          👆 کلیک روی حباب: مشاهده متن گزارش کامل
-                        </span>
-                        <span className="text-[10px] text-amber-600 font-bold block">
-                          ✨ کلیک روی دکمه طلایی: ممیزی مستقیم WBS
-                        </span>
-                      </div>
                     </div>
 
-                    {/* 🟢 حباب اصلی (کلیک = مشاهده متن خام گزارش) */}
                     <div
                       onClick={() => {
                         setSelectedRawReport(rep);
@@ -677,10 +677,9 @@ function ManagerVisualBubbleExplorer() {
                         {toPersianDigits(rep.period_title)}
                       </span>
 
-                      {/* 🟡 دکمه جداگانه و مستقل ممیزی AI (با e.stopPropagation جهت عدم باز شدن گزارش خام) */}
                       <button
                         onClick={(e) => {
-                          e.stopPropagation(); // 👈 جلوگیری از باز شدن مودال گزارش خام
+                          e.stopPropagation();
                           handleOpenAiAudit(rep);
                         }}
                         className="mt-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-3 py-1 rounded-full text-[10px] transition-all shadow-md active:scale-95 flex items-center gap-1 cursor-pointer border border-amber-300/40"
@@ -700,7 +699,6 @@ function ManagerVisualBubbleExplorer() {
         )}
       </div>
 
-      {/* 📄 مودال ۱: مشاهده متن خام گزارش */}
       <RawReportDetailsModal
         report={selectedRawReport}
         isOpen={rawModalOpen}
@@ -708,7 +706,6 @@ function ManagerVisualBubbleExplorer() {
         onRunAudit={handleOpenAiAudit}
       />
 
-      {/* 🏛️ مودال ۲: ممیزی استراتژیک AI */}
       <SingleReportAuditModal
         reportId={selectedAuditReport?.id || null}
         reportTitle={selectedAuditReport?.title || ""}
@@ -716,10 +713,17 @@ function ManagerVisualBubbleExplorer() {
         onClose={() => setAuditModalOpen(false)}
       />
 
+      <ProjectNextActionsModal
+        isOpen={actionsModalOpen}
+        onClose={() => setActionsModalOpen(false)}
+        project={selectedProjectForActions}
+        actions={nextActions.filter((a) => a.project?.id === selectedProjectForActions?.id)}
+        onToggleStatus={handleToggleActionStatus}
+      />
+
     </div>
   );
 }
-
 // =================================================================
 // 📄 کامپوننت اصلی MyReports
 // =================================================================
@@ -740,7 +744,7 @@ export default function MyReports({ currentUser, user, reports = [], allReports 
     rawRole.includes("admin") || 
     rawRole.includes("مدیر");
 
-  // 🟢 برای مدیران -> کاوشگر دیداری حباب‌ها
+  // 🟢 برای مدیران -> کاوشگر دیداری حباب‌ها همراه با سیارک‌های چرخان
   if (isManagerOrAdmin) {
     return <ManagerVisualBubbleExplorer />;
   }

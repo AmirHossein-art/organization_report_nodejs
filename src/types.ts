@@ -53,6 +53,8 @@ export interface NextAction {
   report_id: number;
   action_text: string;
   target_date: string; // تاریخ به صورت رشته متنی "YYYY-MM-DD" از API می‌آید
+  is_completed: boolean;
+  completed_at:  string | null;
 }
 
 export interface Report {

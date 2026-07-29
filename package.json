@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
-    "start": "node dist/server.cjs"
+    "start": "node dist/server.cjs",
+    "db:seed": "prisma db seed",
+    "legacy:import": "tsx scripts/import-legacy-reports.ts",
+    "legacy:cleanup-seed": "tsx scripts/remove-demo-seed-data.ts"
   },
   "dependencies": {
     "@google/genai": "*",

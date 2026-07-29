@@ -12,6 +12,8 @@ import {
 } from "lucide-react";
 import { Project } from "../types";
 
+import ProjectNextActionsDrawer, { NextActionItem } from "../components/ProjectNextActionsDrawer";
+
 // 🌐 تابع کمکی تبدیل اعداد به فارسی
 export const toPersianDigits = (n: string | number | undefined | null): string => {
   if (n === undefined || n === null) return "";
@@ -44,6 +46,37 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
   const editFileInputRef = useRef<HTMLInputElement>(null);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const [selectedProjectForDrawer, setSelectedProjectForDrawer] = useState<Project | null>(null);
+
+  // 🟢 استیت و توابع جدید برای دریافت و تغییر وضعیت اقدامات آتی
+  const [nextActions, setNextActions] = useState<NextActionItem[]>([]);
+
+  const fetchNextActions = async () => {
+    try {
+      const res = await fetch("/api/next-actions");
+      if (res.ok) setNextActions(await res.json());
+    } catch (err) {
+      console.error("Error fetching next actions:", err);
+    }
+  };
+
+  React.useEffect(() => {
+    fetchNextActions();
+  }, []);
+
+  const handleToggleActionStatus = async (actionId: number, currentStatus: boolean) => {
+    try {
+      const res = await fetch(`/api/next-actions/${actionId}/toggle`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_completed: !currentStatus }),
+      });
+      if (res.ok) fetchNextActions();
+    } catch (err) {
+      alert("خطا در به‌روزرسانی وضعیت اقدام.");
+    }
+  };
 
   // 📂 مدیریت تغییر فایل ساخت
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {

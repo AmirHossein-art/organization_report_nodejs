@@ -1,10 +1,10 @@
 // src/App.tsx
 import { useState, useEffect } from "react";
 import { User, Project, ReportPeriod, Report, DeadlineSetting } from "./types";
-import Sidebar from "./components/Sidebar";
+import Sidebar from "./components/sidebar";
 import Login from "./views/Login";
 import GatewayPortal from "./views/GatewayPortal";
-import MustChangePasswordModal from "./components/MustChangePasswordModal"; // 🟢 اضافه شدن مودال تغییر رمز
+import MustChangePasswordModal from "./components/MustChangePasswordModal"; 
 
 // وارد کردن تمام ویوهای ماژولار
 import HomeDashboard from "./views/HomeDashboard";

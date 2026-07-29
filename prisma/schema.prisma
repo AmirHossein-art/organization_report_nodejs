@@ -24,31 +24,31 @@ enum ReportStatus {
 
 // ۱. جدول کاربران
 model User {
-  id                   Int           @id @default(autoincrement())
-  username             String        @unique
+  id                   Int       @id @default(autoincrement())
+  username             String    @unique
   full_name            String
-  password             String        @default("123456")
-  role                 Role          @default(user)
+  password             String    @default("123456")
+  role                 Role      @default(user)
   job_title            String?
-  is_active            Boolean       @default(true)
-  must_change_password Boolean       @default(true)
+  is_active            Boolean   @default(true)
+  must_change_password Boolean   @default(true)
   password_changed_at  DateTime?
-  created_at           DateTime      @default(now())
-  
-  userProjects         UserProject[]
-  reports              Report[]
+  created_at           DateTime  @default(now())
+
+  userProjects UserProject[]
+  reports      Report[]
 }
 
 // ۲. جدول پروژه‌ها
 model Project {
-  id           Int           @id @default(autoincrement())
-  title        String
-  description  String
+  id            Int      @id @default(autoincrement())
+  title         String
+  description   String?
   wbs_file_name String?
-  code         String        @unique
-  is_active    Boolean       @default(true)
-  created_at   DateTime      @default(now())
-  
+  code          String   @unique
+  is_active     Boolean  @default(true)
+  created_at    DateTime @default(now())
+
   userProjects UserProject[]
   reports      Report[]
 }
@@ -62,8 +62,8 @@ model ReportPeriod {
   period_end   DateTime
   is_open      Boolean    @default(true)
   created_at   DateTime   @default(now())
-  
-  reports      Report[]
+
+  reports Report[]
 }
 
 // ۴. جدول رابط کاربری و پروژه‌ها (Many-to-Many)
@@ -98,34 +98,45 @@ model Report {
   user_full_name   String
   user_username    String
   project_id       Int
-  project_title    String      
+  project_title    String
   report_type      ReportType
   period_id        Int
   period_title     String
   period_start     DateTime
   period_end       DateTime
   activities_done  String       @db.Text
-  results_achieved String       @db.Text
-  kpi_text         String       @db.Text
+  results_achieved String       @default("") @db.Text
+  kpi_text         String       @default("") @db.Text
   status           ReportStatus
   submitted_at     DateTime     @default(now())
 
-  user    User         @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  project Project      @relation(fields: [project_id], references: [id], onDelete: Cascade)
-  period  ReportPeriod @relation(fields: [period_id], references: [id], onDelete: Cascade)
-  files   ReportFile[]
+  source_file_name String?
+  source_page      Int?
+  import_key       String?   @unique
+  is_legacy_import Boolean   @default(false)
+  imported_at      DateTime?
 
-  nextActions      NextAction[]
+  user        User         @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  project     Project      @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  period      ReportPeriod @relation(fields: [period_id], references: [id], onDelete: Cascade)
+  files       ReportFile[]
+  nextActions NextAction[]
+
+  @@unique([project_id, period_id], name: "one_report_per_project_period")
 }
 
-// مدل جدید برای اقدامات آتی با تاریخ سررسید اجباری
 model NextAction {
-  id          Int      @id @default(autoincrement())
+  id          Int    @id @default(autoincrement())
   report_id   Int
-  action_text String   @db.Text
-  target_date DateTime // ذخیره دقیق تاریخ سررسید به جای رشته متنی
+  action_text String @db.Text
 
-  report      Report   @relation(fields: [report_id], references: [id], onDelete: Cascade)
+  target_date     DateTime?
+  target_date_raw String?
+
+  is_completed Boolean   @default(false)
+  completed_at DateTime?
+
+  report Report @relation(fields: [report_id], references: [id], onDelete: Cascade)
 }
 
 // ۷. جدول تنظیمات ددلاین‌ها
@@ -133,5 +144,5 @@ model DeadlineSetting {
   id            Int        @id @default(autoincrement())
   report_type   ReportType
   deadline_day  Int
-  deadline_time String     // ذخیره به صورت فرمت "HH:MM"
+  deadline_time String // ذخیره به صورت فرمت "HH:MM"
 }

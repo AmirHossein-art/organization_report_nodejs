@@ -1458,6 +1458,70 @@ const toEnglishDigits = (str: string): string => {
     .trim();
 };
 
+// 1️⃣ دریافت لیست تمامی اقدامات آتی همراه با اطلاعات پروژه و کاربر از طریق Report
+app.get("/api/next-actions", async (req, res) => {
+  try {
+    const { project_id } = req.query;
+
+    const actions = await prisma.nextAction.findMany({
+      where: project_id ? {
+        report: { project_id: Number(project_id) }
+      } : {},
+      include: {
+        report: {
+          include: {
+            project: { select: { id: true, title: true } },
+            user: { select: { id: true, full_name: true, job_title: true } },
+          }
+        }
+      },
+      orderBy: { target_date: "asc" },
+    });
+
+    // مپ کردن داده‌ها جهت ارسال ساختار تمیز به فرانت‌اند
+    const formattedActions = actions.map((a) => ({
+      id: a.id,
+      action_text: a.action_text,
+      target_date: a.target_date,
+      is_completed: a.is_completed,
+      completed_at: a.completed_at,
+      project: a.report?.project,
+      user: a.report?.user,
+    }));
+
+    res.json(formattedActions);
+  } catch (error) {
+    console.error("Error fetching next actions:", error);
+    res.status(500).json({ error: "خطا در دریافت لیست اقدامات آتی." });
+  }
+});
+
+// 2️⃣ تغییر وضعیت تحویل اقدام (Mark as Completed / Uncompleted)
+app.patch("/api/next-actions/:id/toggle", async (req, res) => {
+  try {
+    const actionId = Number(req.params.id);
+    const { is_completed } = req.body;
+
+    const action = await prisma.nextAction.findUnique({ where: { id: actionId } });
+    if (!action) {
+      return res.status(404).json({ error: "اقدام مورد نظر یافت نشد." });
+    }
+
+    const updatedAction = await prisma.nextAction.update({
+      where: { id: actionId },
+      data: {
+        is_completed: Boolean(is_completed),
+        completed_at: is_completed ? new Date() : null,
+      },
+    });
+
+    res.json({ success: true, action: updatedAction });
+  } catch (error) {
+    console.error("Error toggling action status:", error);
+    res.status(500).json({ error: "خطا در تغییر وضعیت اقدام." });
+  }
+});
+
 // 🔒 تنها اندپوینت معتبر تغییر اجباری رمز عبور موقت توسط کاربر
 app.post("/api/auth/change-password", async (req, res) => {
   try {
