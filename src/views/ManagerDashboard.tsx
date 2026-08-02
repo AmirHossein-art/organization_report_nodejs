@@ -1,5 +1,4 @@
 // src/views/ManagerDashboard.tsx
-// src/views/ManagerDashboard.tsx (بخش شبکه دیداری لایه‌ای)
 import { useState, useEffect } from "react";
 import { 
   Sparkles, 
@@ -329,6 +328,7 @@ export default function ManagerDashboard({
   // 🌟 استیت جدید: تفکیک حباب‌ها بر اساس پرسنل یا پروژه‌ها
   const [bubbleGroupBy, setBubbleGroupBy] = useState<"user" | "project">("user");
   const [bubbleFilter, setBubbleFilter] = useState<"all" | "submitted" | "late" | "missing">("all");
+  const [expandedUserKey, setExpandedUserKey] =  useState<string | null>(null);
 
   // استیت‌های تحلیل AI کلان
   const [aiAnalysis, setAiAnalysis] = useState<AiAnalysisResult | null>(null);
@@ -371,6 +371,16 @@ export default function ManagerDashboard({
   useEffect(() => {
     fetchSummary();
   }, [selectedPeriodId, selectedProjectId, selectedUserId]);
+
+  useEffect(() => {
+    setExpandedUserKey(null);
+  }, [
+    selectedPeriodId,
+    selectedProjectId,
+    selectedUserId,
+    bubbleFilter,
+    bubbleGroupBy,
+  ]);
 
   const handleRunAiAnalysis = async () => {
     if (!summaryData || !summaryData.rows) return;
@@ -436,11 +446,132 @@ export default function ManagerDashboard({
     }, {})
   );
 
-  // فیلتر حباب‌های پرسنل
-  const filteredUserRows = rows.filter((row: any) => {
-    if (bubbleFilter === "all") return true;
-    return row.status_key === bubbleFilter;
+  // 🔮 گروه‌بندی ردیف‌ها به تفکیک پرسنل
+  // هر کاربر فقط یک گروه دارد و پروژه‌هایش داخل projects قرار می‌گیرند.
+  const userGroups: Record<string, any> = rows.reduce(
+    (acc: Record<string, any>, row: any) => {
+      const userKey = String(
+        row.user_id ?? row.user_username ?? row.user_full_name
+      );
+
+      if (!acc[userKey]) {
+        acc[userKey] = {
+          user_id: row.user_id,
+          user_full_name: row.user_full_name,
+          user_username: row.user_username,
+
+          projects: [],
+
+          submitted_count: 0,
+          late_count: 0,
+          missing_count: 0,
+        };
+      }
+
+      // جلوگیری از اضافه‌شدن دوباره یک پروژه برای یک کاربر
+      const projectAlreadyExists = acc[userKey].projects.some(
+        (project: any) => project.project_id === row.project_id
+      );
+
+      if (!projectAlreadyExists) {
+        acc[userKey].projects.push(row);
+
+        if (row.status_key === "submitted") {
+          acc[userKey].submitted_count += 1;
+        }
+
+        if (row.status_key === "late") {
+          acc[userKey].late_count += 1;
+        }
+
+        if (row.status_key === "missing") {
+          acc[userKey].missing_count += 1;
+        }
+      }
+
+      return acc;
+    },
+    {} as Record<string, any>
+  );
+
+  // گروه‌بندی تمام پروژه‌ها زیر هر پرسنل
+  const userAggregatedRows = Object.values(
+    rows.reduce((acc: Record<string, any>, row: any) => {
+      const userKey = String(
+        row.user_id ?? row.user_username ?? row.user_full_name
+      );
+
+      if (!acc[userKey]) {
+        acc[userKey] = {
+          user_key: userKey,
+          user_id: row.user_id,
+          user_full_name: row.user_full_name,
+          user_username: row.user_username,
+          projects: [],
+        };
+      }
+
+      const projectExists = acc[userKey].projects.some(
+        (projectRow: any) =>
+          projectRow.project_id === row.project_id
+      );
+
+      if (!projectExists) {
+        acc[userKey].projects.push(row);
+      }
+
+      return acc;
+    }, {})
+  ).map((person: any) => {
+    const submittedCount = person.projects.filter(
+      (project: any) => project.status_key === "submitted"
+    ).length;
+
+    const lateCount = person.projects.filter(
+      (project: any) => project.status_key === "late"
+    ).length;
+
+    const missingCount = person.projects.filter(
+      (project: any) => project.status_key === "missing"
+    ).length;
+
+    let statusKey: "submitted" | "late" | "missing" = "submitted";
+    let statusLabel = "همه گزارش‌ها منظم";
+
+    if (missingCount > 0) {
+      statusKey = "missing";
+      statusLabel = "دارای پروژه فاقد گزارش";
+    } else if (lateCount > 0) {
+      statusKey = "late";
+      statusLabel = "دارای گزارش تأخیری";
+    }
+
+    return {
+      ...person,
+      submitted_count: submittedCount,
+      late_count: lateCount,
+      missing_count: missingCount,
+      total_projects: person.projects.length,
+      status_key: statusKey,
+      status_label: statusLabel,
+    };
   });
+
+  // اعمال فیلتر روی خود افراد، نه روی پروژه‌های جداگانه
+  const filteredUserRows = userAggregatedRows.filter(
+    (person: any) => {
+      if (bubbleFilter === "all") return true;
+      return person.status_key === bubbleFilter;
+    }
+  );
+
+  // پرسنلی که پروژه‌هایش در لایه دوم باز شده‌اند
+  const expandedPerson = expandedUserKey
+    ? userAggregatedRows.find(
+        (person: any) => person.user_key === expandedUserKey
+      )
+    : null;
+
 
   return (
     <div className="space-y-6 animate-fade-in text-right dir-rtl font-sans">
@@ -729,7 +860,7 @@ export default function ManagerDashboard({
                   bubbleFilter === "all" ? "bg-white/20 text-white" : "text-slate-400 hover:text-white"
                 }`}
               >
-                همه ({toPersianDigits(rows.length)})
+                همه ({toPersianDigits(userAggregatedRows.length)})
               </button>
               <button
                 onClick={() => setBubbleFilter("submitted")}
@@ -737,7 +868,11 @@ export default function ManagerDashboard({
                   bubbleFilter === "submitted" ? "bg-emerald-500/30 text-emerald-300" : "text-slate-400 hover:text-white"
                 }`}
               >
-                منظم ({toPersianDigits(rows.filter((r: any) => r.status_key === "submitted").length)})
+                منظم ({toPersianDigits(
+                  userAggregatedRows.filter(
+                    (person: any) => person.status_key === "submitted"
+                  ).length
+                )})
               </button>
               <button
                 onClick={() => setBubbleFilter("late")}
@@ -745,7 +880,11 @@ export default function ManagerDashboard({
                   bubbleFilter === "late" ? "bg-amber-500/30 text-amber-300" : "text-slate-400 hover:text-white"
                 }`}
               >
-                تأخیری ({toPersianDigits(rows.filter((r: any) => r.status_key === "late").length)})
+                تأخیری ({toPersianDigits(
+                  userAggregatedRows.filter(
+                    (person: any) => person.status_key === "late"
+                  ).length
+                )})
               </button>
               <button
                 onClick={() => setBubbleFilter("missing")}
@@ -753,7 +892,11 @@ export default function ManagerDashboard({
                   bubbleFilter === "missing" ? "bg-rose-500/30 text-rose-300" : "text-slate-400 hover:text-white"
                 }`}
               >
-                فاقد گزارش ({toPersianDigits(rows.filter((r: any) => r.status_key === "missing").length)})
+                فاقد گزارش ({toPersianDigits(
+                  userAggregatedRows.filter(
+                    (person: any) => person.status_key === "missing"
+                  ).length
+                )})
               </button>
             </div>
           )}
@@ -798,89 +941,196 @@ export default function ManagerDashboard({
             
             /* 🟢 حالت ۱: حباب‌های شناور به تفکیک پرسنل */
             filteredUserRows.length === 0 ? (
-              <div className="text-slate-400 text-xs text-center">هیچ گزارشی یافت نشد.</div>
+              <div className="text-slate-400 text-xs text-center">
+                هیچ گزارشی یافت نشد.
+              </div>
             ) : (
-              <div className="relative z-10 w-full flex flex-wrap items-center justify-center gap-8 md:gap-12 pt-16 pb-8">
-                {filteredUserRows.map((row: any, idx: number) => {
-                  const isSubmitted = row.status_key === "submitted";
-                  const isLate = row.status_key === "late";
+              <div className="relative z-10 w-full space-y-10">
 
-                  const bubbleColor = isSubmitted
-                    ? "from-emerald-500 to-teal-600 shadow-emerald-500/40 border-emerald-400/50"
-                    : isLate
-                    ? "from-amber-500 to-yellow-600 shadow-amber-500/40 border-amber-400/50"
-                    : "from-rose-600 to-red-700 shadow-rose-600/40 border-rose-400/50";
+                {/* لایه اول: حباب‌های پرسنل */}
+                <div className="flex flex-wrap items-center justify-center gap-8 md:gap-12 pt-10">
+                  {filteredUserRows.map((person: any, idx: number) => {
+                    const isSubmitted =
+                      person.status_key === "submitted";
 
-                  const icon = isSubmitted ? (
-                    <CheckCircle2 className="w-5 h-5 text-white" />
-                  ) : isLate ? (
-                    <AlertTriangle className="w-5 h-5 text-white" />
-                  ) : (
-                    <ShieldAlert className="w-5 h-5 text-white" />
-                  );
+                    const isLate =
+                      person.status_key === "late";
 
-                  return (
-                    <div key={idx} className="group relative flex flex-col items-center">
-                      
-                      {/* کارت شناور جزئیات پرسنل (Tooltip) */}
-                      <div className="absolute bottom-full mb-3 right-1/2 translate-x-1/2 w-72 bg-slate-900/95 text-white p-4 rounded-2xl shadow-2xl border border-slate-700/80 text-xs opacity-0 scale-95 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto transition-all duration-200 z-40 space-y-2 backdrop-blur-md">
-                        <div className="flex justify-between items-center border-b border-slate-800 pb-2">
-                          <span className="font-black text-amber-400">{row.project_title}</span>
-                          <span className="text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full font-bold">
-                            {row.status_label}
-                          </span>
-                        </div>
-                        <div className="space-y-1 text-[11px] text-slate-300">
-                          <p><strong>شناسه کاربر:</strong> {row.user_username}</p>
-                          <p className="line-clamp-2"><strong>خلاصه فعالیت:</strong> {row.report ? row.report.activities_done : "گزارشی ثبت نشده است."}</p>
-                          {row.report && (
-                            <p className="text-emerald-400 font-bold pt-1">
-                              <strong>تاریخ ثبت:</strong> {toPersianDigits(row.report.submitted_at ? row.report.submitted_at.split("T")[0] : "-")}
-                            </p>
-                          )}
-                        </div>
-                        
-                        {row.report && (
-                          <div className="pt-2 border-t border-slate-800 text-center">
-                            <span className="text-[10px] text-amber-400 font-bold flex items-center justify-center gap-1">
-                              <Sparkles className="w-3 h-3" /> برای ممیزی WBS کلیک کنید
-                            </span>
+                    const isExpanded =
+                      expandedUserKey === person.user_key;
+
+                    const bubbleColor = isSubmitted
+                      ? "from-emerald-500 to-teal-600 shadow-emerald-500/40 border-emerald-400/50"
+                      : isLate
+                      ? "from-amber-500 to-yellow-600 shadow-amber-500/40 border-amber-400/50"
+                      : "from-rose-600 to-red-700 shadow-rose-600/40 border-rose-400/50";
+
+                    const icon = isSubmitted ? (
+                      <CheckCircle2 className="w-5 h-5 text-white" />
+                    ) : isLate ? (
+                      <AlertTriangle className="w-5 h-5 text-white" />
+                    ) : (
+                      <ShieldAlert className="w-5 h-5 text-white" />
+                    );
+
+                    return (
+                      <div
+                        key={`person-${person.user_key}`}
+                        className="relative flex flex-col items-center"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setExpandedUserKey((current) =>
+                              current === person.user_key
+                                ? null
+                                : person.user_key
+                            );
+                          }}
+                          style={{
+                            animationDelay: `${(idx % 4) * 0.7}s`,
+                            animationDuration: `${
+                              3.5 + (idx % 3) * 0.5
+                            }s`,
+                          }}
+                          className={`
+                            bubble-floating
+                            w-36 h-36 md:w-40 md:h-40
+                            rounded-full
+                            bg-gradient-to-br
+                            ${bubbleColor}
+                            border-2 shadow-2xl
+                            flex flex-col items-center justify-center
+                            text-center p-3 text-white
+                            transition-all duration-300
+                            cursor-pointer relative
+                            hover:scale-110
+                            ${
+                              isExpanded
+                                ? "ring-4 ring-amber-400 ring-offset-4 ring-offset-slate-950 scale-110"
+                                : ""
+                            }
+                          `}
+                        >
+                          <div className="w-8 h-8 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center mb-1">
+                            {icon}
                           </div>
-                        )}
+
+                          <span className="font-black text-xs md:text-sm line-clamp-2 px-2">
+                            {person.user_full_name}
+                          </span>
+
+                          <span className="text-[10px] opacity-90 mt-1">
+                            {toPersianDigits(person.total_projects)} پروژه
+                          </span>
+
+                          <span className="mt-2 bg-black/30 backdrop-blur-md text-[9px] px-2.5 py-0.5 rounded-full font-bold">
+                            {isExpanded
+                              ? "پروژه‌ها باز هستند"
+                              : "مشاهده پروژه‌ها"}
+                          </span>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* لایه دوم: تمام پروژه‌های پرسنل انتخاب‌شده */}
+                {expandedPerson && (
+                  <div className="border-t border-slate-700/70 pt-8 animate-fade-in">
+
+                    <div className="flex items-center justify-between gap-4 mb-7">
+                      <div>
+                        <h4 className="text-amber-400 font-black text-sm flex items-center gap-2">
+                          <FolderKanban className="w-4 h-4" />
+
+                          پروژه‌های {expandedPerson.user_full_name}
+                        </h4>
+
+                        <p className="text-slate-400 text-[11px] mt-1">
+                          {toPersianDigits(expandedPerson.total_projects)}
+                          {" "}پروژه در این دوره
+                        </p>
                       </div>
 
-                      {/* حباب شناور با انیمیشن زنده */}
                       <button
-                        onClick={() => {
-                          if (row.report) {
-                            setSelectedAuditReport({
-                              id: row.report.id,
-                              title: `گزارش ${row.user_full_name} - ${row.project_title}`,
-                            });
-                            setAuditModalOpen(true);
-                          }
-                        }}
-                        style={{
-                          animationDelay: `${(idx % 4) * 0.7}s`,
-                          animationDuration: `${3.5 + (idx % 3) * 0.5}s`
-                        }}
-                        className={`bubble-floating w-36 h-36 md:w-40 md:h-40 rounded-full bg-gradient-to-br ${bubbleColor} border-2 shadow-2xl flex flex-col items-center justify-center text-center p-3 text-white transition-all duration-300 transform group-hover:scale-110 group-hover:-translate-y-2 cursor-pointer relative`}
+                        type="button"
+                        onClick={() => setExpandedUserKey(null)}
+                        className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-2 rounded-xl text-[11px] font-bold transition-colors cursor-pointer"
                       >
-                        <div className="w-8 h-8 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center mb-1">
-                          {icon}
-                        </div>
-
-                        <span className="font-black text-xs md:text-sm line-clamp-1">{row.user_full_name}</span>
-                        <span className="text-[10px] opacity-90 line-clamp-1 mt-0.5">{row.project_title}</span>
-
-                        <span className="mt-2 bg-black/30 backdrop-blur-md text-[9px] px-2.5 py-0.5 rounded-full font-bold">
-                          {row.status_label}
-                        </span>
+                        <X className="w-3.5 h-3.5" />
+                        بستن پروژه‌ها
                       </button>
-
                     </div>
-                  );
-                })}
+
+                    <div className="flex flex-wrap items-center justify-center gap-7 md:gap-10">
+                      {expandedPerson.projects.map(
+                        (projectRow: any, projectIndex: number) => {
+                          const projectSubmitted =
+                            projectRow.status_key === "submitted";
+
+                          const projectLate =
+                            projectRow.status_key === "late";
+
+                          const projectColor = projectSubmitted
+                            ? "from-emerald-500 to-teal-700 border-emerald-400/50 shadow-emerald-500/30"
+                            : projectLate
+                            ? "from-amber-500 to-orange-700 border-amber-400/50 shadow-amber-500/30"
+                            : "from-rose-600 to-red-800 border-rose-400/50 shadow-rose-500/30";
+
+                          return (
+                            <button
+                              type="button"
+                              key={`${expandedPerson.user_key}-${projectRow.project_id}`}
+                              disabled={!projectRow.report}
+                              onClick={() => {
+                                if (!projectRow.report) return;
+
+                                setSelectedAuditReport({
+                                  id: projectRow.report.id,
+                                  title:
+                                    `گزارش ${expandedPerson.user_full_name} - ${projectRow.project_title}`,
+                                });
+
+                                setAuditModalOpen(true);
+                              }}
+                              style={{
+                                animationDelay: `${
+                                  (projectIndex % 4) * 0.3
+                                }s`,
+                              }}
+                              className={`
+                                w-28 h-28 md:w-32 md:h-32
+                                rounded-full
+                                bg-gradient-to-br
+                                ${projectColor}
+                                border-2 shadow-xl
+                                flex flex-col items-center justify-center
+                                text-center p-3 text-white
+                                transition-all duration-300
+                                ${
+                                  projectRow.report
+                                    ? "cursor-pointer hover:scale-110 hover:-translate-y-2"
+                                    : "cursor-not-allowed opacity-70"
+                                }
+                              `}
+                            >
+                              <FolderKanban className="w-5 h-5 mb-2 text-white" />
+
+                              <span className="font-black text-[10px] md:text-[11px] line-clamp-3 leading-relaxed">
+                                {projectRow.project_title}
+                              </span>
+
+                              <span className="mt-2 bg-black/30 text-[8px] px-2 py-0.5 rounded-full font-bold">
+                                {projectRow.status_label}
+                              </span>
+                            </button>
+                          );
+                        }
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             )
           ) : (
@@ -950,7 +1200,7 @@ export default function ManagerDashboard({
                         <span className="font-black text-xs md:text-sm line-clamp-2 px-2">{proj.project_title}</span>
                         
                         <div className="mt-2 flex items-center gap-1.5 text-[10px] bg-black/30 backdrop-blur-md px-3 py-1 rounded-full font-bold">
-                          <span>{toPersianDigits(proj.submitted_count + proj.late_count)} از {toPersianDigits(proj.total_staff)} کارشناس</span>
+                          <span>{toPersianDigits(proj.submitted_count + proj.late_count)} از {toPersianDigits(proj.total_staff)} معاون </span>
                         </div>
                       </div>
 

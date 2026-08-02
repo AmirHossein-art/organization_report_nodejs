@@ -138,23 +138,30 @@ function parseNextActions(rawNextActions: unknown): { action_text: string; targe
 function serializeReport(report: any) {
   return {
     ...report,
+
     period_start: report.period_start.toISOString().split("T")[0],
     period_end: report.period_end.toISOString().split("T")[0],
     submitted_at: report.submitted_at.toISOString(),
-    nextActions: report.nextActions.map((action) => ({
-      ...action,
 
-      target_date: action.target_date
-        ? action.target_date.toISOString().split("T")[0]
-        : null,
+    imported_at: report.imported_at
+      ? report.imported_at.toISOString()
+      : null,
 
-      target_date_raw: action.target_date_raw ?? null,
+    nextActions: Array.isArray(report.nextActions)
+      ? report.nextActions.map((action: any) => ({
+          ...action,
 
-      completed_at: action.completed_at
-        ? action.completed_at.toISOString()
-        : null,
-    })),
-      : report.nextActions,
+          target_date: action.target_date
+            ? action.target_date.toISOString().split("T")[0]
+            : null,
+
+          target_date_raw: action.target_date_raw ?? null,
+
+          completed_at: action.completed_at
+            ? action.completed_at.toISOString()
+            : null,
+        }))
+      : [],
   };
 }
 
@@ -1356,6 +1363,7 @@ app.get("/api/dashboard/summary", async (req, res) => {
         user_id: pair.user.id,
         user_full_name: pair.user.full_name,
         user_username: pair.user.username,
+        project_id: pair.project.id,
         project_title: pair.project.title,
         status_key,
         status_label,
