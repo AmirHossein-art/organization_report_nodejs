@@ -22,6 +22,16 @@ enum ReportStatus {
   late
 }
 
+enum KpiInputType {
+  direct
+  percentage_change
+}
+
+enum KpiTargetDirection {
+  minimum
+  maximum
+}
+
 // ۱. جدول کاربران
 model User {
   id                   Int       @id @default(autoincrement())
@@ -51,6 +61,7 @@ model Project {
 
   userProjects UserProject[]
   reports      Report[]
+  kpis         ProjectKpi[]
 }
 
 // ۳. جدول دوره‌های گزارش‌دهی
@@ -116,11 +127,12 @@ model Report {
   is_legacy_import Boolean   @default(false)
   imported_at      DateTime?
 
-  user        User         @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  project     Project      @relation(fields: [project_id], references: [id], onDelete: Cascade)
-  period      ReportPeriod @relation(fields: [period_id], references: [id], onDelete: Cascade)
+  user        User             @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  project     Project          @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  period      ReportPeriod     @relation(fields: [period_id], references: [id], onDelete: Cascade)
   files       ReportFile[]
   nextActions NextAction[]
+  kpiValues   ReportKpiValue[]
 
   @@unique([project_id, period_id], name: "one_report_per_project_period")
 }
@@ -137,6 +149,44 @@ model NextAction {
   completed_at DateTime?
 
   report Report @relation(fields: [report_id], references: [id], onDelete: Cascade)
+}
+
+model ProjectKpi {
+  id               Int                @id @default(autoincrement())
+  project_id       Int
+  name             String
+  description      String?            @db.Text
+  unit             String
+  input_type       KpiInputType       @default(direct)
+  target_value     Float
+  target_direction KpiTargetDirection
+  report_type      ReportType?
+  is_active        Boolean            @default(true)
+  sort_order       Int                @default(0)
+  created_at       DateTime           @default(now())
+
+  project Project          @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  values  ReportKpiValue[]
+
+  @@index([project_id, is_active])
+}
+
+model ReportKpiValue {
+  id               Int      @id @default(autoincrement())
+  report_id        Int
+  project_kpi_id   Int
+  current_value    Float?
+  baseline_value   Float?
+  calculated_value Float?
+  not_measured     Boolean  @default(false)
+  missing_reason   String?  @db.Text
+  created_at       DateTime @default(now())
+
+  report Report     @relation(fields: [report_id], references: [id], onDelete: Cascade)
+  kpi    ProjectKpi @relation(fields: [project_kpi_id], references: [id], onDelete: Cascade)
+
+  @@unique([report_id, project_kpi_id])
+  @@index([project_kpi_id])
 }
 
 // ۷. جدول تنظیمات ددلاین‌ها

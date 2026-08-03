@@ -23,7 +23,7 @@ import { User, Report, Project, ReportPeriod } from "../types";
 
 import ProjectBubbleNode from "../components/ProjectBubbleNode";
 import ProjectNextActionsModal, { NextActionItem } from "../components/ProjectNextActionsDrawer";
-
+import Projects3DExplorer from "../components/projects-3d/Projects3DExplorer";
 
 // 🌐 تابع کمکی تبدیل اعداد انگلیسی به فارسی
 export const toPersianDigits = (n: string | number | undefined | null): string => {
@@ -478,7 +478,6 @@ function SingleReportAuditModal({
 // =================================================================
 // 🚀 ۳. کاوشگر دیداری مدیر (Visual Explorer)
 // =================================================================
-// جایگزین بخش ManagerVisualBubbleExplorer در MyReports.tsx
 
 function ManagerVisualBubbleExplorer() {
   const [projectClusters, setProjectClusters] = useState<any[]>([]);
@@ -488,6 +487,7 @@ function ManagerVisualBubbleExplorer() {
   // استیت‌های لایه‌بندی
   const [activeProjectLayer, setActiveProjectLayer] = useState<any | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [explorerMode, setExplorerMode] = useState<"2d" | "3d">("2d");
 
   // استیت مودال‌ها
   const [rawModalOpen, setRawModalOpen] = useState<boolean>(false);
@@ -615,7 +615,55 @@ function ManagerVisualBubbleExplorer() {
         )}
       </div>
 
+      {!activeProjectLayer && (
+        <div className="flex justify-center">
+          <div className="inline-flex items-center gap-1 rounded-2xl border border-slate-200 bg-white p-1 shadow-xs">
+            <button
+              type="button"
+              onClick={() =>
+                setExplorerMode("2d")
+              }
+              className={`rounded-xl px-4 py-2 text-xs font-bold transition-all ${
+                explorerMode === "2d"
+                  ? "bg-emerald-700 text-white shadow-sm"
+                  : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+              }`}
+            >
+              نمای دوبعدی
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                setExplorerMode("3d")
+              }
+              className={`rounded-xl px-4 py-2 text-xs font-bold transition-all ${
+                explorerMode === "3d"
+                  ? "bg-slate-900 text-white shadow-sm"
+                  : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+              }`}
+            >
+              نمای سه‌بعدی
+            </button>
+          </div>
+        </div>
+      )}
+      
+
       {/* 🌟 بوم اصلی کاوشگر با کنترل سرریز (Overflow Protection) */}
+      {explorerMode === "3d" &&
+      !activeProjectLayer ? (
+        <Projects3DExplorer
+          projects={filteredProjects}
+          nextActions={nextActions}
+          onOpenActions={
+            handleOpenProjectActionsModal
+          }
+          onOpenReports={(project) =>
+            setActiveProjectLayer(project)
+          }
+        />
+      ) : (
       <div className="bg-slate-50/80 rounded-3xl p-6 md:p-10 border border-slate-200/90 relative min-h-[480px] overflow-visible flex items-center justify-center shadow-inner">
         <div className="absolute inset-0 bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] [background-size:20px_20px] opacity-40 rounded-3xl pointer-events-none"></div>
 
@@ -718,7 +766,7 @@ function ManagerVisualBubbleExplorer() {
           </div>
         )}
       </div>
-
+      )}
       <RawReportDetailsModal
         report={selectedRawReport}
         isOpen={rawModalOpen}
