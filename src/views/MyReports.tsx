@@ -24,11 +24,31 @@ import { User, Report, Project, ReportPeriod } from "../types";
 import ProjectBubbleNode from "../components/ProjectBubbleNode";
 import ProjectNextActionsModal, { NextActionItem } from "../components/ProjectNextActionsDrawer";
 
+
 // 🌐 تابع کمکی تبدیل اعداد انگلیسی به فارسی
 export const toPersianDigits = (n: string | number | undefined | null): string => {
   if (n === undefined || n === null) return "";
   const farsiDigits = ["۰", "۱", "۲", "۳", "۴", "۵", "۶", "۷", "۸", "۹"];
   return n.toString().replace(/\d/g, (x) => farsiDigits[parseInt(x)]);
+};
+
+const formatPersianDate = (
+  value: string | null | undefined,
+): string => {
+  if (!value) return "بدون تاریخ مشخص";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: "Asia/Tehran",
+  }).format(date);
 };
 
 interface MyReportsProps {
@@ -135,7 +155,7 @@ function RawReportDetailsModal({
                 <Clock className="w-3.5 h-3.5" /> تاریخ ثبت:
               </span>
               <strong className="text-slate-700 block">
-                {toPersianDigits(report.submitted_at ? report.submitted_at.split("T")[0] : "ثبت‌شده")}
+                {formatPersianDate(report.submitted_at)}
               </strong>
             </div>
           </div>
@@ -190,7 +210,7 @@ function RawReportDetailsModal({
                     <span className="text-slate-800 font-medium">{act.title || act.action_text}</span>
                     {act.target_date && (
                       <span className="bg-amber-100 text-amber-900 px-2 py-0.5 rounded-md font-bold text-[10px]">
-                        📅 {toPersianDigits(act.target_date)}
+                         📅{" "}{act.target_date ? formatPersianDate(act.target_date): act.target_date_raw || "بدون تاریخ مشخص"}
                       </span>
                     )}
                   </div>
@@ -783,7 +803,7 @@ export default function MyReports({ currentUser, user, reports = [], allReports 
                   <tr key={rep.id} className="hover:bg-slate-50/50 transition-colors">
                     <td className="p-4 font-bold text-slate-800">{rep.project_title}</td>
                     <td className="p-4 text-slate-600">{toPersianDigits(rep.period_title)}</td>
-                    <td className="p-4 text-slate-500">{toPersianDigits(rep.submitted_at?.split("T")[0])}</td>
+                    <td className="p-4 text-slate-500">{formatPersianDate(rep.submitted_at)}</td>
                     <td className="p-4">
                       <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
                         rep.status === "late" 
