@@ -43,43 +43,81 @@ export default function ProjectNextActionsModal({
 
   // 🎨 تعیین منطق رنگ‌بندی ۴‌گانه
   const getStatusInfo = (item: NextActionItem) => {
-    const now = new Date().getTime();
-    const targetTime = new Date(item.target_date).getTime();
-    const completedTime = item.completed_at ? new Date(item.completed_at).getTime() : null;
+    const now = Date.now();
+
+    const targetTime = item.target_date
+      ? new Date(item.target_date).getTime()
+      : null;
+
+    const completedTime = item.completed_at
+      ? new Date(item.completed_at).getTime()
+      : null;
 
     if (item.is_completed) {
-      if (completedTime && completedTime <= targetTime) {
+      // اقدام تاریخی که تاریخ سررسید ندارد
+      if (targetTime === null) {
+        return {
+          label: "تکمیل‌شده",
+          bgColor: "bg-emerald-50/80 border-emerald-200 text-emerald-950",
+          badgeColor: "bg-emerald-600 text-white",
+          icon: (
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          ),
+        };
+      }
+
+      if (completedTime !== null && completedTime <= targetTime) {
         return {
           label: "تحویل به‌موقع",
           bgColor: "bg-emerald-50/80 border-emerald-200 text-emerald-950",
           badgeColor: "bg-emerald-600 text-white",
-          icon: <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />,
-        };
-      } else {
-        return {
-          label: "تحویل با تاخیر",
-          bgColor: "bg-amber-50/80 border-amber-200 text-amber-950",
-          badgeColor: "bg-amber-600 text-white",
-          icon: <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />,
+          icon: (
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          ),
         };
       }
-    } else {
-      if (now > targetTime) {
-        return {
-          label: "گذشته از ددلاین",
-          bgColor: "bg-rose-50/80 border-rose-200 text-rose-950",
-          badgeColor: "bg-rose-600 text-white",
-          icon: <XCircle className="w-4 h-4 text-rose-600 shrink-0" />,
-        };
-      } else {
-        return {
-          label: "در جریان",
-          bgColor: "bg-sky-50/80 border-sky-200 text-sky-950",
-          badgeColor: "bg-sky-600 text-white",
-          icon: <Clock className="w-4 h-4 text-sky-600 shrink-0" />,
-        };
-      }
+
+      return {
+        label: "تحویل با تأخیر",
+        bgColor: "bg-amber-50/80 border-amber-200 text-amber-950",
+        badgeColor: "bg-amber-600 text-white",
+        icon: (
+          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+        ),
+      };
     }
+
+    // اقدام تاریخی بدون تاریخ نباید «گذشته از ددلاین» باشد
+    if (targetTime === null) {
+      return {
+        label: "بدون تاریخ مشخص",
+        bgColor: "bg-slate-50/80 border-slate-200 text-slate-950",
+        badgeColor: "bg-slate-500 text-white",
+        icon: (
+          <Clock className="w-4 h-4 text-slate-500 shrink-0" />
+        ),
+      };
+    }
+
+    if (now > targetTime) {
+      return {
+        label: "گذشته از ددلاین",
+        bgColor: "bg-rose-50/80 border-rose-200 text-rose-950",
+        badgeColor: "bg-rose-600 text-white",
+        icon: (
+          <XCircle className="w-4 h-4 text-rose-600 shrink-0" />
+        ),
+      };
+    }
+
+    return {
+      label: "در جریان",
+      bgColor: "bg-sky-50/80 border-sky-200 text-sky-950",
+      badgeColor: "bg-sky-600 text-white",
+      icon: (
+        <Clock className="w-4 h-4 text-sky-600 shrink-0" />
+      ),
+    };
   };
 
   const pendingActions = actions.filter((a) => !a.is_completed);
@@ -96,7 +134,7 @@ export default function ProjectNextActionsModal({
       />
 
       {/* 📦 پنجره اصلی مودال در مرکز تصویر */}
-      <div className="relative z-10 w-full max-w-2xl max-h-[85vh] bg-white rounded-3xl border border-slate-200 shadow-2xl flex flex-col overflow-hidden">
+      <div className="relative z-10 w-full max-w-4xl max-h-[90vh] bg-white rounded-3xl border border-slate-200 shadow-2xl flex flex-col overflow-hidden">
         
         {/* هدر مودال */}
         <div className="p-5 bg-slate-900 text-white space-y-3 relative shrink-0">
@@ -128,7 +166,7 @@ export default function ProjectNextActionsModal({
             >
               <span>اقدامات جاری</span>
               <span className="bg-slate-900/60 px-2 py-0.5 rounded-full text-[10px]">
-                {pendingActions.length}
+                {pendingActions.length.toLocaleString("fa-IR")}
               </span>
             </button>
 
@@ -142,7 +180,7 @@ export default function ProjectNextActionsModal({
             >
               <span>تکمیل‌شده‌ها</span>
               <span className="bg-slate-900/60 px-2 py-0.5 rounded-full text-[10px]">
-                {completedActions.length}
+                {completedActions.length.toLocaleString("fa-IR")}
               </span>
             </button>
           </div>
@@ -189,9 +227,12 @@ export default function ProjectNextActionsModal({
                           </span>
                         )}
 
-                        <span className="flex items-center gap-1 font-mono">
+                        <span className="flex items-center gap-1 font-sans">
                           <Calendar className="w-3 h-3 text-slate-400" />
-                          {new Date(item.target_date).toLocaleDateString("fa-IR")}
+
+                          {item.target_date
+                            ? new Date(item.target_date).toLocaleDateString("fa-IR")
+                            : "بدون تاریخ مشخص"}
                         </span>
                       </div>
 
@@ -213,7 +254,7 @@ export default function ProjectNextActionsModal({
         </div>
 
         {/* فوتر راهنمای کدرنگ‌ها */}
-        <div className="p-3 bg-white border-t border-slate-200 text-[10px] text-slate-500 flex justify-around shrink-0">
+        <div className="p-3 bg-white border-t border-slate-200 text-[10px] text-slate-500 flex flex-wrap justify-around gap-2 shrink-0">
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-600"></span> گذشته از ددلاین</span>
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-sky-600"></span> در جریان</span>
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-600"></span> تحویل به‌موقع</span>
