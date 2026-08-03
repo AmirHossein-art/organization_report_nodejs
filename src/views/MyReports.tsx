@@ -596,7 +596,7 @@ function ManagerVisualBubbleExplorer() {
       </div>
 
       {/* 🌟 بوم اصلی کاوشگر با کنترل سرریز (Overflow Protection) */}
-      <div className="bg-slate-50/80 rounded-3xl p-6 md:p-10 border border-slate-200/90 relative min-h-[480px] overflow-hidden flex items-center justify-center shadow-inner">
+      <div className="bg-slate-50/80 rounded-3xl p-6 md:p-10 border border-slate-200/90 relative min-h-[480px] overflow-visible flex items-center justify-center shadow-inner">
         <div className="absolute inset-0 bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] [background-size:20px_20px] opacity-40 rounded-3xl pointer-events-none"></div>
 
         {loading ? (
@@ -633,7 +633,7 @@ function ManagerVisualBubbleExplorer() {
         ) : (
 
           /* 🌟 لایه ۲: گزارش‌های یک پروژه */
-          <div className="relative z-10 w-full flex flex-wrap items-center justify-center gap-8 md:gap-12 py-10 max-h-[72vh] overflow-y-auto px-4">
+          <div className="relative z-10 w-full flex flex-wrap items-center justify-center gap-8 md:gap-12 pt-28 pb-10 px-4 overflow-visible">
             {activeProjectLayer.reports.length === 0 ? (
               <div className="text-slate-600 text-xs text-center bg-white p-8 rounded-3xl border border-slate-200 shadow-xs space-y-2">
                 <p className="font-bold text-slate-800">هیچ گزارشی برای پروژه «{activeProjectLayer.project_title}» ثبت نشده است.</p>
@@ -656,7 +656,7 @@ function ManagerVisualBubbleExplorer() {
                           {rep.period_title}
                         </span>
                       </div>
-                      <p className="text-[11px] text-slate-600 line-clamp-2 leading-relaxed">
+                      <p className="text-[11px] text-slate-600 line-clamp-4 leading-relaxed">
                         <strong>خلاصه فعالیت:</strong> {rep.activities_done}
                       </p>
                     </div>
