@@ -16,6 +16,8 @@ import DeadlineSettings from "./views/DeadlineSettings";
 import ManageUsers from "./views/ManageUsers";
 import ReportPeriods from "./views/ReportPeriods";
 import ProjectAllocations from "./views/ProjectAllocations";
+import ProjectKpiManagement from "./views/ProjectKpiManagement";
+import ProjectKpiAnalytics from "./views/ProjectKpiAnalytics";
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -172,6 +174,8 @@ export default function App() {
             {currentView === "manage_users" && <ManageUsers users={users} onRefresh={fetchData} />}
             {currentView === "report_periods" && <ReportPeriods periods={periods} onRefresh={fetchData} />}
             {currentView === "project_allocations" && <ProjectAllocations users={users} projects={projects} />}
+            {currentView === "project_kpi_management" && <ProjectKpiManagement projects={projects} onRefresh={fetchData} />}
+            {currentView === "project_kpi_analytics" && <ProjectKpiAnalytics projects={projects} />}
           </>
         )}
       </main>

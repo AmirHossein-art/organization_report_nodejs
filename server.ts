@@ -98,6 +98,148 @@ type NextActionInput = {
 };
 
 class NextActionsValidationError extends Error {}
+class KpiValidationError extends Error {}
+
+const KPI_INPUT_TYPES = ["direct", "percentage_change"];
+
+function parseKpiValues(rawKpiValues: unknown): any[] {
+  if (rawKpiValues === undefined || rawKpiValues === null || rawKpiValues === "") {
+    return [];
+  }
+  let parsed: unknown;
+  try {
+    parsed = typeof rawKpiValues === "string" ? JSON.parse(rawKpiValues) : rawKpiValues;
+  } catch {
+    throw new KpiValidationError("ساختار JSON مقادیر شاخص معتبر نیست.");
+  }
+  if (!Array.isArray(parsed)) {
+    throw new KpiValidationError("مقادیر شاخص باید آرایه JSON باشد.");
+  }
+  return parsed;
+}
+
+// اعتبارسنجی و محاسبه سمت سرور مقادیر شاخص گزارش.
+// کلاینت اعتماد نمی‌شود: شاخص‌ها از روی پروژه و نوع گزارش مجدداً خوانده می‌شوند.
+async function validateAndBuildKpiValues(
+  rawKpiValues: unknown,
+  projectId: number,
+  reportType: "weekly" | "monthly"
+): Promise<any[]> {
+  const submitted = parseKpiValues(rawKpiValues);
+
+  // شاخص‌های فعالِ کاربردی برای این پروژه و نوع گزارش (منبع حقیقت)
+  const applicableKpis = await prisma.projectKpi.findMany({
+    where: {
+      project_id: projectId,
+      is_active: true,
+      OR: [{ report_type: null }, { report_type: reportType }],
+    },
+  });
+
+  // پروژه‌های بدون شاخص → هیچ مقداری لازم نیست
+  if (applicableKpis.length === 0) return [];
+
+  if (submitted.length === 0) {
+    throw new KpiValidationError("مقادیر تمامی شاخص‌های فعال باید وارد شوند.");
+  }
+
+  // ۵. عدم تکرار شناسه شاخص
+  const seenIds = new Set<number>();
+  for (const v of submitted) {
+    const id = Number(v?.project_kpi_id);
+    if (seenIds.has(id)) {
+      throw new KpiValidationError("شناسه شاخص تکراری ارسال شده است.");
+    }
+    seenIds.add(id);
+  }
+
+  // ۱. هر شاخص فعالِ کاربردی دقیقاً یک رکورد ارسالی داشته باشد
+  for (const kpi of applicableKpis) {
+    const rec = submitted.find((v) => Number(v?.project_kpi_id) === kpi.id);
+    if (!rec) {
+      throw new KpiValidationError(`مقدار شاخص «${kpi.name}» وارد نشده است.`);
+    }
+  }
+
+  const built: any[] = [];
+
+  for (const v of submitted) {
+    const kpiId = Number(v.project_kpi_id);
+    const kpi = applicableKpis.find((k) => k.id === kpiId);
+
+    // ۲، ۳، ۴. شاخص باید متعلق به پروژه، فعال و کاربردی برای نوع گزارش باشد
+    if (!kpi) {
+      throw new KpiValidationError("شناسه شاخص نامعتبر، تکراری یا غیرفعال است.");
+    }
+
+    const notMeasured = Boolean(v.not_measured);
+    const missingReason = typeof v.missing_reason === "string" ? v.missing_reason.trim() : "";
+
+    if (notMeasured) {
+      // ۹. دلیل اندازه‌گیری‌نشدن الزامی
+      if (!missingReason) {
+        throw new KpiValidationError(`دلیل عدم اندازه‌گیری شاخص «${kpi.name}» الزامی است.`);
+      }
+      // ۱۰. شاخص اندازه‌گیری‌نشده مقدار محاسبه‌شده ندارد
+      built.push({
+        project_kpi_id: kpiId,
+        current_value: null,
+        baseline_value: null,
+        calculated_value: null,
+        not_measured: true,
+        missing_reason: missingReason,
+      });
+      continue;
+    }
+
+    const toNumberOrNull = (x: any): number | null => {
+      if (x === "" || x === null || x === undefined) return null;
+      const n = Number(x);
+      return isNaN(n) ? null : n;
+    };
+
+    if (kpi.input_type === "direct") {
+      // ۶. شاخص مستقیم: current_value معتبر لازم است
+      const current = toNumberOrNull(v.current_value);
+      if (current === null) {
+        throw new KpiValidationError(`مقدار این دوره شاخص «${kpi.name}» باید عددی معتبر باشد.`);
+      }
+      built.push({
+        project_kpi_id: kpiId,
+        current_value: current,
+        baseline_value: null,
+        calculated_value: current,
+        not_measured: false,
+        missing_reason: null,
+      });
+    } else {
+      // ۷. شاخص درصد تغییر: baseline و current معتبر لازم‌اند
+      const baseline = toNumberOrNull(v.baseline_value);
+      const current = toNumberOrNull(v.current_value);
+      if (baseline === null) {
+        throw new KpiValidationError(`مقدار مبنای شاخص «${kpi.name}» باید عددی معتبر باشد.`);
+      }
+      if (current === null) {
+        throw new KpiValidationError(`مقدار دوره جاری شاخص «${kpi.name}» باید عددی معتبر باشد.`);
+      }
+      // ۸. مبنا نمی‌تواند صفر باشد
+      if (baseline === 0) {
+        throw new KpiValidationError(`مقدار مبنای شاخص «${kpi.name}» نمی‌تواند صفر باشد.`);
+      }
+      const calculated = ((current - baseline) / baseline) * 100;
+      built.push({
+        project_kpi_id: kpiId,
+        current_value: current,
+        baseline_value: baseline,
+        calculated_value: calculated,
+        not_measured: false,
+        missing_reason: null,
+      });
+    }
+  }
+
+  return built;
+}
 
 function parseNextActions(rawNextActions: unknown): { action_text: string; target_date: Date }[] {
   if (rawNextActions === undefined || rawNextActions === null || rawNextActions === "") {
@@ -162,6 +304,19 @@ function serializeReport(report: any) {
             : null,
         }))
       : [],
+
+    kpiValues: Array.isArray(report.kpiValues)
+      ? report.kpiValues.map((v: any) => ({
+          id: v.id,
+          project_kpi_id: v.project_kpi_id,
+          current_value: v.current_value,
+          baseline_value: v.baseline_value,
+          calculated_value: v.calculated_value,
+          not_measured: v.not_measured,
+          missing_reason: v.missing_reason,
+          created_at: v.created_at ? v.created_at.toISOString() : null,
+        }))
+      : [],
   };
 }
 
@@ -203,6 +358,31 @@ function formatNextActionsForPrompt(nextActions: any[] | undefined): string {
         ? action.target_date.toISOString().split("T")[0]
         : String(action.target_date || "").split("T")[0];
       return `- ${action.action_text} (تاریخ هدف: ${targetDate})`;
+    })
+    .join("\n");
+}
+
+// Helper: format structured KPI values for AI prompts
+function formatKpiValuesForPrompt(kpiValues: any[] | undefined): string {
+  if (!Array.isArray(kpiValues) || kpiValues.length === 0) {
+    return "بدون شاخص ساختاریافته";
+  }
+
+  return kpiValues
+    .map((kv, idx) => {
+      const measured = !kv.not_measured && kv.calculated_value !== null;
+      const inputTypeLabel = kv.input_type === "direct" ? "مقدار مستقیم" : "درصد تغییر";
+      const directionLabel = kv.target_direction === "minimum" ? "حداقل" : "حداکثر";
+
+      if (!measured) {
+        return `${idx + 1}. ${kv.name || "شاخص"} — اندازه‌گیری نشده (${kv.missing_reason || "دلیل مشخص نشده"})`;
+      }
+
+      if (kv.input_type === "direct") {
+        return `${idx + 1}. ${kv.name || "شاخص"} (${inputTypeLabel}) — ${kv.unit || ""}: ${kv.current_value} (هدف: ${directionLabel} ${kv.target_value})`;
+      } else {
+        return `${idx + 1}. ${kv.name || "شاخص"} (${inputTypeLabel}) — مبنا: ${kv.baseline_value}، جاری: ${kv.current_value}، محاسبه‌شده: ${kv.calculated_value}٪ (هدف: ${directionLabel} ${kv.target_value}٪)`;
+      }
     })
     .join("\n");
 }
@@ -331,13 +511,16 @@ app.post("/api/reports/analyze", async (req, res) => {
 
     const reportsText = submittedReports
       .map((r, index) => {
+        const kpiSection = (r.kpiValues && r.kpiValues.length > 0)
+          ? `شاخص‌های ساختاریافته:\n${formatKpiValuesForPrompt(r.kpiValues)}`
+          : `شاخص‌ها (متن آزاد): ${r.kpi_text || "ثبت نشده"}`;
         return `--- گزارش ${index + 1} ---
 نویسنده: ${r.user_full_name}
 پروژه: ${r.project_title}
 فعالیت‌ها: ${r.activities_done}
 نتایج: ${r.results_achieved || "ثبت نشده"}
 اقدامات آتی: ${formatNextActionsForPrompt(r.nextActions)}
-شاخص‌ها (KPIs): ${r.kpi_text || "ثبت نشده"}`;
+${kpiSection}`;
       })
       .join("\n\n");
 
@@ -388,6 +571,7 @@ app.post("/api/reports/analyze-single", async (req, res) => {
         user: true,
         project: true,
         nextActions: true,
+        kpiValues: true,
       },
     });
 
@@ -406,11 +590,18 @@ app.post("/api/reports/analyze-single", async (req, res) => {
       include: { nextActions: true },
     });
 
+    const formatPreviousKpi = (r: any) => {
+      if (r.kpiValues && r.kpiValues.length > 0) {
+        return formatKpiValuesForPrompt(r.kpiValues);
+      }
+      return r.kpi_text || "ثبت نشده";
+    };
+
     const previousReportsText = previousReports.length > 0
       ? previousReports.map((r, i) => `--- گزارش سابقه ${i + 1} ---
 فعالیت‌ها: ${r.activities_done}
 نتایج: ${r.results_achieved || "ثبت نشده"}
-شاخص‌ها: ${r.kpi_text || "ثبت نشده"}`).join("\n\n")
+شاخص‌ها:\n${formatPreviousKpi(r)}`).join("\n\n")
       : "هیچ گزارش قبلی برای این کاربر ثبت نشده است (اولین گزارش کاربر).";
 
     const projectWbsFileName = (currentReport.project as any)?.wbs_file_name;
@@ -469,6 +660,10 @@ app.post("/api/reports/analyze-single", async (req, res) => {
 }
 نکته مهم: خروجی باید فقط JSON معتبر به زبان فارسی باشد بدون هیچ عبارت اضافه یا Markdown.`;
 
+    const currentKpiSection = (currentReport.kpiValues && currentReport.kpiValues.length > 0)
+      ? `شاخص‌های ساختاریافته:\n${formatKpiValuesForPrompt(currentReport.kpiValues)}`
+      : `شاخص‌ها (متن آزاد): ${currentReport.kpi_text || "ثبت نشده"}`;
+
     const userPrompt = `
 🏢 **سند مرجع WBS و اهداف استراتژیک پروژه:**
 ${wbsContextText}
@@ -483,7 +678,7 @@ ${previousReportsText}
 پروژه: ${currentReport.project_title || (currentReport.project as any)?.title}
 فعالیت‌های انجام‌شده: ${currentReport.activities_done}
 نتایج حاصله: ${currentReport.results_achieved || "ثبت نشده"}
-شاخص‌های کلیدی (KPIs): ${currentReport.kpi_text || "ثبت نشده"}
+${currentKpiSection}
 اقدامات آتی: ${currentReport.nextActions?.map((a: any) => `${a.action_text || a.title} (ددلاین: ${a.target_date || "ندارد"})`).join(", ") || "ثبت نشده"}
 `;
 
@@ -505,6 +700,10 @@ app.post("/api/auth/login", async (req, res) => {
       return res.status(400).json({ error: "لطفاً نام کاربری و رمز عبور را وارد کنید." });
     }
 
+    // نرمال‌سازی رمز عبور: تبدیل ارقام فارسی/عربی به انگلیسی
+    // (مثلاً ورودی «۱۲۳۴۵۶» معادل «123456» در نظر گرفته شود)
+    const normalizedPassword = toEnglishDigits(password || "");
+
     // ۱. پیدا کردن کاربر در دیتابیس
     const user = await prisma.user.findUnique({
       where: { username: username.trim() },
@@ -515,7 +714,7 @@ app.post("/api/auth/login", async (req, res) => {
     }
 
     // ۲. مقایسه رمز عبور وارد شده با هش bcrypt
-    const isPasswordValid = await bcrypt.compare(password, user.password);
+    const isPasswordValid = await bcrypt.compare(normalizedPassword, user.password);
     if (!isPasswordValid) {
       return res.status(401).json({ error: "نام کاربری یا رمز عبور نادرست است." });
     }
@@ -560,6 +759,33 @@ app.post("/api/auth/logout", (req, res) => {
   res.json({ success: true, message: "با موفقیت از سیستم خارج شدید." });
 });
 
+// Middleware: احراز هویت و استخراج کاربر از کوکی
+async function authenticate(req: any, res: any, next: any) {
+  try {
+    const token = req.cookies?.token;
+    if (!token) {
+      return res.status(401).json({ error: "عدم دسترسی، لطفا ابتدا وارد شوید." });
+    }
+    const decoded = jwt.verify(token, JWT_SECRET) as { id: number; username: string; role: string };
+    const user = await prisma.user.findUnique({ where: { id: decoded.id } });
+    if (!user || !user.is_active) {
+      return res.status(401).json({ error: "حساب کاربری یافت نشد یا غیرفعال است." });
+    }
+    req.user = user;
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: "توکن نامعتبر یا منقضی شده است." });
+  }
+}
+
+// Middleware: فقط مدیران
+function requireManager(req: any, res: any, next: any) {
+  if (req.user?.role !== "manager") {
+    return res.status(403).json({ error: "دسترسی فقط برای مدیران مجاز است." });
+  }
+  next();
+}
+
 app.get("/api/auth/me", async (req, res) => {
   try {
     // خواندن توکن از کوکی‌های ریکوئست
@@ -570,7 +796,7 @@ app.get("/api/auth/me", async (req, res) => {
 
     // تایید و رمزگشایی توکن JWT
     const decoded = jwt.verify(token, JWT_SECRET) as { id: number; username: string; role: string };
-    
+
     // پیدا کردن اطلاعات تازه کاربر از دیتابیس
     const user = await prisma.user.findUnique({
       where: { id: decoded.id }
@@ -961,6 +1187,289 @@ app.delete("/api/report-periods/:id", async (req, res) => {
   }
 });
 
+// --- Project KPI Management (شاخص‌های عملکرد پروژه) ---
+const KPI_TARGET_DIRECTIONS = ["minimum", "maximum"];
+const REPORT_TYPES = ["weekly", "monthly"];
+
+// لیست تمام شاخص‌ها (همراه با نام پروژه) — برای تحلیل‌های مدیریتی
+app.get("/api/project-kpis", authenticate, requireManager, async (_req, res) => {
+  try {
+    const kpis = await prisma.projectKpi.findMany({
+      include: {
+        project: { select: { id: true, title: true } },
+      },
+      orderBy: [{ project_id: "asc" }, { sort_order: "asc" }],
+    });
+    res.json(kpis);
+  } catch (error) {
+    console.error("Error fetching KPIs:", error);
+    res.status(500).json({ error: "خطا در دریافت شاخص‌های پروژه" });
+  }
+});
+
+// لیست شاخص‌های یک پروژه.
+// بدون پارامتر: تمام شاخص‌ها (فعال/غیرفعال) — صفحه مدیریت.
+// با ?report_type=weekly|monthly: فقط شاخص‌های فعالِ کاربردی برای آن نوع — فرم ثبت گزارش.
+app.get("/api/projects/:projectId/kpis", async (req, res) => {
+  try {
+    const projectId = Number(req.params.projectId);
+    const { report_type } = req.query;
+
+    if (!projectId || isNaN(projectId)) {
+      return res.status(400).json({ error: "شناسه پروژه نامعتبر است." });
+    }
+
+    const where: any = { project_id: projectId };
+    if (report_type) {
+      where.is_active = true;
+      where.OR = [{ report_type: null }, { report_type: String(report_type) }];
+    }
+
+    const kpis = await prisma.projectKpi.findMany({
+      where,
+      orderBy: { sort_order: "asc" },
+    });
+    res.json(kpis);
+  } catch (error) {
+    console.error("Error fetching project KPIs:", error);
+    res.status(500).json({ error: "خطا در دریافت شاخص‌های پروژه" });
+  }
+});
+
+// ایجاد شاخص جدید برای یک پروژه
+app.post("/api/project-kpis", authenticate, requireManager, async (req, res) => {
+  try {
+    const {
+      project_id,
+      name,
+      description,
+      unit,
+      input_type,
+      target_value,
+      target_direction,
+      report_type,
+      is_active,
+      sort_order,
+    } = req.body;
+
+    const projectId = Number(project_id);
+    if (!projectId || isNaN(projectId)) {
+      return res.status(400).json({ error: "شناسه پروژه نامعتبر است." });
+    }
+    const project = await prisma.project.findUnique({ where: { id: projectId } });
+    if (!project) {
+      return res.status(400).json({ error: "پروژه انتخاب‌شده یافت نشد." });
+    }
+
+    const kpiName = typeof name === "string" ? name.trim() : "";
+    if (!kpiName) {
+      return res.status(400).json({ error: "نام شاخص نمی‌تواند خالی باشد." });
+    }
+
+    const kpiUnit = typeof unit === "string" ? unit.trim() : "";
+    if (!kpiUnit) {
+      return res.status(400).json({ error: "واحد سنجش نمی‌تواند خالی باشد." });
+    }
+
+    if (!KPI_INPUT_TYPES.includes(input_type)) {
+      return res.status(400).json({ error: "نوع محاسبه شاخص نامعتبر است." });
+    }
+
+    if (target_value === undefined || target_value === null || target_value === "" || isNaN(Number(target_value))) {
+      return res.status(400).json({ error: "مقدار هدف باید عددی معتبر باشد." });
+    }
+
+    if (!KPI_TARGET_DIRECTIONS.includes(target_direction)) {
+      return res.status(400).json({ error: "جهت هدف شاخص نامعتبر است." });
+    }
+
+    let reportType: "weekly" | "monthly" | null = null;
+    if (report_type !== undefined && report_type !== null && report_type !== "") {
+      if (!REPORT_TYPES.includes(report_type)) {
+        return res.status(400).json({ error: "نوع دوره گزارش‌دهی نامعتبر است." });
+      }
+      reportType = report_type;
+    }
+
+    const sortOrder = sort_order !== undefined && sort_order !== null && sort_order !== ""
+      ? Number(sort_order)
+      : 0;
+    if (isNaN(sortOrder)) {
+      return res.status(400).json({ error: "ترتیب نمایش باید عددی باشد." });
+    }
+
+    const newKpi = await prisma.projectKpi.create({
+      data: {
+        project_id: projectId,
+        name: kpiName,
+        description: description ? String(description).trim() || null : null,
+        unit: kpiUnit,
+        input_type,
+        target_value: Number(target_value),
+        target_direction,
+        report_type: reportType,
+        is_active: is_active === undefined ? true : Boolean(is_active),
+        sort_order: sortOrder,
+      },
+    });
+
+    res.status(201).json(newKpi);
+  } catch (error) {
+    console.error("Error creating KPI:", error);
+    res.status(500).json({ error: "خطا در ثبت شاخص جدید در دیتابیس" });
+  }
+});
+
+// ویرایش شاخص (شامل فعال/غیرفعال و ترتیب نمایش)
+app.patch("/api/project-kpis/:id", authenticate, requireManager, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const {
+      name,
+      description,
+      unit,
+      input_type,
+      target_value,
+      target_direction,
+      report_type,
+      is_active,
+      sort_order,
+    } = req.body;
+
+    const existing = await prisma.projectKpi.findUnique({ where: { id } });
+    if (!existing) {
+      return res.status(404).json({ error: "شاخص مورد نظر یافت نشد." });
+    }
+
+    const data: any = {};
+
+    if (name !== undefined) {
+      const kpiName = String(name).trim();
+      if (!kpiName) return res.status(400).json({ error: "نام شاخص نمی‌تواند خالی باشد." });
+      data.name = kpiName;
+    }
+    if (description !== undefined) {
+      data.description = String(description).trim() || null;
+    }
+    if (unit !== undefined) {
+      const kpiUnit = String(unit).trim();
+      if (!kpiUnit) return res.status(400).json({ error: "واحد سنجش نمی‌تواند خالی باشد." });
+      data.unit = kpiUnit;
+    }
+    if (input_type !== undefined) {
+      if (!KPI_INPUT_TYPES.includes(input_type)) {
+        return res.status(400).json({ error: "نوع محاسبه شاخص نامعتبر است." });
+      }
+      data.input_type = input_type;
+    }
+    if (target_value !== undefined) {
+      if (target_value === null || target_value === "" || isNaN(Number(target_value))) {
+        return res.status(400).json({ error: "مقدار هدف باید عددی معتبر باشد." });
+      }
+      data.target_value = Number(target_value);
+    }
+    if (target_direction !== undefined) {
+      if (!KPI_TARGET_DIRECTIONS.includes(target_direction)) {
+        return res.status(400).json({ error: "جهت هدف شاخص نامعتبر است." });
+      }
+      data.target_direction = target_direction;
+    }
+    if (report_type !== undefined) {
+      if (report_type === null || report_type === "") {
+        data.report_type = null;
+      } else if (REPORT_TYPES.includes(report_type)) {
+        data.report_type = report_type;
+      } else {
+        return res.status(400).json({ error: "نوع دوره گزارش‌دهی نامعتبر است." });
+      }
+    }
+    if (is_active !== undefined) data.is_active = Boolean(is_active);
+    if (sort_order !== undefined) {
+      const so = Number(sort_order);
+      if (isNaN(so)) return res.status(400).json({ error: "ترتیب نمایش باید عددی باشد." });
+      data.sort_order = so;
+    }
+
+    const updated = await prisma.projectKpi.update({ where: { id }, data });
+    res.json(updated);
+  } catch (error) {
+    console.error("Error updating KPI:", error);
+    res.status(500).json({ error: "خطا در ویرایش شاخص در دیتابیس" });
+  }
+});
+
+// حذف شاخص — فقط در صورتی که هیچ مقدار ثبت‌شده‌ای در گزارش‌ها نداشته باشد.
+// شاخص‌های دارای تاریخچه باید غیرفعال شوند نه حذف.
+app.delete("/api/project-kpis/:id", authenticate, requireManager, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const existing = await prisma.projectKpi.findUnique({ where: { id } });
+    if (!existing) {
+      return res.status(404).json({ error: "شاخص مورد نظر یافت نشد." });
+    }
+
+    const valuesCount = await prisma.reportKpiValue.count({ where: { project_kpi_id: id } });
+    if (valuesCount > 0) {
+      return res.status(400).json({
+        error: "این شاخص دارای مقادیر ثبت‌شده در گزارش‌هاست و قابل حذف نیست. لطفاً آن را غیرفعال کنید.",
+      });
+    }
+
+    await prisma.projectKpi.delete({ where: { id } });
+    res.json({ success: true, message: "شاخص با موفقیت حذف شد." });
+  } catch (error) {
+    console.error("Error deleting KPI:", error);
+    res.status(500).json({ error: "خطا در حذف شاخص از دیتابیس" });
+  }
+});
+
+// دریافت مقادیر ثبت‌شده یک شاخص برای نمودار روند (مرتب‌شده بر اساس پایان دوره)
+app.get("/api/project-kpis/:id/values", authenticate, requireManager, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const kpi = await prisma.projectKpi.findUnique({ where: { id } });
+    if (!kpi) {
+      return res.status(404).json({ error: "شاخص یافت نشد." });
+    }
+
+    const values = await prisma.reportKpiValue.findMany({
+      where: { project_kpi_id: id },
+      include: {
+        report: {
+          select: {
+            id: true,
+            period_end: true,
+            period_title: true,
+            report_type: true,
+            user_full_name: true,
+            project_title: true,
+          },
+        },
+      },
+      orderBy: { report: { period_end: "asc" } },
+    });
+
+    const formatted = values.map((v: any) => ({
+      id: v.id,
+      report_id: v.report_id,
+      current_value: v.current_value,
+      baseline_value: v.baseline_value,
+      calculated_value: v.calculated_value,
+      not_measured: v.not_measured,
+      missing_reason: v.missing_reason,
+      period_end: v.report?.period_end ? v.report.period_end.toISOString().split("T")[0] : null,
+      period_title: v.report?.period_title || null,
+      report_type: v.report?.report_type || null,
+      user_full_name: v.report?.user_full_name || null,
+    }));
+
+    res.json({ kpi, values: formatted });
+  } catch (error) {
+    console.error("Error fetching KPI values:", error);
+    res.status(500).json({ error: "خطا در دریافت مقادیر شاخص" });
+  }
+});
+
 // --- User Project Assignments ---
 // ۱. دریافت تمامی تخصیص‌های فعلی دیتابیس
 // ۱. دریافت تمامی تخصیص‌های فعلی دیتابیس
@@ -1053,7 +1562,7 @@ app.put("/api/deadline-settings/:id", async (req, res) => {
 app.get("/api/reports", async (req, res) => {
   try {
     const reports = await prisma.report.findMany({
-      include: { files: true, nextActions: true },
+      include: { files: true, nextActions: true, kpiValues: true },
       orderBy: { id: "desc" }
     });
     res.json(reports.map(serializeReport));
@@ -1074,6 +1583,7 @@ app.post("/api/reports", upload.array("files"), async (req, res) => {
       results_achieved,
       next_actions,
       kpi_text,
+      kpi_values,
     } = req.body;
     const parsedNextActions = parseNextActions(next_actions);
 
@@ -1124,6 +1634,14 @@ app.post("/api/reports", upload.array("files"), async (req, res) => {
     }
 
     const uploadedFiles = req.files && Array.isArray(req.files) ? req.files : [];
+
+    // اعتبارسنجی و محاسبه سمت سرور مقادیر شاخص‌های ساختاریافته
+    const validatedKpiValues = await validateAndBuildKpiValues(
+      kpi_values,
+      project.id,
+      report_type as "weekly" | "monthly"
+    );
+
     const newReport = await prisma.report.create({
       data: {
         user_id: user.id,
@@ -1145,6 +1663,11 @@ app.post("/api/reports", upload.array("files"), async (req, res) => {
               create: parsedNextActions,
             }
           : undefined,
+        kpiValues: validatedKpiValues.length
+          ? {
+              create: validatedKpiValues,
+            }
+          : undefined,
         files: uploadedFiles.length
           ? {
               create: uploadedFiles.map((file) => ({
@@ -1155,14 +1678,16 @@ app.post("/api/reports", upload.array("files"), async (req, res) => {
             }
           : undefined,
       },
-      include: { files: true, nextActions: true }
+      include: { files: true, nextActions: true, kpiValues: true }
     });
 
     res.json(serializeReport(newReport));
   } catch (error) {
     console.error("Error creating report:", error);
-    res.status(error instanceof NextActionsValidationError ? 400 : 500).json({
-      error: error instanceof NextActionsValidationError ? error.message : "خطا در ثبت گزارش در دیتابیس",
+    res.status(error instanceof NextActionsValidationError || error instanceof KpiValidationError ? 400 : 500).json({
+      error: error instanceof NextActionsValidationError || error instanceof KpiValidationError
+        ? error.message
+        : "خطا در ثبت گزارش در دیتابیس",
     });
   }
 });
@@ -1170,7 +1695,7 @@ app.post("/api/reports", upload.array("files"), async (req, res) => {
 app.put("/api/reports/:id", upload.array("files"), async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { activities_done, results_achieved, next_actions, kpi_text } = req.body;
+    const { activities_done, results_achieved, next_actions, kpi_text, kpi_values } = req.body;
     const shouldUpdateNextActions = next_actions !== undefined;
     const parsedNextActions = shouldUpdateNextActions ? parseNextActions(next_actions) : [];
 
@@ -1220,6 +1745,10 @@ app.put("/api/reports/:id", upload.array("files"), async (req, res) => {
       : [];
     const uploadedFiles = req.files && Array.isArray(req.files) ? req.files : [];
 
+    const validatedKpiValues = kpi_values !== undefined
+      ? await validateAndBuildKpiValues(kpi_values, existingReport.project_id, existingReport.report_type)
+      : null;
+
     const updated = await prisma.$transaction(async (tx) => {
       if (deletedFileIds.length) {
         await tx.reportFile.deleteMany({
@@ -1250,6 +1779,15 @@ app.put("/api/reports/:id", upload.array("files"), async (req, res) => {
         }
       }
 
+      if (validatedKpiValues !== null) {
+        await tx.reportKpiValue.deleteMany({ where: { report_id: id } });
+        if (validatedKpiValues.length > 0) {
+          await tx.reportKpiValue.createMany({
+            data: validatedKpiValues.map((v) => ({ ...v, report_id: id }))
+          });
+        }
+      }
+
       return tx.report.update({
         where: { id },
         data: {
@@ -1257,7 +1795,7 @@ app.put("/api/reports/:id", upload.array("files"), async (req, res) => {
           results_achieved: results_achieved !== undefined ? results_achieved : undefined,
           kpi_text: kpi_text !== undefined ? kpi_text : undefined,
         },
-        include: { files: true, nextActions: true }
+        include: { files: true, nextActions: true, kpiValues: true }
       });
     });
 

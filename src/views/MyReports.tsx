@@ -92,11 +92,13 @@ interface SingleReportAuditResult {
 // =================================================================
 function RawReportDetailsModal({
   report,
+  kpiMap,
   isOpen,
   onClose,
   onRunAudit,
 }: {
   report: any | null;
+  kpiMap: Record<number, any>;
   isOpen: boolean;
   onClose: () => void;
   onRunAudit: (rep: any) => void;
@@ -184,12 +186,50 @@ function RawReportDetailsModal({
             </div>
           )}
 
-          {/* شاخص‌ها (KPIs) */}
+          {/* شاخص‌های ساختاریافته (Structured KPIs) */}
+          {report.kpiValues && report.kpiValues.length > 0 && (
+            <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-2xs space-y-3">
+              <h4 className="font-extrabold text-slate-900 text-xs md:text-sm flex items-center gap-2 border-b border-slate-100 pb-2">
+                <Target className="w-4 h-4 text-emerald-600" />
+                شاخص‌های عملکرد ساختاریافته
+              </h4>
+              <div className="space-y-2">
+                {report.kpiValues.map((kv: any) => {
+                  const kpiMeta = kpiMap?.[kv.project_kpi_id];
+                  if (kv.not_measured) {
+                    return (
+                      <div key={kv.id} className="bg-rose-50 border border-rose-100 rounded-xl p-3 text-xs">
+                        <p className="font-bold text-slate-800">{kpiMeta?.name || "شاخص"}</p>
+                        <p className="text-rose-600 mt-0.5">اندازه‌گیری نشده — {kv.missing_reason || "دلیل ثبت نشده"}</p>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div key={kv.id} className="bg-slate-50 border border-slate-100 rounded-xl p-3 text-xs flex flex-col gap-0.5">
+                      <p className="font-bold text-slate-800">{kpiMeta?.name || "شاخص"}</p>
+                      {kpiMeta?.input_type === "percentage_change" ? (
+                        <p className="text-slate-600">
+                          مبنا: {toPersianDigits(Number(kv.baseline_value).toFixed(2))}، دوره جاری: {toPersianDigits(Number(kv.current_value).toFixed(2))}
+                          {" → "}درصد تغییر: <strong className="text-emerald-700">{toPersianDigits(Number(kv.calculated_value).toFixed(1))}٪</strong>
+                        </p>
+                      ) : (
+                        <p className="text-slate-600">
+                          مقدار این دوره: <strong className="text-emerald-700">{toPersianDigits(Number(kv.current_value).toFixed(2))} {kpiMeta?.unit || ""}</strong>
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* شاخص‌های متنی قدیمی (Legacy kpi_text) */}
           {report.kpi_text && (
             <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-2xs space-y-2">
               <h4 className="font-extrabold text-slate-900 text-xs md:text-sm flex items-center gap-2 border-b border-slate-100 pb-2">
                 <Target className="w-4 h-4 text-amber-600" />
-                شاخص‌های کلیدی عملکرد (KPIs)
+                شاخص‌های کلیدی عملکرد (متن آزاد - گزارش‌های قدیمی)
               </h4>
               <p className="text-xs text-slate-700 leading-relaxed pt-1">
                 {toPersianDigits(report.kpi_text)}
@@ -499,6 +539,8 @@ function ManagerVisualBubbleExplorer() {
   const [actionsModalOpen, setActionsModalOpen] = useState<boolean>(false);
   const [selectedProjectForActions, setSelectedProjectForActions] = useState<Project | null>(null);
 
+  const [kpiMap, setKpiMap] = useState<Record<number, any>>({});
+
   const fetchData = async () => {
     setLoading(true);
     try {
@@ -526,6 +568,14 @@ function ManagerVisualBubbleExplorer() {
       });
 
       setProjectClusters(combined);
+
+      const kpiRes = await fetch("/api/project-kpis");
+      if (kpiRes.ok) {
+        const kpiData: any[] = await kpiRes.json();
+        const map: Record<number, any> = {};
+        (Array.isArray(kpiData) ? kpiData : []).forEach((k) => { map[k.id] = k; });
+        setKpiMap(map);
+      }
     } catch (err) {
       console.error("Error fetching visual data:", err);
     } finally {
@@ -769,6 +819,7 @@ function ManagerVisualBubbleExplorer() {
       )}
       <RawReportDetailsModal
         report={selectedRawReport}
+        kpiMap={kpiMap}
         isOpen={rawModalOpen}
         onClose={() => setRawModalOpen(false)}
         onRunAudit={handleOpenAiAudit}
@@ -796,7 +847,6 @@ function ManagerVisualBubbleExplorer() {
 // 📄 کامپوننت اصلی MyReports
 // =================================================================
 export default function MyReports({ currentUser, user, reports = [], allReports = [] }: MyReportsProps) {
-  
   const activeUser = currentUser || user;
   const activeReports = reports.length > 0 ? reports : allReports;
 

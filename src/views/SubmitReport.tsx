@@ -1,8 +1,15 @@
 // src/views/SubmitReport.tsx
 import { useState, useEffect } from "react";
-import { Plus, X, CheckCircle2, AlertTriangle, RefreshCw, AlertCircle, Clock, ShieldCheck, BarChart3, FolderGit2, ArrowLeft } from "lucide-react";
+import { Plus, X, CheckCircle2, AlertTriangle, RefreshCw, AlertCircle, Clock, ShieldCheck, BarChart3, FolderGit2, ArrowLeft, Target } from "lucide-react";
 import { Project, ReportPeriod, User, Report } from "../types";
 import { CustomSelect, ShamsiDatePicker } from "../components";
+
+// 🌐 تبدیل اعداد به فارسی
+const toPersianDigits = (n: string | number | undefined | null): string => {
+  if (n === undefined || n === null) return "";
+  const farsiDigits = ["۰", "۱", "۲", "۳", "۴", "۵", "۶", "۷", "۸", "۹"];
+  return n.toString().replace(/\d/g, (x) => farsiDigits[parseInt(x)]);
+};
 
 interface SubmitReportProps {
   projects: Project[];
@@ -24,8 +31,13 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
   const [subProjectId, setSubProjectId] = useState<number>(0);
   const [activitiesDone, setActivitiesDone] = useState("");
   const [resultsAchieved, setResultsAchieved] = useState("");
-  const [kpiText, setKpiText] = useState("");
   const [subFiles, setSubFiles] = useState<FileList | null>(null);
+
+  // 🟢 وضعیت شاخص‌های ساختاریافته پروژه
+  const [kpis, setKpis] = useState<any[]>([]);
+  const [kpisLoading, setKpisLoading] = useState(false);
+  // مقادیر واردشده به تفکیک شناسه شاخص
+  const [kpiValues, setKpiValues] = useState<Record<number, any>>({});
   
   const [loading, setLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
@@ -68,6 +80,54 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
     (r) => r.user_id === user?.id && r.project_id === subProjectId && r.period_id === subPeriodId
   );
 
+  // 🟢 واکشی شاخص‌های فعالِ کاربردی برای پروژه و نوع گزارش انتخاب‌شده
+  useEffect(() => {
+    if (!subProjectId || !subPeriodId) {
+      setKpis([]);
+      setKpiValues({});
+      return;
+    }
+    setKpisLoading(true);
+    fetch(`/api/projects/${subProjectId}/kpis?report_type=${subReportType}`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: any[]) => {
+        setKpis(Array.isArray(data) ? data : []);
+        // مقداردهی اولیه ورودی‌ها
+        const initial: Record<number, any> = {};
+        (Array.isArray(data) ? data : []).forEach((k) => {
+          initial[k.id] = { current_value: "", baseline_value: "", not_measured: false, missing_reason: "" };
+        });
+        setKpiValues(initial);
+      })
+      .catch(() => {
+        setKpis([]);
+      })
+      .finally(() => setKpisLoading(false));
+  }, [subProjectId, subPeriodId, subReportType]);
+
+  const updateKpiValue = (kpiId: number, patch: Partial<any>) => {
+    setKpiValues((prev) => ({
+      ...prev,
+      [kpiId]: { ...(prev[kpiId] || { current_value: "", baseline_value: "", not_measured: false, missing_reason: "" }), ...patch },
+    }));
+  };
+
+  // بررسی تکمیل بودن تمام شاخص‌های اعمال‌شده
+  const kpiIncomplete = kpis.some((k) => {
+    const v = kpiValues[k.id];
+    if (!v) return true;
+    if (v.not_measured) {
+      return !v.missing_reason || !v.missing_reason.trim();
+    }
+    if (k.input_type === "direct") {
+      return v.current_value === "" || v.current_value === null || isNaN(Number(v.current_value));
+    }
+    return (
+      v.baseline_value === "" || v.baseline_value === null || isNaN(Number(v.baseline_value)) ||
+      v.current_value === "" || v.current_value === null || isNaN(Number(v.current_value))
+    );
+  });
+
   const flashSuccess = (msg: string) => {
     setSuccessMessage(msg);
     setTimeout(() => setSuccessMessage(""), 4000);
@@ -104,6 +164,11 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
       return;
     }
 
+    if (kpiIncomplete) {
+      flashError("لطفاً مقادیر تمامی شاخص‌های نمایش‌داده‌شده را تکمیل کنید یا عدم اندازه‌گیری را مشخص نمایید.");
+      return;
+    }
+
     setLoading(true);
     const formData = new FormData();
     formData.append("user_id", user.id.toString());
@@ -112,7 +177,30 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
     formData.append("period_id", subPeriodId.toString());
     formData.append("activities_done", activitiesDone);
     formData.append("results_achieved", resultsAchieved);
-    formData.append("kpi_text", kpiText);
+    formData.append("kpi_text", "");
+
+    // 🟢 ساخت آرایه مقادیر شاخص‌ها (فقط برای شاخص‌های اعمال‌شده)
+    const kpiValuesPayload = kpis.map((k) => {
+      const v = kpiValues[k.id] || {};
+      if (v.not_measured) {
+        return {
+          project_kpi_id: k.id,
+          current_value: null,
+          baseline_value: null,
+          not_measured: true,
+          missing_reason: (v.missing_reason || "").trim() || null,
+        };
+      }
+      return {
+        project_kpi_id: k.id,
+        current_value: k.input_type === "direct" ? Number(v.current_value) : Number(v.current_value),
+        baseline_value: k.input_type === "percentage_change" ? Number(v.baseline_value) : null,
+        not_measured: false,
+        missing_reason: null,
+      };
+    });
+    formData.append("kpi_values", JSON.stringify(kpiValuesPayload));
+
     formData.append("next_actions", JSON.stringify(nextActions));
 
     if (subFiles) {
@@ -125,8 +213,8 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
         flashSuccess("گزارش شما با موفقیت ثبت شد.");
         setActivitiesDone("");
         setResultsAchieved("");
-        setKpiText("");
         setNextActions([{ action_text: "", target_date: "" }]);
+        setKpiValues({});
         setSubFiles(null);
         const fileInput = document.getElementById("report_files_input") as HTMLInputElement;
         if (fileInput) fileInput.value = "";
@@ -403,16 +491,114 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
                   </div>
                 </div>
 
-                {/* فیلد شاخص‌ها */}
-                <div className="space-y-2">
-                  <label className="text-sm font-semibold text-slate-700">شاخص‌ها و معیارهای سنجش (KPIs)</label>
-                  <textarea
-                    value={kpiText}
-                    onChange={(e) => setKpiText(e.target.value)}
-                    className="w-full bg-slate-50/50 border border-slate-200 focus:border-emerald-600 rounded-2xl p-3 text-xs min-h-[160px] focus:outline-none transition-all"
-                    placeholder="درصد پیشرفت کار، متغیرهای کلیدی انجام فعالیت و آمارها..."
-                  />
+                {/* فیلد شاخص‌ها حذف شد — جایگزین با شاخص‌های ساختاریافته در پایین فرم */}
+              </div>
+
+              {/* 🟢 بخش شاخص‌های عملکرد ساختاریافته */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+                  <Target className="w-4 h-4 text-emerald-700" />
+                  <label className="text-sm font-bold text-slate-850">شاخص‌های عملکرد پروژه</label>
+                  <span className="text-[11px] text-slate-400">({toPersianDigits(kpis.length)} شاخص)</span>
                 </div>
+
+                {kpisLoading ? (
+                  <div className="text-xs text-slate-400 flex items-center gap-2 bg-slate-50/50 p-4 rounded-2xl border border-slate-200/60">
+                    <RefreshCw className="w-4 h-4 animate-spin text-emerald-600" />
+                    <span>در حال بارگذاری شاخص‌های پروژه...</span>
+                  </div>
+                ) : kpis.length === 0 ? (
+                  <div className="text-xs text-slate-500 bg-slate-50/50 p-4 rounded-2xl border border-slate-200/60">
+                    برای این پروژه شاخص فعالی تعریف نشده است.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {kpis.map((k) => {
+                      const v = kpiValues[k.id] || { current_value: "", baseline_value: "", not_measured: false, missing_reason: "" };
+                      const disabled = v.not_measured;
+                      // پیش‌نمایش محاسبه درصد برای کلاینت (منبع حقیقت سرور است)
+                      let preview: string | null = null;
+                      if (k.input_type === "percentage_change" && !disabled && v.baseline_value && v.current_value &&
+                          Number(v.baseline_value) !== 0 && !isNaN(Number(v.current_value)) && !isNaN(Number(v.baseline_value))) {
+                        const pct = ((Number(v.current_value) - Number(v.baseline_value)) / Number(v.baseline_value)) * 100;
+                        preview = `${toPersianDigits(pct.toFixed(1))}٪`;
+                      }
+                      return (
+                        <div key={k.id} className="bg-slate-50/50 p-4 rounded-2xl border border-slate-200/70 space-y-3">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <h5 className="text-sm font-bold text-slate-800">{k.name}</h5>
+                              {k.description && (
+                                <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">{k.description}</p>
+                              )}
+                              <p className="text-[11px] text-slate-600 mt-1">
+                                هدف: {k.target_direction === "minimum" ? "حداقل" : "حداکثر"} {toPersianDigits(k.target_value)} {k.unit}
+                              </p>
+                            </div>
+                            <label className="flex items-center gap-1.5 shrink-0 cursor-pointer text-[11px] text-slate-600">
+                              <input
+                                type="checkbox"
+                                checked={disabled}
+                                onChange={(e) => updateKpiValue(k.id, { not_measured: e.target.checked })}
+                                className="w-4 h-4 accent-rose-600"
+                              />
+                              اندازه‌گیری نشده
+                            </label>
+                          </div>
+
+                          {disabled ? (
+                            <div className="space-y-1.5">
+                              <label className="text-[11px] font-medium text-slate-500 block">
+                                دلیل عدم اندازه‌گیری شاخص *
+                              </label>
+                              <textarea
+                                value={v.missing_reason}
+                                onChange={(e) => updateKpiValue(k.id, { missing_reason: e.target.value })}
+                                rows={2}
+                                placeholder="دلیل عدم اندازه‌گیری شاخص را وارد کنید..."
+                                className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-rose-500"
+                              />
+                            </div>
+                          ) : (
+                            <div className={k.input_type === "percentage_change" ? "grid grid-cols-1 sm:grid-cols-2 gap-3" : ""}>
+                              {k.input_type === "percentage_change" && (
+                                <div className="space-y-1.5">
+                                  <label className="text-[11px] font-medium text-slate-500 block">مقدار مبنا *</label>
+                                  <input
+                                    type="number"
+                                    step="any"
+                                    value={v.baseline_value}
+                                    onChange={(e) => updateKpiValue(k.id, { baseline_value: e.target.value })}
+                                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:border-emerald-600"
+                                    placeholder="مقدار مبنا"
+                                  />
+                                </div>
+                              )}
+                              <div className="space-y-1.5">
+                                <label className="text-[11px] font-medium text-slate-500 block">
+                                  {k.input_type === "direct" ? "مقدار این دوره *" : "مقدار دوره جاری *"}
+                                </label>
+                                <input
+                                  type="number"
+                                  step="any"
+                                  value={v.current_value}
+                                  onChange={(e) => updateKpiValue(k.id, { current_value: e.target.value })}
+                                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:border-emerald-600"
+                                  placeholder="مقدار این دوره"
+                                />
+                              </div>
+                              {k.input_type === "percentage_change" && preview !== null && (
+                                <div className="sm:col-span-2 text-[11px] text-slate-500">
+                                  درصد تغییر (پیش‌نمایش): <span className="font-bold text-emerald-700">{preview}</span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* بخش آپلود فایل */}

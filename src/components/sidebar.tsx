@@ -11,6 +11,8 @@ import {
   Settings,
   LogOut,
   Menu,
+  Target,
+  TrendingUp,
 } from "lucide-react";
 import { User } from "../types";
 
@@ -193,6 +195,32 @@ export default function Sidebar({ user, currentView, setCurrentView, onLogout }:
               >
                 <Settings className="w-4 h-4" />
                 <span> تخصیص پروژه به پرسنل</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setCurrentView("project_kpi_management");
+                  setMobileMenuOpen(false);
+                }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
+                  currentView === "project_kpi_management" ? "bg-white/10 text-amber-400 font-semibold" : "hover:bg-white/5 hover:text-white"
+                }`}
+              >
+                <Target className="w-4 h-4" />
+                <span> مدیریت شاخص‌های KPI</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setCurrentView("project_kpi_analytics");
+                  setMobileMenuOpen(false);
+                }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
+                  currentView === "project_kpi_analytics" ? "bg-white/10 text-amber-400 font-semibold" : "hover:bg-white/5 hover:text-white"
+                }`}
+              >
+                <TrendingUp className="w-4 h-4" />
+                <span> تحلیل و روند شاخص‌ها</span>
               </button>
             </>
           )}
