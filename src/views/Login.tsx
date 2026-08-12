@@ -1,6 +1,6 @@
 // src/views/Login.tsx
 import { useState } from "react";
-import { User as UserIcon, AlertCircle } from "lucide-react";
+import { User as UserIcon, AlertCircle, Eye, EyeOff } from "lucide-react";
 import { User } from "../types";
 
 interface LoginProps {
@@ -12,6 +12,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   // منطق هندل کردن لاگین دقیقاً مطابق با فایل App.old.tsx
   const handleLogin = async (e: React.FormEvent) => {
@@ -72,13 +73,20 @@ export default function Login({ onLoginSuccess }: LoginProps) {
             <label className="block text-slate-700 text-sm font-medium mb-1.5">رمز عبور</label>
             <div className="relative">
               <input
-                type="password"
+                type={showPassword ? "text" : "password"}
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
-                className="w-full bg-slate-50 border border-slate-300 text-slate-900 rounded-xl px-3 py-2 text-left focus:outline-none focus:ring-2 focus:ring-slate-900 transition-all"
+                className="w-full bg-slate-50 border border-slate-300 text-slate-900 rounded-xl px-3 py-2 text-left focus:outline-none focus:ring-2 focus:ring-slate-900 transition-all pr-10"
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+              </button>
             </div>
           </div>
 
