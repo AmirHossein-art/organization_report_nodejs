@@ -63,7 +63,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                 required
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="مثلاً ahmadi"
+                placeholder="09123456789"
                 className="w-full bg-slate-50 border border-slate-300 text-slate-900 rounded-xl px-3 py-2 text-left focus:outline-none focus:ring-2 focus:ring-slate-900 transition-all"
               />
             </div>
@@ -83,7 +83,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
               >
                 {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
               </button>
