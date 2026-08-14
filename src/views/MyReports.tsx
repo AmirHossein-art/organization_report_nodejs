@@ -51,6 +51,25 @@ const formatPersianDate = (
   }).format(date);
 };
 
+// محاسبه تاریخ ددلاین ویرایش گزارش (مطابق منطق سمت سرور در server.ts)
+function getEditDeadlineDate(periodEnd: string, deadlineDay: number, deadlineTime: string, reportType: "weekly" | "monthly"): Date {
+  const deadlineDate = new Date(periodEnd + "T00:00:00");
+  if (reportType === "weekly") {
+    deadlineDate.setDate(deadlineDate.getDate() + 1);
+    while (deadlineDate.getDay() !== deadlineDay) {
+      deadlineDate.setDate(deadlineDate.getDate() + 1);
+    }
+  } else {
+    if (deadlineDay <= deadlineDate.getDate()) {
+      deadlineDate.setMonth(deadlineDate.getMonth() + 1);
+    }
+    deadlineDate.setDate(deadlineDay);
+  }
+  const [hours, minutes] = deadlineTime.split(":").map(Number);
+  deadlineDate.setHours(hours || 0, minutes || 0, 0, 0);
+  return deadlineDate;
+}
+
 interface MyReportsProps {
   currentUser?: User;
   user?: User;
@@ -96,12 +115,14 @@ function RawReportDetailsModal({
   isOpen,
   onClose,
   onRunAudit,
+  showAiAudit = false,
 }: {
   report: any | null;
   kpiMap: Record<number, any>;
   isOpen: boolean;
   onClose: () => void;
   onRunAudit: (rep: any) => void;
+  showAiAudit?: boolean;
 }) {
   if (!isOpen || !report) return null;
 
@@ -260,7 +281,7 @@ function RawReportDetailsModal({
           )}
         </div>
 
-        {/* فوتر با دکمه ویژه ممیزی هوشمند */}
+        {/* فوتر */}
         <div className="p-4 bg-slate-100 border-t border-slate-200 flex justify-between items-center shrink-0">
           <button
             onClick={onClose}
@@ -269,16 +290,18 @@ function RawReportDetailsModal({
             بستن
           </button>
 
-          <button
-            onClick={() => {
-              onClose();
-              onRunAudit(report);
-            }}
-            className="bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black px-5 py-2.5 rounded-2xl text-xs flex items-center gap-2 transition-all cursor-pointer shadow-md hover:shadow-lg active:scale-95"
-          >
-            <Sparkles className="w-4 h-4 text-slate-950" />
-            <span>اجرای ممیزی هوشمند WBS با AI</span>
-          </button>
+          {showAiAudit && (
+            <button
+              onClick={() => {
+                onClose();
+                onRunAudit(report);
+              }}
+              className="bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black px-5 py-2.5 rounded-2xl text-xs flex items-center gap-2 transition-all cursor-pointer shadow-md hover:shadow-lg active:scale-95"
+            >
+              <Sparkles className="w-4 h-4 text-slate-950" />
+              <span>اجرای ممیزی هوشمند WBS با AI</span>
+            </button>
+          )}
         </div>
 
       </div>
@@ -823,6 +846,7 @@ function ManagerVisualBubbleExplorer() {
         isOpen={rawModalOpen}
         onClose={() => setRawModalOpen(false)}
         onRunAudit={handleOpenAiAudit}
+        showAiAudit={true}
       />
 
       <SingleReportAuditModal
@@ -844,9 +868,421 @@ function ManagerVisualBubbleExplorer() {
   );
 }
 // =================================================================
+// ✏️ مودال ویرایش گزارش شخصی (قبل از ددلاین)
+// =================================================================
+import { CustomSelect, ShamsiDatePicker } from "../components";
+
+interface EditNextAction {
+  action_text: string;
+  target_date: string;
+}
+
+function ReportEditModal({
+  report,
+  isOpen,
+  onClose,
+  onSaved,
+}: {
+  report: any | null;
+  isOpen: boolean;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [activitiesDone, setActivitiesDone] = useState("");
+  const [resultsAchieved, setResultsAchieved] = useState("");
+  const [nextActions, setNextActions] = useState<EditNextAction[]>([]);
+
+  const [kpis, setKpis] = useState<any[]>([]);
+  const [kpiValues, setKpiValues] = useState<Record<number, any>>({});
+  const [kpisLoading, setKpisLoading] = useState(false);
+  const [selectedKpiFilter, setSelectedKpiFilter] = useState<number>(0);
+
+  const [loading, setLoading] = useState(false);
+  const [successMsg, setSuccessMsg] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
+
+  const flashSuccess = (msg: string) => { setSuccessMsg(msg); setTimeout(() => setSuccessMsg(""), 4000); };
+  const flashError = (msg: string) => { setErrorMsg(msg); setTimeout(() => setErrorMsg(""), 5000); };
+
+  // بارگذاری اطلاعات فعلی گزارش و شاخص‌ها هنگام باز شدن مودال
+  useEffect(() => {
+    if (!isOpen || !report) return;
+
+    setActivitiesDone(report.activities_done || "");
+    setResultsAchieved(report.results_achieved || "");
+    setNextActions(
+      Array.isArray(report.nextActions) && report.nextActions.length > 0
+        ? report.nextActions.map((a: any) => ({
+            action_text: a.action_text || "",
+            target_date: a.target_date ? String(a.target_date).split("T")[0] : "",
+          }))
+        : [{ action_text: "", target_date: "" }]
+    );
+    setSuccessMsg("");
+    setErrorMsg("");
+
+    // واکشی شاخص‌های فعال پروژه
+    setKpisLoading(true);
+    fetch(`/api/projects/${report.project_id}/kpis?report_type=${report.report_type}`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: any[]) => {
+        const kpiList = Array.isArray(data) ? data : [];
+        setKpis(kpiList);
+
+        // مقداردهی اولیه از مقادیر ثبت‌شده قبلی
+        const existingValues = Array.isArray(report.kpiValues) ? report.kpiValues : [];
+        const initial: Record<number, any> = {};
+        kpiList.forEach((k: any) => {
+          const existing = existingValues.find((v: any) => v.project_kpi_id === k.id);
+          if (existing) {
+            initial[k.id] = {
+              current_value: existing.not_measured ? "" : (existing.current_value ?? ""),
+              baseline_value: existing.not_measured ? "" : (existing.baseline_value ?? ""),
+              not_measured: existing.not_measured || false,
+              missing_reason: existing.missing_reason || "",
+            };
+          } else {
+            initial[k.id] = { current_value: "", baseline_value: "", not_measured: false, missing_reason: "" };
+          }
+        });
+        setKpiValues(initial);
+      })
+      .catch(() => setKpis([]))
+      .finally(() => setKpisLoading(false));
+  }, [isOpen, report]);
+
+  const updateKpiValue = (kpiId: number, patch: Partial<any>) => {
+    setKpiValues((prev) => ({
+      ...prev,
+      [kpiId]: { ...(prev[kpiId] || { current_value: "", baseline_value: "", not_measured: false, missing_reason: "" }), ...patch },
+    }));
+  };
+
+  const kpiIncomplete = kpis.some((k) => {
+    const v = kpiValues[k.id];
+    if (!v) return true;
+    if (v.not_measured) return !v.missing_reason || !v.missing_reason.trim();
+    if (k.input_type === "direct") return v.current_value === "" || v.current_value === null || isNaN(Number(v.current_value));
+    return (
+      v.baseline_value === "" || v.baseline_value === null || isNaN(Number(v.baseline_value)) ||
+      v.current_value === "" || v.current_value === null || isNaN(Number(v.current_value))
+    );
+  });
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!report) return;
+
+    if (!activitiesDone.trim()) {
+      flashError("پر کردن فیلد فعالیت‌های انجام‌شده الزامی است.");
+      return;
+    }
+    const hasInvalidAction = nextActions.some((a) => !a.action_text.trim() || !a.target_date);
+    if (hasInvalidAction) {
+      flashError("لطفاً شرح و تاریخ سررسید دقیق را برای تمامی اقدامات آتی مشخص کنید.");
+      return;
+    }
+    if (kpiIncomplete) {
+      flashError("لطفاً مقادیر تمامی شاخص‌ها را تکمیل کنید یا عدم اندازه‌گیری را مشخص نمایید.");
+      return;
+    }
+
+    setLoading(true);
+    const formData = new FormData();
+    formData.append("activities_done", activitiesDone);
+    formData.append("results_achieved", resultsAchieved);
+    formData.append("next_actions", JSON.stringify(nextActions));
+
+    // ساخت آرایه مقادیر شاخص
+    const kpiPayload = kpis.map((k) => {
+      const v = kpiValues[k.id] || {};
+      if (v.not_measured) {
+        return { project_kpi_id: k.id, current_value: null, baseline_value: null, not_measured: true, missing_reason: (v.missing_reason || "").trim() || null };
+      }
+      return {
+        project_kpi_id: k.id,
+        current_value: Number(v.current_value),
+        baseline_value: k.input_type === "percentage_change" ? Number(v.baseline_value) : null,
+        not_measured: false,
+        missing_reason: null,
+      };
+    });
+    if (kpis.length > 0) {
+      formData.append("kpi_values", JSON.stringify(kpiPayload));
+    }
+
+    try {
+      const res = await fetch(`/api/reports/${report.id}`, { method: "PUT", body: formData });
+      if (res.ok) {
+        flashSuccess("گزارش با موفقیت ویرایش شد.");
+        onSaved();
+        setTimeout(() => onClose(), 1200);
+      } else {
+        const data = await res.json();
+        flashError(data.error || "خطا در ویرایش گزارش.");
+      }
+    } catch (err) {
+      flashError("ارتباط با سرور دچار مشکل شد.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!isOpen || !report) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 md:p-6 animate-fade-in dir-rtl font-sans">
+      <div className="relative w-full max-w-3xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
+
+        {/* هدر */}
+        <div className="p-5 bg-gradient-to-r from-slate-900 to-emerald-950 text-white flex items-center justify-between border-b border-slate-800 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/30">
+              <FileText className="w-5 h-5 text-emerald-400" />
+            </div>
+            <div>
+              <h3 className="font-extrabold text-base md:text-lg text-white">ویرایش گزارش عملکرد</h3>
+              <p className="text-xs text-slate-300 mt-0.5 font-medium">
+                {report.project_title} — {toPersianDigits(report.period_title)}
+              </p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-xl text-slate-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* پیام‌های وضعیت */}
+        {successMsg && (
+          <div className="mx-6 mt-4 bg-green-600 text-white font-medium px-4 py-3 rounded-xl flex items-center gap-2 border border-green-700">
+            <CheckCircle2 className="w-5 h-5" /> <span>{successMsg}</span>
+          </div>
+        )}
+        {errorMsg && (
+          <div className="mx-6 mt-4 bg-red-600 text-white font-medium px-4 py-3 rounded-xl flex items-center gap-2 border border-red-700">
+            <AlertTriangle className="w-5 h-5" /> <span>{errorMsg}</span>
+          </div>
+        )}
+
+        {/* بدنه فرم */}
+        <form onSubmit={handleSave} className="flex-1 overflow-y-auto p-6 space-y-5 bg-slate-50/60 text-right">
+
+          {/* فعالیت‌ها */}
+          <div className="space-y-2">
+            <label className="text-sm font-semibold text-slate-700">فعالیت‌های انجام‌شده *</label>
+            <textarea
+              required
+              value={activitiesDone}
+              onChange={(e) => setActivitiesDone(e.target.value)}
+              className="w-full bg-white border border-slate-200 focus:border-emerald-600 rounded-2xl p-3 text-xs min-h-[100px] focus:outline-none transition-all"
+              placeholder="لیست فعالیت‌ها..."
+            />
+          </div>
+
+          {/* نتایج */}
+          <div className="space-y-2">
+            <label className="text-sm font-semibold text-slate-700">نتایج حاصل‌شده</label>
+            <textarea
+              value={resultsAchieved}
+              onChange={(e) => setResultsAchieved(e.target.value)}
+              className="w-full bg-white border border-slate-200 focus:border-emerald-600 rounded-2xl p-3 text-xs min-h-[80px] focus:outline-none transition-all"
+              placeholder="نتایج ملموس..."
+            />
+          </div>
+
+          {/* اقدامات آتی */}
+          <div className="bg-white p-4 rounded-2xl border border-slate-200/60 space-y-3">
+            <div className="flex justify-between items-center border-b border-slate-200 pb-2">
+              <label className="text-sm font-bold text-slate-850">اقدامات آتی</label>
+              <button
+                type="button"
+                onClick={() => setNextActions([...nextActions, { action_text: "", target_date: "" }])}
+                className="text-xs bg-emerald-800 text-white px-3 py-1.5 rounded-xl font-medium hover:bg-emerald-900 cursor-pointer"
+              >
+                + افزودن
+              </button>
+            </div>
+            {nextActions.map((item, index) => (
+              <div key={index} className="flex flex-col md:flex-row gap-3 items-end md:items-center bg-slate-50 p-3 rounded-xl border border-slate-200/70">
+                <div className="flex-1 w-full">
+                  <label className="text-[11px] font-medium text-slate-400 block mb-1">شرح اقدام</label>
+                  <input
+                    type="text"
+                    required
+                    value={item.action_text}
+                    onChange={(e) => { const u = [...nextActions]; u[index].action_text = e.target.value; setNextActions(u); }}
+                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:border-emerald-600"
+                  />
+                </div>
+                <div className="w-full md:w-44">
+                  <label className="text-[11px] font-medium text-slate-400 block mb-1">تاریخ سررسید</label>
+                  <ShamsiDatePicker
+                    value={item.target_date}
+                    onChange={(gregorianDate) => { const u = [...nextActions]; u[index].target_date = gregorianDate; setNextActions(u); }}
+                    placeholder="انتخاب تاریخ"
+                  />
+                </div>
+                {nextActions.length > 1 && (
+                  <button type="button" onClick={() => setNextActions(nextActions.filter((_, i) => i !== index))}
+                    className="p-2 text-red-500 hover:bg-red-50 rounded-xl transition-colors cursor-pointer">
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* شاخص‌های عملکرد */}
+          <div className="space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-2">
+              <div className="flex items-center gap-2">
+                <Target className="w-4 h-4 text-emerald-700" />
+                <label className="text-sm font-bold text-slate-850">شاخص‌های عملکرد پروژه</label>
+                <span className="text-[11px] text-slate-400">({toPersianDigits(kpis.length)} شاخص)</span>
+              </div>
+
+              {kpis.length > 1 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500 font-medium whitespace-nowrap">نمایش شاخص:</span>
+                  <div className="w-56">
+                    <CustomSelect
+                      value={selectedKpiFilter}
+                      onChange={(val) => setSelectedKpiFilter(Number(val))}
+                      options={[
+                        { value: 0, label: "همه شاخص‌ها" },
+                        ...kpis.map((k) => ({ value: k.id, label: k.name })),
+                      ]}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {kpisLoading ? (
+              <div className="text-xs text-slate-400 flex items-center gap-2 bg-white p-4 rounded-2xl border border-slate-200/60">
+                <RefreshCw className="w-4 h-4 animate-spin text-emerald-600" />
+                <span>در حال بارگذاری شاخص‌ها...</span>
+              </div>
+            ) : kpis.length === 0 ? (
+              <div className="text-xs text-slate-500 bg-white p-4 rounded-2xl border border-slate-200/60">
+                برای این پروژه شاخص فعالی تعریف نشده است.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {kpis
+                  .filter((k) => selectedKpiFilter === 0 || k.id === selectedKpiFilter)
+                  .map((k) => {
+                  const v = kpiValues[k.id] || { current_value: "", baseline_value: "", not_measured: false, missing_reason: "" };
+                  const disabled = v.not_measured;
+                  let preview: string | null = null;
+                  if (k.input_type === "percentage_change" && !disabled && v.baseline_value && v.current_value &&
+                      Number(v.baseline_value) !== 0 && !isNaN(Number(v.current_value)) && !isNaN(Number(v.baseline_value))) {
+                    const pct = ((Number(v.current_value) - Number(v.baseline_value)) / Number(v.baseline_value)) * 100;
+                    preview = `${toPersianDigits(pct.toFixed(1))}٪`;
+                  }
+                  return (
+                    <div key={k.id} className="bg-white p-4 rounded-2xl border border-slate-200/70 space-y-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <h5 className="text-sm font-bold text-slate-800">{k.name}</h5>
+                          {k.description && <p className="text-[11px] text-slate-500 mt-0.5">{k.description}</p>}
+                          <p className="text-[11px] text-slate-600 mt-1">
+                            هدف: {k.target_direction === "minimum" ? "حداقل" : "حداکثر"} {toPersianDigits(k.target_value)} {k.unit}
+                          </p>
+                        </div>
+                        <label className="flex items-center gap-1.5 shrink-0 cursor-pointer text-[11px] text-slate-600">
+                          <input type="checkbox" checked={disabled} onChange={(e) => updateKpiValue(k.id, { not_measured: e.target.checked })} className="w-4 h-4 accent-rose-600" />
+                          اندازه‌گیری نشده
+                        </label>
+                      </div>
+                      {disabled ? (
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] font-medium text-slate-500 block">دلیل عدم اندازه‌گیری *</label>
+                          <textarea value={v.missing_reason} onChange={(e) => updateKpiValue(k.id, { missing_reason: e.target.value })}
+                            rows={2} placeholder="دلیل..." className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-rose-500" />
+                        </div>
+                      ) : (
+                        <div className={k.input_type === "percentage_change" ? "grid grid-cols-1 sm:grid-cols-2 gap-3" : ""}>
+                          {k.input_type === "percentage_change" && (
+                            <div className="space-y-1.5">
+                              <label className="text-[11px] font-medium text-slate-500 block">مقدار مبنا *</label>
+                              <input type="number" step="any" value={v.baseline_value}
+                                onChange={(e) => updateKpiValue(k.id, { baseline_value: e.target.value })}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:border-emerald-600" />
+                            </div>
+                          )}
+                          <div className="space-y-1.5">
+                            <label className="text-[11px] font-medium text-slate-500 block">
+                              {k.input_type === "direct" ? "مقدار این دوره *" : "مقدار دوره جاری *"}
+                            </label>
+                            <input type="number" step="any" value={v.current_value}
+                              onChange={(e) => updateKpiValue(k.id, { current_value: e.target.value })}
+                              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:border-emerald-600" />
+                          </div>
+                          {k.input_type === "percentage_change" && preview !== null && (
+                            <div className="sm:col-span-2 text-[11px] text-slate-500">
+                              درصد تغییر (پیش‌نمایش): <span className="font-bold text-emerald-700">{preview}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </form>
+
+        {/* فوتر */}
+        <div className="p-4 bg-slate-100 border-t border-slate-200 flex justify-between items-center shrink-0">
+          <button type="button" onClick={onClose}
+            className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-xl text-xs transition-colors cursor-pointer">
+            انصراف
+          </button>
+          <button type="submit" disabled={loading} onClick={handleSave}
+            className="bg-emerald-800 hover:bg-emerald-900 text-white font-medium px-6 py-2.5 rounded-xl transition-all cursor-pointer flex items-center gap-2 disabled:opacity-50">
+            {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+            <span>ذخیره تغییرات</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =================================================================
 // 📄 کامپوننت اصلی MyReports
 // =================================================================
-export default function MyReports({ currentUser, user, reports = [], allReports = [] }: MyReportsProps) {
+export default function MyReports({ currentUser, user, reports = [], allReports = [], onRefresh }: MyReportsProps) {
+  const [editingReport, setEditingReport] = useState<any | null>(null);
+  const [viewingReport, setViewingReport] = useState<any | null>(null);
+  const [deadlineSettings, setDeadlineSettings] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetch("/api/deadline-settings")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => setDeadlineSettings(Array.isArray(data) ? data : []))
+      .catch(() => setDeadlineSettings([]));
+  }, []);
+
+  const isEditableBeforeDeadline = (rep: any): boolean => {
+    if (!rep || !rep.period_end || !rep.report_type) return false;
+    const setting = deadlineSettings.find((s: any) => s.report_type === rep.report_type);
+    if (!setting) return true; // اگر تنظیماتی نباشد کماکان قابل ویرایش است
+    try {
+      const deadlineDate = getEditDeadlineDate(
+        rep.period_end,
+        setting.deadline_day,
+        setting.deadline_time,
+        rep.report_type
+      );
+      return new Date() <= deadlineDate;
+    } catch {
+      return false;
+    }
+  };
+
   const activeUser = currentUser || user;
   const activeReports = reports.length > 0 ? reports : allReports;
 
@@ -887,38 +1323,83 @@ export default function MyReports({ currentUser, user, reports = [], allReports 
                 <th className="p-4">تاریخ ثبت</th>
                 <th className="p-4">وضعیت</th>
                 <th className="p-4">خلاصه فعالیت‌ها</th>
+                <th className="p-4 text-center">عملیات</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {activeReports.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="p-8 text-center text-slate-400">
+                  <td colSpan={6} className="p-8 text-center text-slate-400">
                     هیچ گزارشی توسط شما ثبت نشده است.
                   </td>
                 </tr>
               ) : (
-                activeReports.map((rep: any) => (
-                  <tr key={rep.id} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="p-4 font-bold text-slate-800">{rep.project_title}</td>
-                    <td className="p-4 text-slate-600">{toPersianDigits(rep.period_title)}</td>
-                    <td className="p-4 text-slate-500">{formatPersianDate(rep.submitted_at)}</td>
-                    <td className="p-4">
-                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
-                        rep.status === "late" 
-                          ? "bg-amber-50 text-amber-700 border border-amber-200" 
-                          : "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                      }`}>
-                        {rep.status === "late" ? "ارسال با تأخیر" : "ثبت منظم"}
-                      </span>
-                    </td>
-                    <td className="p-4 text-slate-600 max-w-xs truncate">{rep.activities_done}</td>
-                  </tr>
-                ))
+                activeReports.map((rep: any) => {
+                  const canEdit = isEditableBeforeDeadline(rep);
+                  return (
+                    <tr key={rep.id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="p-4 font-bold text-slate-800">{rep.project_title}</td>
+                      <td className="p-4 text-slate-600">{toPersianDigits(rep.period_title)}</td>
+                      <td className="p-4 text-slate-500">{formatPersianDate(rep.submitted_at)}</td>
+                      <td className="p-4">
+                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                          rep.status === "late"
+                            ? "bg-amber-50 text-amber-700 border border-amber-200"
+                            : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                        }`}>
+                          {rep.status === "late" ? "ارسال با تأخیر" : "ثبت منظم"}
+                        </span>
+                      </td>
+                      <td className="p-4 text-slate-600 max-w-xs truncate">{rep.activities_done}</td>
+                      <td className="p-4 flex items-center justify-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setViewingReport(rep)}
+                          className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-[11px] transition-colors cursor-pointer"
+                        >
+                          مشاهده جزئیات
+                        </button>
+                        {canEdit ? (
+                          <button
+                            type="button"
+                            onClick={() => setEditingReport(rep)}
+                            className="px-3 py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white font-bold rounded-xl text-[11px] transition-colors cursor-pointer flex items-center gap-1"
+                          >
+                            <span>ویرایش گزارش</span>
+                          </button>
+                        ) : (
+                          <span className="text-[10px] text-slate-400 font-medium bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">
+                            پایان مهلت ویرایش
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
         </div>
       </div>
+
+      {/* مودال مشاهده جزئیات */}
+      <RawReportDetailsModal
+        report={viewingReport}
+        kpiMap={{}}
+        isOpen={Boolean(viewingReport)}
+        onClose={() => setViewingReport(null)}
+        onRunAudit={() => {}}
+      />
+
+      {/* مودال ویرایش گزارش */}
+      <ReportEditModal
+        report={editingReport}
+        isOpen={Boolean(editingReport)}
+        onClose={() => setEditingReport(null)}
+        onSaved={() => {
+          if (onRefresh) onRefresh();
+        }}
+      />
     </div>
   );
 }

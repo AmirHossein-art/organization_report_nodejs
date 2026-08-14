@@ -38,6 +38,7 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
   const [kpisLoading, setKpisLoading] = useState(false);
   // مقادیر واردشده به تفکیک شناسه شاخص
   const [kpiValues, setKpiValues] = useState<Record<number, any>>({});
+  const [selectedKpiFilter, setSelectedKpiFilter] = useState<number>(0); // 0 = همه شاخص‌ها
   
   const [loading, setLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
@@ -391,12 +392,22 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
 
           {/* 🛠️ شرط‌های رندر داینامیک فرم */}
           {hasAlreadySubmitted ? (
-            <div className="bg-orange-50 border border-orange-200 text-orange-800 p-6 rounded-2xl flex flex-col items-center justify-center text-center gap-3">
-              <AlertTriangle className="w-8 h-8 text-orange-600 animate-pulse" />
-              <h4 className="font-bold text-sm">گزارش قبلاً ثبت شده است</h4>
-              <p className="text-xs leading-relaxed max-w-md font-medium">
-                شما قبلاً برای پروژه انتخابی در این بازه گزارش عملکرد ثبت کرده‌اید. امکان ثبت گزارش مجدد وجود ندارد.
+            <div className="bg-amber-50 border border-amber-200 text-amber-900 p-6 rounded-2xl flex flex-col items-center justify-center text-center gap-3 animate-fade-in">
+              <AlertTriangle className="w-8 h-8 text-amber-600 animate-bounce" />
+              <h4 className="font-bold text-sm">گزارش عملکرد این پروژه در این بازه قبلاً ثبت شده است</h4>
+              <p className="text-xs leading-relaxed max-w-md font-medium text-slate-700">
+                شما این گزارش را وارد کرده‌اید. لطفاً برای مشاهده و ویرایش آن به صفحه <strong>گزارش‌های من</strong> بروید.
               </p>
+              {onNavigate && (
+                <button
+                  type="button"
+                  onClick={() => onNavigate("my_reports")}
+                  className="mt-2 bg-emerald-800 hover:bg-emerald-900 text-white font-bold px-5 py-2 rounded-xl text-xs transition-all flex items-center gap-2 cursor-pointer shadow-md"
+                >
+                  <span>ورود به صفحه گزارش‌های من</span>
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
+              )}
             </div>
           ) : subPeriodId === 0 ? (
             <div className="bg-amber-50/60 border border-amber-200 text-amber-900 p-8 rounded-2xl flex flex-col items-center justify-center text-center gap-3 animate-fade-in">
@@ -496,10 +507,28 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
 
               {/* 🟢 بخش شاخص‌های عملکرد ساختاریافته */}
               <div className="space-y-3">
-                <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
-                  <Target className="w-4 h-4 text-emerald-700" />
-                  <label className="text-sm font-bold text-slate-850">شاخص‌های عملکرد پروژه</label>
-                  <span className="text-[11px] text-slate-400">({toPersianDigits(kpis.length)} شاخص)</span>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-2">
+                  <div className="flex items-center gap-2">
+                    <Target className="w-4 h-4 text-emerald-700" />
+                    <label className="text-sm font-bold text-slate-850">شاخص‌های عملکرد پروژه</label>
+                    <span className="text-[11px] text-slate-400">({toPersianDigits(kpis.length)} شاخص)</span>
+                  </div>
+
+                  {kpis.length > 1 && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-slate-500 font-medium whitespace-nowrap">نمایش شاخص:</span>
+                      <div className="w-56">
+                        <CustomSelect
+                          value={selectedKpiFilter}
+                          onChange={(val) => setSelectedKpiFilter(Number(val))}
+                          options={[
+                            { value: 0, label: "همه شاخص‌ها" },
+                            ...kpis.map((k) => ({ value: k.id, label: k.name })),
+                          ]}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {kpisLoading ? (
@@ -513,7 +542,9 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {kpis.map((k) => {
+                    {kpis
+                      .filter((k) => selectedKpiFilter === 0 || k.id === selectedKpiFilter)
+                      .map((k) => {
                       const v = kpiValues[k.id] || { current_value: "", baseline_value: "", not_measured: false, missing_reason: "" };
                       const disabled = v.not_measured;
                       // پیش‌نمایش محاسبه درصد برای کلاینت (منبع حقیقت سرور است)
