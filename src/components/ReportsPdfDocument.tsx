@@ -4,20 +4,11 @@ import {
   Printer,
   X,
   FileText,
-  CheckSquare,
-  Clock,
-  Crown,
-  FileCheck2,
   RefreshCw,
 } from "lucide-react";
 import { Report, ReportPeriod, Project, User } from "../types";
 import { CustomSelect } from "../components";
-
-export const toPersianDigits = (n: string | number | undefined | null): string => {
-  if (n === undefined || n === null) return "";
-  const farsiDigits = ["۰", "۱", "۲", "۳", "۴", "۵", "۶", "۷", "۸", "۹"];
-  return n.toString().replace(/\d/g, (x) => farsiDigits[parseInt(x)]);
-};
+import { toPersianDigits } from "../dateUtils";
 
 const formatPersianDate = (value: string | null | undefined): string => {
   if (!value) return "بدون تاریخ مشخص";
@@ -27,6 +18,18 @@ const formatPersianDate = (value: string | null | undefined): string => {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
+    timeZone: "Asia/Tehran",
+  }).format(date);
+};
+
+const formatPersianLongDate = (value: string | null | undefined): string => {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return toPersianDigits(value);
+  return new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
     timeZone: "Asia/Tehran",
   }).format(date);
 };
@@ -50,6 +53,21 @@ interface ReportsPdfDocumentProps {
   projects?: Project[];
   users?: User[];
   defaultPeriodId?: number;
+}
+
+interface PageSection {
+  heading: string;
+  items: Array<{
+    text: string;
+    date?: string | null;
+  }>;
+}
+
+interface ReportPageData {
+  reportId: number;
+  projectTitle: string;
+  isContinuation: boolean;
+  sections: PageSection[];
 }
 
 export default function ReportsPdfDocument({
@@ -83,7 +101,7 @@ export default function ReportsPdfDocument({
     return Array.from(set);
   }, [localUsers]);
 
-  // بارگذاری داده‌ها فقط هنگام باز شدن مودال
+  // بارگذاری داده‌ها هنگام باز شدن مودال
   useEffect(() => {
     if (!isOpen) {
       isFetchingRef.current = false;
@@ -132,7 +150,7 @@ export default function ReportsPdfDocument({
     }
   }, [isOpen, defaultPeriodId]);
 
-  // لیست فیلترشده و مرتب‌شده بر اساس اولویت پروژه‌ها در صفحه مدیریت پروژه‌ها
+  // لیست فیلترشده و مرتب‌شده بر اساس اولویت پروژه‌ها
   const orderedReports = useMemo(() => {
     const filtered = localReports.filter((r) => {
       if (selectedPeriodId > 0 && r.period_id !== selectedPeriodId) return false;
@@ -159,15 +177,197 @@ export default function ReportsPdfDocument({
     });
   }, [localReports, localProjects, localUsers, selectedPeriodId, selectedProjectId, selectedDeputy]);
 
+  // کمکی برای تفکیک خطوط به بالت‌ها
+  const parseBulletPoints = (text: string | null | undefined): string[] => {
+    if (!text) return [];
+    return text
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map((l) => l.replace(/^([•\-\*\d+\.\s\u06F0-\u06F9\.\-\–\—])+\s*/, "").trim())
+      .filter((l) => l.length > 0);
+  };
+
+  // الگوریتم صفحه‌بندی هوشمند پروژه‌های طولانی بر اساس ظرفیت واقعی برگه A4
+  const paginatedReportPages = useMemo(() => {
+    const pages: ReportPageData[] = [];
+    const MAX_PAGE_LINES = 68; // گنجایش واقعی تعداد خطوط در یک صفحه A4
+
+    const estimateItemLines = (text: string): number => {
+      if (!text) return 1;
+      const len = text.length;
+      if (len <= 85) return 1.1;
+      if (len <= 170) return 2.1;
+      if (len <= 255) return 3.1;
+      return Math.max(1, Math.ceil(len / 85)) + 0.1;
+    };
+
+    orderedReports.forEach((report) => {
+      const activitiesList = parseBulletPoints(report.activities_done);
+      const resultsList =
+        report.achievedActions && report.achievedActions.length > 0
+          ? report.achievedActions.map((a) => a.action_text)
+          : parseBulletPoints(report.results_achieved);
+
+      const nextActionsList =
+        report.nextActions && report.nextActions.length > 0
+          ? report.nextActions.map((na) => ({
+            text: na.action_text,
+            date: na.target_date_raw || (na.target_date ? formatPersianDate(na.target_date) : null),
+          }))
+          : [];
+
+      // ایجاد بخش‌های خام
+      const rawSections: Array<{ heading: string; items: Array<{ text: string; date?: string | null }> }> = [];
+
+      if (activitiesList.length > 0) {
+        rawSections.push({
+          heading: ".۱ مهم‌ترین اقدامات انجام‌شده در هفته جاری:",
+          items: activitiesList.map((text) => ({ text })),
+        });
+      } else if (report.activities_done) {
+        rawSections.push({
+          heading: ".۱ مهم‌ترین اقدامات انجام‌شده در هفته جاری:",
+          items: [{ text: report.activities_done }],
+        });
+      }
+
+      if (resultsList.length > 0) {
+        rawSections.push({
+          heading: "نتایج اقدامات:",
+          items: resultsList.map((text) => ({ text })),
+        });
+      }
+
+      if (nextActionsList.length > 0) {
+        rawSections.push({
+          heading: ".۲ اقدامات آتی:",
+          items: nextActionsList,
+        });
+      }
+
+      if (rawSections.length === 0) {
+        pages.push({
+          reportId: report.id,
+          projectTitle: report.project_title,
+          isContinuation: false,
+          sections: [],
+        });
+        return;
+      }
+
+      // محاسبه کل خطوط گزارش
+      let totalLinesInReport = 0;
+      rawSections.forEach((sec) => {
+        totalLinesInReport += 1.3; // عنوان بخش
+        sec.items.forEach((item) => {
+          totalLinesInReport += estimateItemLines(item.text);
+        });
+      });
+
+      // اگر کل گزارش در یک صفحه A4 جا می‌شود، تماماً در یک صفحه قرار گیرد
+      if (totalLinesInReport <= MAX_PAGE_LINES) {
+        pages.push({
+          reportId: report.id,
+          projectTitle: report.project_title,
+          isContinuation: false,
+          sections: rawSections,
+        });
+        return;
+      }
+
+      // تقسیم‌بندی روی صفحات A4 در صورت بسیار طولانی بودن
+      let currentPageSections: PageSection[] = [];
+      let currentLines = 0;
+      let isContinuation = false;
+
+      rawSections.forEach((section) => {
+        if (section.items.length === 0) return;
+
+        const headingLines = 1.3;
+
+        if (
+          currentLines + headingLines + estimateItemLines(section.items[0].text) > MAX_PAGE_LINES &&
+          currentPageSections.length > 0
+        ) {
+          pages.push({
+            reportId: report.id,
+            projectTitle: report.project_title,
+            isContinuation,
+            sections: currentPageSections,
+          });
+          currentPageSections = [];
+          currentLines = 0;
+          isContinuation = true;
+        }
+
+        let currentSection: PageSection = {
+          heading: section.heading,
+          items: [],
+        };
+        currentLines += headingLines;
+
+        section.items.forEach((item) => {
+          const l = estimateItemLines(item.text);
+
+          if (
+            currentLines + l > MAX_PAGE_LINES &&
+            (currentSection.items.length > 0 || currentPageSections.length > 0)
+          ) {
+            if (currentSection.items.length > 0) {
+              currentPageSections.push(currentSection);
+            }
+
+            pages.push({
+              reportId: report.id,
+              projectTitle: report.project_title,
+              isContinuation,
+              sections: currentPageSections,
+            });
+
+            currentPageSections = [];
+            currentLines = headingLines;
+            isContinuation = true;
+            currentSection = {
+              heading: section.heading + " (ادامه)",
+              items: [],
+            };
+          }
+
+          currentSection.items.push(item);
+          currentLines += l;
+        });
+
+        if (currentSection.items.length > 0) {
+          currentPageSections.push(currentSection);
+        }
+      });
+
+      if (currentPageSections.length > 0) {
+        pages.push({
+          reportId: report.id,
+          projectTitle: report.project_title,
+          isContinuation,
+          sections: currentPageSections,
+        });
+      }
+    });
+
+    return pages;
+  }, [orderedReports]);
+
   if (!isOpen) return null;
 
   const activePeriod = localPeriods.find((p) => p.id === selectedPeriodId);
-  const activeProject = localProjects.find((p) => p.id === selectedProjectId);
+  const coverDate = activePeriod?.period_end
+    ? formatPersianLongDate(activePeriod.period_end)
+    : activePeriod?.title
+      ? toPersianDigits(activePeriod.title)
+      : formatPersianLongDate(new Date().toISOString());
 
-  const onTimeCount = orderedReports.filter((r) => r.status === "submitted").length;
-  const lateCount = orderedReports.filter((r) => r.status === "late").length;
+  const reportTypeName = activePeriod?.report_type === "monthly" ? "گزارش ماهانه" : "گزارش هفتگی";
 
-  // موتور مستقل صدور PDF
+  // پرینت خروجی PDF با تمپلیت استاندارد سایز A4
   const handlePrint = () => {
     if (!printAreaRef.current) return;
     const content = printAreaRef.current.innerHTML;
@@ -190,7 +390,8 @@ export default function ReportsPdfDocument({
       <html dir="rtl" lang="fa">
       <head>
         <meta charset="utf-8">
-        <title>گزارش جامع عملکرد سازمان - ${formatPersianDateTime(new Date())}</title>
+        <title>گزارش پروژه‌های استراتژیک - ${formatPersianDateTime(new Date())}</title>
+        <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css" />
         <style>
           * {
             box-sizing: border-box;
@@ -200,114 +401,207 @@ export default function ReportsPdfDocument({
           }
           @page {
             size: A4 portrait;
-            margin: 12mm 10mm 15mm 10mm;
+            margin: 0;
           }
-          body {
-            font-family: Sahel, Vazir, 'Vazirmatn', Shabnam, Tahoma, system-ui, -apple-system, sans-serif;
-            direction: rtl;
-            text-align: right;
-            background-color: #ffffff;
-            color: #0f172a;
+          html, body {
+            width: 210mm;
+            height: 297mm;
             margin: 0;
             padding: 0;
-            font-size: 11px;
-            line-height: 1.5;
+            background-color: #ffffff;
+            font-family: 'Vazirmatn', Sahel, Vazir, Shabnam, Tahoma, system-ui, -apple-system, sans-serif;
+            direction: rtl;
+            text-align: right;
+            color: #0f172a;
+            font-size: 11.5px;
+            line-height: 1.55;
           }
-          .page-break-avoid {
-            page-break-inside: avoid !important;
-            break-inside: avoid !important;
+
+          /* ساختار دقیق صفحه استاندارد A4 */
+          .pdf-page-container {
+            width: 210mm;
+            height: 297mm;
+            min-height: 297mm;
+            max-height: 297mm;
+            padding: 12mm 14mm 10mm 14mm;
+            margin: 0 auto;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            page-break-after: always;
+            break-after: page;
+            page-break-inside: avoid;
+            break-inside: avoid;
+            background-color: #ffffff;
+            box-sizing: border-box;
+            overflow: hidden;
           }
-          .no-print {
-            display: none !important;
+
+          /* صفحه اول / کاور استارتر */
+          .cover-page-box {
+            background-color: #55913e;
+            border-radius: 20px;
+            width: 100%;
+            height: 100%;
+            padding: 44px 36px 36px 36px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            color: #ffffff;
+            box-sizing: border-box;
           }
-          .border { border: 1px solid #cbd5e1; }
-          .border-b { border-bottom: 1px solid #e2e8f0; }
-          .border-b-2 { border-bottom: 2px solid #0f172a; }
-          .border-t { border-top: 1px solid #cbd5e1; }
-          .rounded-2xl { border-radius: 14px; }
-          .rounded-xl { border-radius: 10px; }
-          .rounded-lg { border-radius: 8px; }
-          .rounded-full { border-radius: 9999px; }
-          .bg-slate-50 { background-color: #f8fafc; }
-          .bg-slate-100 { background-color: #f1f5f9; }
-          .bg-slate-900 { background-color: #0f172a; }
-          .bg-emerald-50 { background-color: #ecfdf5; }
-          .bg-emerald-100 { background-color: #d1fae5; }
-          .bg-emerald-600 { background-color: #059669; }
-          .bg-rose-100 { background-color: #ffe4e6; }
-          .bg-indigo-50 { background-color: #eef2ff; }
-          .bg-indigo-600 { background-color: #4f46e5; }
-          .bg-amber-100 { background-color: #fef3c7; }
-          .bg-purple-100 { background-color: #f3e8ff; }
-          .text-white { color: #ffffff; }
-          .text-slate-400 { color: #94a3b8; }
-          .text-slate-500 { color: #64748b; }
-          .text-slate-600 { color: #475569; }
-          .text-slate-700 { color: #334155; }
-          .text-slate-800 { color: #1e293b; }
-          .text-slate-900 { color: #0f172a; }
-          .text-emerald-700 { color: #047857; }
-          .text-emerald-800 { color: #065f46; }
-          .text-emerald-900 { color: #064e3b; }
-          .text-rose-700 { color: #be123c; }
-          .text-rose-900 { color: #881337; }
-          .text-indigo-700 { color: #4338ca; }
-          .text-indigo-900 { color: #312e81; }
-          .text-amber-900 { color: #78350f; }
-          .text-purple-800 { color: #6b21a8; }
-          .p-2 { padding: 8px; }
-          .p-2\\.5 { padding: 10px; }
-          .p-3 { padding: 12px; }
-          .p-5 { padding: 18px; }
-          .p-6 { padding: 20px; }
-          .px-1\\.5 { padding-left: 6px; padding-right: 6px; }
-          .px-2 { padding-left: 8px; padding-right: 8px; }
-          .px-2\\.5 { padding-left: 10px; padding-right: 10px; }
-          .py-0\\.5 { padding-top: 2px; padding-bottom: 2px; }
-          .py-1 { padding-top: 4px; padding-bottom: 4px; }
-          .pb-3 { padding-bottom: 12px; }
-          .pb-5 { padding-bottom: 18px; }
-          .pt-1 { padding-top: 4px; }
-          .pt-4 { padding-top: 14px; }
-          .space-y-0\\.5 > * + * { margin-top: 2px; }
-          .space-y-1 > * + * { margin-top: 4px; }
-          .space-y-1\\.5 > * + * { margin-top: 6px; }
-          .space-y-2 > * + * { margin-top: 8px; }
-          .space-y-3 > * + * { margin-top: 12px; }
-          .space-y-4 > * + * { margin-top: 14px; }
-          .space-y-6 > * + * { margin-top: 20px; }
-          .flex { display: flex; }
-          .flex-wrap { flex-wrap: wrap; }
-          .items-center { align-items: center; }
-          .items-start { align-items: flex-start; }
-          .justify-between { justify-content: space-between; }
-          .justify-center { justify-content: center; }
-          .gap-1 { gap: 4px; }
-          .gap-1\\.5 { gap: 6px; }
-          .gap-2 { gap: 8px; }
-          .gap-3 { gap: 12px; }
-          .gap-4 { gap: 16px; }
-          .grid { display: grid; }
-          .grid-cols-1 { grid-template-columns: repeat(1, minmax(0, 1fr)); }
-          .grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-          .font-medium { font-weight: 500; }
-          .font-bold { font-weight: 700; }
-          .font-black, .font-extrabold { font-weight: 900; }
-          .text-xs { font-size: 11px; }
-          .text-sm { font-size: 13px; }
-          .text-lg { font-size: 16px; }
-          .text-xl { font-size: 18px; }
-          .text-\\[11px\\] { font-size: 10.5px; }
-          .text-\\[10px\\] { font-size: 9.5px; }
-          .text-\\[9px\\] { font-size: 8.5px; }
-          .leading-relaxed { line-height: 1.7; }
-          .leading-snug { line-height: 1.35; }
-          .whitespace-pre-line { white-space: pre-line; }
-          .text-center { text-align: center; }
-          .text-left { text-align: left; }
-          .w-6 { width: 22px; }
-          .h-6 { height: 22px; }
-          .shrink-0 { flex-shrink: 0; }
+
+          .cover-subtitle {
+            font-size: 20px;
+            font-weight: 700;
+            color: #ffffff;
+            margin-bottom: 6px;
+          }
+
+          .cover-title {
+            font-size: 30px;
+            font-weight: 900;
+            color: #ffffff;
+            letter-spacing: -0.5px;
+            margin-bottom: 24px;
+          }
+
+          .cover-divider {
+            width: 100%;
+            height: 2px;
+            background-color: rgba(255, 255, 255, 0.85);
+            margin-bottom: 40px;
+          }
+
+          .cover-center {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            margin: auto 0;
+          }
+
+          .cover-logo-circle {
+            background-color: #ffffff;
+            border-radius: 50%;
+            width: 145px;
+            height: 145px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 26px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+          }
+
+          .cover-logo-circle img {
+            width: 100px;
+            height: 100px;
+            object-fit: contain;
+          }
+
+          .cover-org-title {
+            font-size: 21px;
+            font-weight: 800;
+            color: #ffffff;
+          }
+
+          .cover-bottom-date {
+            font-size: 16px;
+            font-weight: 700;
+            color: #ffffff;
+            text-align: right;
+            padding-right: 8px;
+          }
+
+          /* هدر سبز بالای صفحات گزارش */
+          .page-header-banner {
+            background-color: #4a8b38;
+            color: #ffffff;
+            font-weight: 800;
+            font-size: 13.5px;
+            text-align: center;
+            padding: 7px 14px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            width: 100%;
+          }
+
+          /* عنوان پروژه */
+          .page-project-title {
+            font-size: 14.5px;
+            font-weight: 900;
+            color: #0f172a;
+            margin: 0 0 8px 0;
+            text-align: right;
+          }
+
+          /* باکس دور پروژه متناسب با حجم متن */
+          .project-main-card {
+            border: 1.5px solid #1e293b;
+            border-radius: 18px;
+            padding: 16px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            background-color: #ffffff;
+          }
+
+          .section-block {
+            margin-bottom: 4px;
+          }
+
+          .section-heading {
+            font-size: 11.5px;
+            font-weight: 900;
+            color: #0f172a;
+            margin-bottom: 5px;
+          }
+
+          .bullet-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+          }
+
+          .bullet-item {
+            position: relative;
+            padding-right: 14px;
+            margin-bottom: 5px;
+            font-size: 10.8px;
+            line-height: 1.55;
+            color: #1e293b;
+            text-align: justify;
+          }
+
+          .bullet-item::before {
+            content: "•";
+            position: absolute;
+            right: 0;
+            top: -1px;
+            font-size: 13px;
+            font-weight: bold;
+            color: #0f172a;
+          }
+
+          .target-date-tag {
+            display: inline-block;
+            direction: ltr;
+            font-weight: bold;
+            color: #334155;
+            margin-right: 4px;
+          }
+
+          /* شماره صفحه در وسط و پایین */
+          .page-bottom-number {
+            text-align: center;
+            font-size: 13.5px;
+            font-weight: 800;
+            color: #0f172a;
+            padding-top: 8px;
+            margin-top: auto;
+          }
         </style>
       </head>
       <body>
@@ -325,15 +619,13 @@ export default function ReportsPdfDocument({
           document.body.removeChild(printFrame);
         }
       }, 1500);
-    }, 400);
+    }, 450);
   };
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 md:p-6 dir-rtl font-sans animate-fade-in">
-      
       {/* پنجره اصلی مدال */}
       <div className="relative w-full max-w-5xl bg-slate-100 rounded-3xl shadow-2xl border border-slate-700/60 overflow-hidden flex flex-col max-h-[92vh]">
-
         {/* هدر کنترلی بالای پنجره */}
         <div className="p-4 sm:p-5 bg-gradient-to-r from-slate-900 via-slate-850 to-emerald-950 text-white flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 shrink-0">
           <div className="flex items-center gap-3">
@@ -345,7 +637,7 @@ export default function ReportsPdfDocument({
                 خروجی و صدور PDF جامع گزارش‌های عملکرد
               </h3>
               <p className="text-[11px] text-slate-300 font-medium">
-                ویژه مدیریت ارشد — {toPersianDigits(orderedReports.length)} گزارش
+                قطع استاندارد A4 — {toPersianDigits(paginatedReportPages.length)} صفحه ({toPersianDigits(orderedReports.length)} پروژه)
               </p>
             </div>
           </div>
@@ -354,7 +646,7 @@ export default function ReportsPdfDocument({
             <button
               type="button"
               onClick={handlePrint}
-              disabled={orderedReports.length === 0 || loading}
+              disabled={paginatedReportPages.length === 0 || loading}
               className="bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition-all shadow-md flex items-center gap-2 cursor-pointer disabled:opacity-50"
             >
               <Printer className="w-4 h-4" />
@@ -374,7 +666,6 @@ export default function ReportsPdfDocument({
 
         {/* نوار فیلترها */}
         <div className="bg-white p-3.5 border-b border-slate-200 text-xs flex flex-wrap items-center gap-3 shrink-0 shadow-2xs">
-          
           {/* فیلتر دوره */}
           <div className="w-48 sm:w-56">
             <label className="text-[10px] text-slate-400 font-bold block mb-1">بازه زمانی:</label>
@@ -415,8 +706,8 @@ export default function ReportsPdfDocument({
           </div>
         </div>
 
-        {/* بدنه پیش‌نمایش سند PDF (نمایش روی صفحه و پرینت با IFrame) */}
-        <div className="flex-1 overflow-y-auto p-3 sm:p-6 bg-slate-200/70">
+        {/* بدنه پیش‌نمایش سند PDF با ابعاد استاندارد A4 */}
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-slate-300/80 space-y-6 flex flex-col items-center">
           {loading ? (
             <div className="py-20 text-center text-slate-500 text-xs flex items-center justify-center gap-2">
               <RefreshCw className="w-6 h-6 animate-spin text-emerald-700" />
@@ -426,221 +717,121 @@ export default function ReportsPdfDocument({
             <div
               id="printable-pdf-document"
               ref={printAreaRef}
-              className="max-w-4xl mx-auto bg-white p-6 sm:p-10 rounded-2xl shadow-md border border-slate-200 text-slate-900 space-y-6"
+              className="space-y-6"
             >
-              
-              {/* سربرگ رسمی سند PDF */}
-              <div className="border-b-2 border-slate-900 pb-5 space-y-3">
-                <div className="flex items-center justify-between">
+              {/* ۱. صفحه کاور و شروع گزارش (Starter Page) با سایز A4 */}
+              <div className="pdf-page-container w-[210mm] h-[297mm] min-h-[297mm] max-h-[297mm] bg-white p-[12mm_14mm_10mm_14mm] rounded-2xl shadow-xl border border-slate-300 overflow-hidden box-border">
+                <div className="cover-page-box bg-[#55913e] rounded-3xl p-10 flex flex-col justify-between text-white h-full box-border">
+                  {/* بخش بالا */}
                   <div>
-                    <h1 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight">
-                      گزارش جامع عملکرد و پیشرفت پروژه‌ها
-                    </h1>
-                    <p className="text-xs text-slate-600 font-bold mt-1">
-                      سامانه مدیریت و پایش یکپارچه گزارش‌های سازمانی
-                    </p>
+                    <div className="cover-subtitle text-xl font-bold opacity-95">
+                      {reportTypeName}
+                    </div>
+                    <div className="cover-title text-3xl font-black mt-1 mb-4">
+                      پروژه‌های استراتژیک
+                    </div>
+                    <div className="cover-divider w-full h-[2px] bg-white/80 my-4" />
                   </div>
 
-                  <div className="text-left text-[11px] text-slate-500 font-medium space-y-0.5">
-                    <div>تاریخ صدور: <strong className="text-slate-800 font-sans">{formatPersianDateTime(new Date())}</strong></div>
-                    <div>سطح دسترسی: <strong className="text-emerald-800">مدیریت ارشد</strong></div>
+                  {/* بخش میانی با لوگوی رسمی سازمان */}
+                  <div className="cover-center flex flex-col items-center justify-center text-center my-auto">
+                    <div className="cover-logo-circle bg-white rounded-full p-4 w-36 h-36 flex items-center justify-center shadow-xl mb-6">
+                      <img
+                        src="/logo.png"
+                        alt="سازمان حمل و نقل و ترافیک شهرداری تهران"
+                        className="w-24 h-24 object-contain"
+                      />
+                    </div>
+                    <div className="cover-org-title text-xl font-extrabold text-white">
+                      سازمان حمل‌و‌نقل و ترافیک شهرداری تهران
+                    </div>
                   </div>
-                </div>
 
-                {/* نوار وضعیت فیلترها در سند چاپی */}
-                <div className="flex flex-wrap items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs text-slate-700">
-                  <div className="flex flex-wrap gap-4">
-                    <span>بازه زمانی: <strong>{activePeriod ? activePeriod.title : "کلیه بازه‌ها"}</strong></span>
-                    <span>پروژه: <strong>{activeProject ? activeProject.title : "کلیه پروژه‌ها"}</strong></span>
-                    <span>معاونت: <strong>{selectedDeputy || "کلیه معاونت‌ها"}</strong></span>
-                  </div>
-
-                  <div className="flex items-center gap-3 font-bold text-[11px]">
-                    <span>کل گزارش‌ها: {toPersianDigits(orderedReports.length)}</span>
-                    <span className="text-emerald-700">به‌موقع: {toPersianDigits(onTimeCount)}</span>
-                    {lateCount > 0 && <span className="text-rose-700">با تأخیر: {toPersianDigits(lateCount)}</span>}
+                  {/* تاریخ پایین صفحه */}
+                  <div className="cover-bottom-date text-base font-bold text-white text-right">
+                    {coverDate}
                   </div>
                 </div>
               </div>
 
-              {/* لیست گزارش‌ها بر اساس اولویت پروژه‌ها در صفحه مدیریت پروژه‌ها */}
-              {orderedReports.length === 0 ? (
-                <div className="py-16 text-center text-slate-400 text-xs space-y-2">
+              {/* ۲. صفحات گزارش پروژه‌ها با ابعاد A4 و صفحه‌بندی هوشمند */}
+              {paginatedReportPages.length === 0 ? (
+                <div className="w-[210mm] bg-white p-12 rounded-2xl text-center text-slate-400 text-xs space-y-2 shadow-sm border border-slate-200">
                   <FileText className="w-10 h-10 mx-auto text-slate-300" />
                   <p className="font-bold">هیچ گزارشی با فیلترهای انتخابی یافت نشد.</p>
                 </div>
               ) : (
-                <div className="space-y-6">
-                  {orderedReports.map((report, idx) => {
-                    const isLate = report.status === "late";
-
-                    return (
-                      <div
-                        key={report.id}
-                        className="page-break-avoid bg-white p-5 rounded-2xl border border-slate-300 shadow-2xs space-y-4 text-xs relative group"
-                      >
-                        {/* هدر کارت گزارش */}
-                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-3">
-                          <div className="flex items-center gap-3">
-                            <span className="w-6 h-6 rounded-full bg-slate-900 text-white font-black text-[11px] flex items-center justify-center shrink-0">
-                              {toPersianDigits(idx + 1)}
-                            </span>
-                            <div>
-                              <h2 className="font-black text-sm text-slate-900">
-                                {report.project_title}
-                              </h2>
-                              <div className="flex items-center gap-2 text-[11px] mt-0.5">
-                                <span className="font-bold text-emerald-800">
-                                  معاونت: {report.deputy_name || report.user_job_title || "عمومی"}
-                                </span>
-                                {report.user_full_name && (
-                                  <span className="text-slate-400 font-medium">
-                                    (مسئول: {report.user_full_name})
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-2 text-[11px]">
-                            <span className="bg-slate-100 px-2.5 py-1 rounded-lg text-slate-700 font-bold">
-                              بازه: {toPersianDigits(report.period_title)}
-                            </span>
-
-                            <span
-                              className={`px-2.5 py-1 rounded-lg font-black ${
-                                isLate
-                                  ? "bg-rose-100 text-rose-900 border border-rose-200"
-                                  : "bg-emerald-100 text-emerald-900 border border-emerald-200"
-                              }`}
-                            >
-                              {isLate ? "ثبت با تأخیر" : "ثبت به‌موقع"} (📅 {formatPersianDate(report.submitted_at)})
-                            </span>
-                          </div>
+                paginatedReportPages.map((pageData, pageIdx) => {
+                  return (
+                    <div
+                      key={`${pageData.reportId}-p${pageIdx}`}
+                      className="pdf-page-container w-[210mm] h-[297mm] min-h-[297mm] max-h-[297mm] bg-white p-[12mm_14mm_10mm_14mm] rounded-2xl shadow-xl border border-slate-300 flex flex-col justify-between overflow-hidden box-border"
+                    >
+                      {/* محتوای بالا و اصلی صفحه */}
+                      <div className="w-full">
+                        {/* نوار هدر سبز سراسری */}
+                        <div className="page-header-banner bg-[#4a8b38] text-white font-extrabold text-xs sm:text-sm text-center py-2 px-4 rounded mb-2.5 shadow-2xs shrink-0">
+                          گزارش پروژه‌های استراتژیک سازمان حمل‌و‌نقل وترافیک شهرداری تهران
                         </div>
 
-                        {/* ۱. فعالیت‌های انجام‌شده */}
-                        <div className="space-y-1.5">
-                          <h3 className="font-extrabold text-slate-900 text-xs flex items-center gap-1.5 text-emerald-900">
-                            <CheckSquare className="w-3.5 h-3.5 text-emerald-700" />
-                            فعالیت‌ها و اقدامات انجام‌شده:
-                          </h3>
-                          <p className="text-slate-800 leading-relaxed whitespace-pre-line bg-slate-50/70 p-3 rounded-xl border border-slate-200/80">
-                            {report.activities_done || "متنی ثبت نشده است."}
-                          </p>
-                        </div>
-
-                        {/* ۲. نتایج و اقدامات تحقق‌یافته (چک‌لیست) */}
-                        <div className="space-y-2">
-                          <h3 className="font-extrabold text-slate-900 text-xs flex items-center gap-1.5 text-indigo-900">
-                            <FileCheck2 className="w-3.5 h-3.5 text-indigo-700" />
-                            نتایج و دستاوردهای تحقق‌یافته در این بازه:
-                          </h3>
-
-                          {report.achievedActions && report.achievedActions.length > 0 ? (
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                              {report.achievedActions.map((act) => {
-                                const isManager = act.created_by_role === "manager";
-                                const isVerified = act.is_completed;
-
-                                return (
-                                  <div
-                                    key={act.id}
-                                    className={`p-2.5 rounded-xl border flex items-start justify-between gap-2 ${
-                                      isVerified
-                                        ? "bg-emerald-50/60 border-emerald-200"
-                                        : "bg-indigo-50/60 border-indigo-200"
-                                    }`}
-                                  >
-                                    <div className="space-y-1">
-                                      <div className="flex items-center gap-1.5">
-                                        <span className="font-bold text-slate-900 leading-snug">
-                                          ✓ {act.action_text}
-                                        </span>
-                                      </div>
-                                      <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
-                                        {isManager && (
-                                          <span className="inline-flex items-center gap-0.5 text-purple-800 font-bold bg-purple-100 px-1.5 py-0.5 rounded">
-                                            <Crown className="w-2.5 h-2.5" /> ابلاغیه مدیر
-                                          </span>
-                                        )}
-                                        {act.target_date && (
-                                          <span>سررسید: {formatPersianDate(act.target_date)}</span>
-                                        )}
-                                      </div>
-                                    </div>
-
-                                    <span
-                                      className={`px-1.5 py-0.5 rounded text-[9px] font-black shrink-0 ${
-                                        isVerified ? "bg-emerald-600 text-white" : "bg-indigo-600 text-white"
-                                      }`}
-                                    >
-                                      {isVerified ? "تایید مدیر" : "اعلام پرسنل"}
-                                    </span>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          ) : report.results_achieved ? (
-                            <div className="text-slate-800 leading-relaxed whitespace-pre-line bg-slate-50/70 p-3 rounded-xl border border-slate-200/80">
-                              {report.results_achieved}
-                            </div>
-                          ) : (
-                            <p className="text-[11px] text-slate-400 italic">موردی برای نتایج حاصل‌شده درج نشده است.</p>
+                        {/* عنوان پروژه */}
+                        <h2 className="page-project-title text-sm sm:text-base font-black text-slate-900 mb-2 text-right shrink-0">
+                          {pageData.projectTitle}
+                          {pageData.isContinuation && (
+                            <span className="text-xs font-bold text-slate-500 mr-2">
+                              (ادامه)
+                            </span>
                           )}
+                        </h2>
 
-                          {/* توضیحات تکمیلی متفرقه اگر خارج از بالت‌ها بود */}
-                          {report.achievedActions &&
-                            report.achievedActions.length > 0 &&
-                            report.results_achieved &&
-                            !report.results_achieved.startsWith("•") && (
-                              <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-[11px] text-slate-700">
-                                <strong className="text-slate-900">سایر توضیحات نتایج: </strong>
-                                <span>{report.results_achieved}</span>
-                              </div>
-                            )}
-                        </div>
-
-                        {/* ۳. اقدامات آتی و برنامه دور بعد */}
-                        {report.nextActions && report.nextActions.length > 0 && (
-                          <div className="space-y-1.5 pt-1">
-                            <h3 className="font-extrabold text-slate-900 text-xs flex items-center gap-1.5 text-slate-800">
-                              <Clock className="w-3.5 h-3.5 text-slate-600" />
-                              اقدامات آتی و برنامه پیش‌رو:
-                            </h3>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                              {report.nextActions.map((na, i) => (
-                                <div
-                                  key={i}
-                                  className="flex items-center justify-between bg-slate-50 p-2 rounded-xl border border-slate-200 text-[11px]"
-                                >
-                                  <span className="text-slate-800 font-medium">{na.action_text}</span>
-                                  {na.target_date && (
-                                    <span className="bg-amber-100 text-amber-900 px-2 py-0.5 rounded-md font-bold text-[10px] shrink-0 font-sans">
-                                      📅 {formatPersianDate(na.target_date)}
-                                    </span>
-                                  )}
+                        {/* کادر احاطه‌کننده محتوای پروژه متناسب با حجم متن */}
+                        <div className="project-main-card border-[1.5px] border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3 bg-white">
+                          {pageData.sections.length === 0 ? (
+                            <p className="text-[11px] text-slate-400 italic">
+                              موردی برای این پروژه ثبت نشده است.
+                            </p>
+                          ) : (
+                            pageData.sections.map((sec, sIdx) => (
+                              <div key={sIdx} className="section-block space-y-1">
+                                <div className="section-heading text-xs font-black text-slate-900">
+                                  {sec.heading}
                                 </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
+
+                                <ul className="bullet-list space-y-1 pr-1">
+                                  {sec.items.map((it, itIdx) => (
+                                    <li
+                                      key={itIdx}
+                                      className="bullet-item text-[10.8px] leading-relaxed text-slate-800 text-justify relative pr-3.5"
+                                    >
+                                      <span className="absolute right-0 top-0 font-bold">•</span>
+                                      <span>{it.text}</span>
+                                      {it.date && (
+                                        <span className="target-date-tag text-slate-700 font-bold mr-1">
+                                          ({toPersianDigits(it.date)})
+                                        </span>
+                                      )}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ))
+                          )}
+                        </div>
                       </div>
-                    );
-                  })}
-                </div>
+
+                      {/* ۳. شماره صفحه به اعداد فارسی در وسط و پایین صفحه */}
+                      <div className="page-bottom-number text-center font-bold text-sm text-slate-900 pt-2 shrink-0">
+                        {toPersianDigits(pageIdx + 1)}
+                      </div>
+                    </div>
+                  );
+                })
               )}
-
-              {/* پانویس سند PDF */}
-              <div className="pt-4 border-t border-slate-300 text-center text-[10px] text-slate-500 font-medium">
-                سامانه هوشمند گزارش‌دهی سازمانی — صفحه استخراج اختصاصی مدیر
-              </div>
-
             </div>
           )}
         </div>
-
       </div>
     </div>
   );
 }
+
