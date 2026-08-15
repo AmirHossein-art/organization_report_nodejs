@@ -1,5 +1,5 @@
 // src/views/ManagerDashboard.tsx
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { 
   Sparkles, 
   Activity, 
@@ -8,22 +8,22 @@ import {
   TrendingUp, 
   FileText, 
   RefreshCw, 
-  Search,
-  ShieldAlert,
-  Lightbulb,
-  ShieldCheck,
-  Clock,
-  Target,
-  Cpu,
-  X,
-  LayoutGrid,
-  Table as TableIcon,
-  Users,
-  FolderKanban,
-  ArrowRight
+  ShieldAlert, 
+  Lightbulb, 
+  ShieldCheck, 
+  Clock, 
+  Target, 
+  Cpu, 
+  X, 
+  LayoutGrid, 
+  Table as TableIcon, 
+  Users, 
+  FolderKanban, 
+  Printer
 } from "lucide-react";
 import { ReportPeriod, Project, User } from "../types";
 import { CustomSelect } from "../components";
+import ReportsPdfDocument from "../components/ReportsPdfDocument";
 
 // 🌐 تبدیل اعداد به فارسی
 export const toPersianDigits = (n: string | number | undefined | null): string => {
@@ -31,12 +31,6 @@ export const toPersianDigits = (n: string | number | undefined | null): string =
   const farsiDigits = ["۰", "۱", "۲", "۳", "۴", "۵", "۶", "۷", "۸", "۹"];
   return n.toString().replace(/\d/g, (x) => farsiDigits[parseInt(x)]);
 };
-
-interface ManagerDashboardProps {
-  periods?: ReportPeriod[];
-  projects?: Project[];
-  users?: User[];
-}
 
 interface AiAnalysisResult {
   health_score: number;
@@ -312,6 +306,12 @@ function SingleReportAuditModal({
 // =================================================================
 // 🚀 کامپوننت اصلی داشبورد مدیریتی
 // =================================================================
+interface ManagerDashboardProps {
+  periods: ReportPeriod[];
+  projects: Project[];
+  users: User[];
+}
+
 export default function ManagerDashboard({ 
   periods = [], 
   projects = [], 
@@ -319,13 +319,22 @@ export default function ManagerDashboard({
 }: ManagerDashboardProps) {
   const [selectedPeriodId, setSelectedPeriodId] = useState<number>(0);
   const [selectedProjectId, setSelectedProjectId] = useState<number>(0);
-  const [selectedUserId, setSelectedUserId] = useState<number>(0);
+  const [selectedDeputy, setSelectedDeputy] = useState<string>("");
+
+  // استخراج لیست یکتای نام معاونت‌ها
+  const deputyOptions = useMemo(() => {
+    const set = new Set<string>();
+    (users || []).filter((u) => u.role === "user" && u.job_title).forEach((u) => {
+      if (u.job_title && u.job_title.trim()) set.add(u.job_title.trim());
+    });
+    return Array.from(set);
+  }, [users]);
 
   const [summaryData, setSummaryData] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<"visual" | "table">("visual");
 
-  // 🌟 استیت جدید: تفکیک حباب‌ها بر اساس پرسنل یا پروژه‌ها
+  // 🌟 استیت تفکیک حباب‌ها بر اساس معاونت‌ها یا پروژه‌ها
   const [bubbleGroupBy, setBubbleGroupBy] = useState<"user" | "project">("user");
   const [bubbleFilter, setBubbleFilter] = useState<"all" | "submitted" | "late" | "missing">("all");
   const [expandedUserKey, setExpandedUserKey] =  useState<string | null>(null);
@@ -338,6 +347,9 @@ export default function ManagerDashboard({
   // استیت‌های ممیزی
   const [auditModalOpen, setAuditModalOpen] = useState<boolean>(false);
   const [selectedAuditReport, setSelectedAuditReport] = useState<{ id: number; title: string } | null>(null);
+
+  // استیت‌های خروجی PDF
+  const [pdfModalOpen, setPdfModalOpen] = useState<boolean>(false);
 
   useEffect(() => {
     if (periods && periods.length > 0) {
@@ -354,7 +366,7 @@ export default function ManagerDashboard({
     try {
       let url = `/api/dashboard/summary?period_id=${selectedPeriodId}`;
       if (selectedProjectId) url += `&project_id=${selectedProjectId}`;
-      if (selectedUserId) url += `&user_id=${selectedUserId}`;
+      if (selectedDeputy) url += `&deputy_name=${encodeURIComponent(selectedDeputy)}`;
 
       const res = await fetch(url);
       if (res.ok) {
@@ -370,14 +382,14 @@ export default function ManagerDashboard({
 
   useEffect(() => {
     fetchSummary();
-  }, [selectedPeriodId, selectedProjectId, selectedUserId]);
+  }, [selectedPeriodId, selectedProjectId, selectedDeputy]);
 
   useEffect(() => {
     setExpandedUserKey(null);
   }, [
     selectedPeriodId,
     selectedProjectId,
-    selectedUserId,
+    selectedDeputy,
     bubbleFilter,
     bubbleGroupBy,
   ]);
@@ -398,30 +410,30 @@ export default function ManagerDashboard({
     setAiError("");
 
     try {
-      const currentPeriod = (periods || []).find((p) => p.id === selectedPeriodId);
-      const res = await fetch("/api/reports/analyze", {
+      const res = await fetch("/api/ai/strategic-analysis", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          period_title: currentPeriod ? currentPeriod.title : "دوره جاری",
+          period_title: summaryData.period ? summaryData.period.title : "دوره جاری",
           reports: submittedReports,
         }),
       });
 
-      const data = await res.json();
       if (res.ok) {
+        const data = await res.json();
         setAiAnalysis(data.analysis);
       } else {
-        setAiError(data.error || "خطا در تحلیل هوش مصنوعی.");
+        const errData = await res.json();
+        setAiError(errData.error || "خطا در پردازش تحلیل کلان هوش مصنوعی.");
       }
     } catch (err) {
-      setAiError("ارتباط با سرور هوش مصنوعی برقرار نشد.");
+      setAiError("عدم برقراری ارتباط با سرور برای تحلیل AI.");
     } finally {
       setAiLoading(false);
     }
   };
 
-  const rows = summaryData?.rows || [];
+  const rows = summaryData && summaryData.rows ? summaryData.rows : [];
 
   // 🔮 گروه‌بندی داده‌ها به تفکیک پروژه‌ها
   const projectAggregatedRows = Object.values(
@@ -446,55 +458,7 @@ export default function ManagerDashboard({
     }, {})
   );
 
-  // 🔮 گروه‌بندی ردیف‌ها به تفکیک پرسنل
-  // هر کاربر فقط یک گروه دارد و پروژه‌هایش داخل projects قرار می‌گیرند.
-  const userGroups: Record<string, any> = rows.reduce(
-    (acc: Record<string, any>, row: any) => {
-      const userKey = String(
-        row.user_id ?? row.user_username ?? row.user_full_name
-      );
-
-      if (!acc[userKey]) {
-        acc[userKey] = {
-          user_id: row.user_id,
-          user_full_name: row.user_full_name,
-          user_username: row.user_username,
-
-          projects: [],
-
-          submitted_count: 0,
-          late_count: 0,
-          missing_count: 0,
-        };
-      }
-
-      // جلوگیری از اضافه‌شدن دوباره یک پروژه برای یک کاربر
-      const projectAlreadyExists = acc[userKey].projects.some(
-        (project: any) => project.project_id === row.project_id
-      );
-
-      if (!projectAlreadyExists) {
-        acc[userKey].projects.push(row);
-
-        if (row.status_key === "submitted") {
-          acc[userKey].submitted_count += 1;
-        }
-
-        if (row.status_key === "late") {
-          acc[userKey].late_count += 1;
-        }
-
-        if (row.status_key === "missing") {
-          acc[userKey].missing_count += 1;
-        }
-      }
-
-      return acc;
-    },
-    {} as Record<string, any>
-  );
-
-  // گروه‌بندی تمام پروژه‌ها زیر هر پرسنل
+  // گروه‌بندی تمام پروژه‌ها زیر هر پرسنل / معاونت
   const userAggregatedRows = Object.values(
     rows.reduce((acc: Record<string, any>, row: any) => {
       const userKey = String(
@@ -507,6 +471,8 @@ export default function ManagerDashboard({
           user_id: row.user_id,
           user_full_name: row.user_full_name,
           user_username: row.user_username,
+          user_job_title: row.user_job_title,
+          deputy_name: row.deputy_name || row.user_job_title || row.user_full_name,
           projects: [],
         };
       }
@@ -599,28 +565,40 @@ export default function ManagerDashboard({
           </p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <CustomSelect
-            value={selectedPeriodId}
-            onChange={(v) => setSelectedPeriodId(Number(v))}
-            options={(periods || []).map((p) => ({ value: p.id, label: toPersianDigits(p.title) }))}
-          />
-          <CustomSelect
-            value={selectedProjectId}
-            onChange={(v) => setSelectedProjectId(Number(v))}
-            options={[
-              { value: 0, label: "همه پروژه‌ها" },
-              ...(projects || []).map((p) => ({ value: p.id, label: p.title })),
-            ]}
-          />
-          <CustomSelect
-            value={selectedUserId}
-            onChange={(v) => setSelectedUserId(Number(v))}
-            options={[
-              { value: 0, label: "همه پرسنل" },
-              ...(users || []).filter((u) => u.role === "user").map((u) => ({ value: u.id, label: u.full_name })),
-            ]}
-          />
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setPdfModalOpen(true)}
+            className="bg-emerald-800 hover:bg-emerald-700 active:scale-95 text-white font-extrabold text-xs px-4 py-2.5 rounded-2xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer border border-emerald-600/40 whitespace-nowrap shrink-0"
+            title="صدور نسخه رسمی PDF از تمامی گزارش‌ها"
+          >
+            <Printer className="w-4 h-4 text-emerald-300" />
+            <span>خروجی PDF تمام گزارش‌ها</span>
+          </button>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 flex-1 min-w-[280px]">
+            <CustomSelect
+              value={selectedPeriodId}
+              onChange={(v) => setSelectedPeriodId(Number(v))}
+              options={(periods || []).map((p) => ({ value: p.id, label: toPersianDigits(p.title) }))}
+            />
+            <CustomSelect
+              value={selectedProjectId}
+              onChange={(v) => setSelectedProjectId(Number(v))}
+              options={[
+                { value: 0, label: "همه پروژه‌ها" },
+                ...(projects || []).map((p) => ({ value: p.id, label: p.title })),
+              ]}
+            />
+            <CustomSelect
+              value={selectedDeputy}
+              onChange={(v) => setSelectedDeputy(String(v))}
+              options={[
+                { value: "", label: "همه معاونت‌ها" },
+                ...deputyOptions.map((dep) => ({ value: dep, label: dep })),
+              ]}
+            />
+          </div>
         </div>
       </div>
 
@@ -829,7 +807,7 @@ export default function ManagerDashboard({
 
         <div className="flex flex-wrap items-center gap-3">
           
-          {/* 🌟 انتخاب حالت تفکیک (پرسنل یا پروژه‌ها) */}
+          {/* 🌟 انتخاب حالت تفکیک (معاونت‌ها یا پروژه‌ها) */}
           <div className="flex items-center bg-slate-800/90 p-1 rounded-2xl border border-slate-700 text-[11px]">
             <button
               onClick={() => setBubbleGroupBy("user")}
@@ -838,7 +816,7 @@ export default function ManagerDashboard({
               }`}
             >
               <Users className="w-3.5 h-3.5" />
-              <span>تفکیک پرسنل</span>
+              <span>تفکیک معاونت‌ها</span>
             </button>
             <button
               onClick={() => setBubbleGroupBy("project")}
@@ -1016,9 +994,15 @@ export default function ManagerDashboard({
                             {icon}
                           </div>
 
-                          <span className="font-black text-xs md:text-sm line-clamp-2 px-2">
-                            {person.user_full_name}
+                          <span className="font-black text-xs md:text-sm line-clamp-2 px-1.5 leading-tight">
+                            {person.deputy_name || person.user_job_title || person.user_full_name}
                           </span>
+
+                          {person.user_job_title && (
+                            <span className="text-[10px] text-amber-200 font-bold opacity-90 mt-0.5 line-clamp-1">
+                              {person.user_full_name}
+                            </span>
+                          )}
 
                           <span className="text-[10px] opacity-90 mt-1">
                             {toPersianDigits(person.total_projects)} پروژه
@@ -1044,12 +1028,12 @@ export default function ManagerDashboard({
                         <h4 className="text-amber-400 font-black text-sm flex items-center gap-2">
                           <FolderKanban className="w-4 h-4" />
 
-                          پروژه‌های {expandedPerson.user_full_name}
+                          پروژه‌های {expandedPerson.deputy_name || expandedPerson.user_full_name}
                         </h4>
 
                         <p className="text-slate-400 text-[11px] mt-1">
                           {toPersianDigits(expandedPerson.total_projects)}
-                          {" "}پروژه در این دوره
+                          {" "}پروژه در این دوره (مسئول: {expandedPerson.user_full_name})
                         </p>
                       </div>
 
@@ -1219,7 +1203,7 @@ export default function ManagerDashboard({
             <table className="w-full text-right border-collapse text-xs">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/50 text-slate-400 font-semibold">
-                  <th className="p-4">نام پرسنل</th>
+                  <th className="p-4">نام معاونت / پرسنل مسئول</th>
                   <th className="p-4">پروژه</th>
                   <th className="p-4">وضعیت نهایی</th>
                   <th className="p-4">توضیحات / جزئیات</th>
@@ -1229,7 +1213,14 @@ export default function ManagerDashboard({
               <tbody className="divide-y divide-slate-100">
                 {rows.map((row: any, idx: number) => (
                   <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="p-4 font-bold text-slate-800">{row.user_full_name}</td>
+                    <td className="p-4 font-bold text-slate-800">
+                      <div className="flex flex-col">
+                        <span className="font-extrabold text-slate-900">{row.deputy_name || row.user_job_title || row.user_full_name}</span>
+                        {row.user_job_title && (
+                          <span className="text-[10px] text-slate-400 font-normal">{row.user_full_name}</span>
+                        )}
+                      </div>
+                    </td>
                     <td className="p-4 text-slate-600">{row.project_title}</td>
                     <td className="p-4">
                       <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
@@ -1279,6 +1270,16 @@ export default function ManagerDashboard({
         reportTitle={selectedAuditReport?.title || ""}
         isOpen={auditModalOpen}
         onClose={() => setAuditModalOpen(false)}
+      />
+
+      {/* 📄 رندر مودال خروجی PDF جامع تمام گزارش‌ها */}
+      <ReportsPdfDocument
+        isOpen={pdfModalOpen}
+        onClose={() => setPdfModalOpen(false)}
+        periods={periods}
+        projects={projects}
+        users={users}
+        defaultPeriodId={selectedPeriodId}
       />
 
     </div>

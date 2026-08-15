@@ -53,10 +53,10 @@ if (!fs.existsSync(uploadDir)) {
 }
 
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
+  destination: (_req, _file, cb) => {
     cb(null, uploadDir);
   },
-  filename: (req, file, cb) => {
+  filename: (_req, file, cb) => {
     const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
     cb(null, uniqueSuffix + "-" + file.originalname);
   },
@@ -69,14 +69,14 @@ const upload = multer({
 
 // 🟢 ساخت پوشه wbs_files و تنظیمات ذخیره‌سازی فایل اکسل
 const wbsStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
+  destination: (_req, _file, cb) => {
     const uploadDir = path.join(process.cwd(), "wbs_files");
     if (!fs.existsSync(uploadDir)) {
       fs.mkdirSync(uploadDir, { recursive: true });
     }
     cb(null, uploadDir);
   },
-  filename: (req, file, cb) => {
+  filename: (_req, file, cb) => {
     // ذخیره فایل با نام یکتا برای جلوگیری از اوررایت شدن
     const ext = path.extname(file.originalname);
     const uniqueName = `wbs_project_${Date.now()}${ext}`;
@@ -86,7 +86,7 @@ const wbsStorage = multer.diskStorage({
 
 const uploadWBS = multer({
   storage: wbsStorage,
-  fileFilter: (req, file, cb) => {
+  fileFilter: (_req, file, cb) => {
     // فقط اجازه آپلود فایل‌های اکسل داده می‌شود
     if (file.originalname.match(/\.(xlsx|xls)$/)) {
       cb(null, true);
@@ -327,6 +327,8 @@ function serializeAction(action: any) {
 function serializeReport(report: any) {
   return {
     ...report,
+    user_job_title: report.user?.job_title || null,
+    deputy_name: report.user?.job_title || report.user_full_name,
 
     period_start: report.period_start.toISOString().split("T")[0],
     period_end: report.period_end.toISOString().split("T")[0],
@@ -788,7 +790,7 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
-app.post("/api/auth/logout", (req, res) => {
+app.post("/api/auth/logout", (_req, res) => {
   // پاک کردن کوکی توکن از روی مرورگر کاربر
   res.clearCookie("token", {
     httpOnly: true,
@@ -982,13 +984,53 @@ app.post("/api/users/:id/reset-password", async (req, res) => {
 // --- Project Management ---
 app.get("/api/projects", async (_req, res) => {
   try {
-    const projects = await prisma.project.findMany({
-      orderBy: { id: "asc" }
+    const projects = await (prisma.project as any).findMany({
+      orderBy: [{ order_index: "asc" }, { id: "asc" }] as any,
     });
     res.json(projects);
   } catch (error) {
     console.error("Error fetching projects:", error);
     res.status(500).json({ error: "خطا در دریافت اطلاعات پروژه‌ها از دیتابیس" });
+  }
+});
+
+// تغییر ترتیبی پروژه‌ها (Reorder)
+app.patch("/api/projects/reorder", async (req, res) => {
+  try {
+    const { ordered_ids } = req.body;
+    if (Array.isArray(ordered_ids)) {
+      await prisma.$transaction(
+        ordered_ids.map((id: number, idx: number) =>
+          (prisma.project as any).update({
+            where: { id: Number(id) },
+            data: { order_index: idx + 1 } as any,
+          })
+        )
+      );
+    }
+    const projects = await (prisma.project as any).findMany({
+      orderBy: [{ order_index: "asc" }, { id: "asc" }] as any,
+    });
+    res.json({ success: true, projects });
+  } catch (error) {
+    console.error("Error reordering projects:", error);
+    res.status(500).json({ error: "خطا در تغییر ترتیب پروژه‌ها" });
+  }
+});
+
+// به‌روزرسانی رتبه تکی پروژه
+app.patch("/api/projects/:id/order", async (req, res) => {
+  try {
+    const projectId = Number(req.params.id);
+    const { order_index } = req.body;
+    const updated = await (prisma.project as any).update({
+      where: { id: projectId },
+      data: { order_index: Number(order_index) || 0 } as any,
+    });
+    res.json({ success: true, project: updated });
+  } catch (error) {
+    console.error("Error updating project order:", error);
+    res.status(500).json({ error: "خطا در ثبت رتبه پروژه" });
   }
 });
 
@@ -1132,7 +1174,7 @@ app.put("/api/projects/:id", upload.single("wbs_file"), async (req, res) => {
 });
 
 // --- Report Period Management ---
-app.get("/api/report-periods", async (req, res) => {
+app.get(["/api/report-periods", "/api/periods"], async (_req, res) => {
   try {
     const periods = await prisma.reportPeriod.findMany({
       orderBy: { id: "asc" }
@@ -1511,8 +1553,7 @@ app.get("/api/project-kpis/:id/values", authenticate, requireManager, async (req
 
 // --- User Project Assignments ---
 // ۱. دریافت تمامی تخصیص‌های فعلی دیتابیس
-// ۱. دریافت تمامی تخصیص‌های فعلی دیتابیس
-app.get("/api/user-projects", async (req, res) => {
+app.get("/api/user-projects", async (_req, res) => {
   try {
     const allocations = await prisma.userProject.findMany();
     // خروجی شامل: [{ id: 1, user_id: 2, project_id: 5 }, ...]
@@ -1560,7 +1601,7 @@ app.post("/api/users/:user_id/projects", async (req, res) => {
 });
 
 // --- Deadline Settings ---
-app.get("/api/deadline-settings", async (req, res) => {
+app.get("/api/deadline-settings", async (_req, res) => {
   try {
     const settings = await prisma.deadlineSetting.findMany({
       orderBy: { id: "asc" }
@@ -1598,10 +1639,10 @@ app.put("/api/deadline-settings/:id", async (req, res) => {
 });
 
 // --- Reports ---
-app.get("/api/reports", async (req, res) => {
+app.get("/api/reports", async (_req, res) => {
   try {
     const reports = await prisma.report.findMany({
-      include: { files: true, nextActions: true, achievedActions: true, kpiValues: true },
+      include: { user: true, files: true, nextActions: true, achievedActions: true, kpiValues: true },
       orderBy: { id: "desc" }
     });
     res.json(reports.map(serializeReport));
@@ -1943,6 +1984,7 @@ app.get("/api/dashboard/summary", async (req, res) => {
     const periodId = parseInt(req.query.period_id as string);
     const projectId = req.query.project_id ? parseInt(req.query.project_id as string) : null;
     const user_id = req.query.user_id ? parseInt(req.query.user_id as string) : null;
+    const deputyName = req.query.deputy_name ? (req.query.deputy_name as string).trim() : null;
 
     const period = await prisma.reportPeriod.findUnique({ where: { id: periodId } });
     if (!period) {
@@ -1972,6 +2014,7 @@ app.get("/api/dashboard/summary", async (req, res) => {
     for (const up of userProjects) {
       if (projectId && up.project_id !== projectId) continue;
       if (user_id && up.user_id !== user_id) continue;
+      if (deputyName && up.user.job_title?.trim() !== deputyName) continue;
 
       expectedPairs.push({
         user: up.user,
@@ -1982,7 +2025,7 @@ app.get("/api/dashboard/summary", async (req, res) => {
     // Fetch reports for this period
     const reports = await prisma.report.findMany({
       where: { period_id: periodId },
-      include: { files: true }
+      include: { user: true, files: true }
     });
 
     const rows = expectedPairs.map((pair) => {
@@ -2002,12 +2045,16 @@ app.get("/api/dashboard/summary", async (req, res) => {
         user_id: pair.user.id,
         user_full_name: pair.user.full_name,
         user_username: pair.user.username,
+        user_job_title: pair.user.job_title,
+        deputy_name: pair.user.job_title || pair.user.full_name,
         project_id: pair.project.id,
         project_title: pair.project.title,
         status_key,
         status_label,
         report: matchingReport ? {
           ...matchingReport,
+          user_job_title: pair.user.job_title,
+          deputy_name: pair.user.job_title || pair.user.full_name,
           period_start: matchingReport.period_start.toISOString().split("T")[0],
           period_end: matchingReport.period_end.toISOString().split("T")[0],
           submitted_at: matchingReport.submitted_at.toISOString()
@@ -2450,7 +2497,7 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get("*", (req, res) => {
+    app.get("*", (_req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }

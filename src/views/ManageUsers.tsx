@@ -158,12 +158,12 @@ export default function ManageUsers({ users = [], onRefresh }: ManageUsersProps)
               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs" 
             />
             
-            {/* 🟢 فیلد جدید موقعیت شغلی */}
+            {/* 🟢 فیلد نام معاونت */}
             <input 
               type="text" 
               value={newJobTitle} 
               onChange={(e) => setNewJobTitle(e.target.value)} 
-              placeholder="موقعیت شغلی (مثلاً: معاون برنامه‌ریزی)" 
+              placeholder="نام معاونت (مثلاً: معاونت برنامه‌ریزی حمل‌ونقل عمومی)" 
               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs" 
             />
 
@@ -307,7 +307,7 @@ export default function ManageUsers({ users = [], onRefresh }: ManageUsersProps)
                 type="text" 
                 value={editUserJobTitle} 
                 onChange={(e) => setEditUserJobTitle(e.target.value)} 
-                placeholder="موقعیت شغلی"
+                placeholder="نام معاونت سازمانی" 
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs" 
               />
               <CustomSelect 

@@ -1,10 +1,9 @@
 // src/views/MyReports.tsx
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { 
   Sparkles, 
   CheckCircle2, 
   AlertTriangle, 
-  FolderKanban, 
   ArrowRight, 
   RefreshCw, 
   FileText, 
@@ -21,13 +20,15 @@ import {
   Square,
   Crown,
   FileCheck2,
-  CheckCheck
+  Printer
 } from "lucide-react";
 import { User, Report, Project, ReportPeriod } from "../types";
+import { CustomSelect, ShamsiDatePicker } from "../components";
 
 import ProjectBubbleNode from "../components/ProjectBubbleNode";
 import ProjectNextActionsModal, { NextActionItem } from "../components/ProjectNextActionsDrawer";
 import Projects3DExplorer from "../components/projects-3d/Projects3DExplorer";
+import ReportsPdfDocument from "../components/ReportsPdfDocument";
 
 // 🌐 تابع کمکی تبدیل اعداد انگلیسی به فارسی
 export const toPersianDigits = (n: string | number | undefined | null): string => {
@@ -627,6 +628,7 @@ function ManagerVisualBubbleExplorer() {
   // استیت‌های لایه‌بندی
   const [activeProjectLayer, setActiveProjectLayer] = useState<any | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [selectedDeputy, setSelectedDeputy] = useState<string>("");
   const [explorerMode, setExplorerMode] = useState<"2d" | "3d">("2d");
 
   // استیت مودال‌ها
@@ -641,20 +643,44 @@ function ManagerVisualBubbleExplorer() {
 
   const [kpiMap, setKpiMap] = useState<Record<number, any>>({});
 
+  // استیت‌های خروجی PDF
+  const [pdfModalOpen, setPdfModalOpen] = useState<boolean>(false);
+  const [rawReports, setRawReports] = useState<Report[]>([]);
+  const [periodsList, setPeriodsList] = useState<ReportPeriod[]>([]);
+  const [projectsList, setProjectsList] = useState<Project[]>([]);
+  const [usersList, setUsersList] = useState<User[]>([]);
+
+  // استخراج لیست یکتای نام معاونت‌ها
+  const deputyOptions = useMemo(() => {
+    const set = new Set<string>();
+    (usersList || []).filter((u) => u.role === "user" && u.job_title).forEach((u) => {
+      if (u.job_title && u.job_title.trim()) set.add(u.job_title.trim());
+    });
+    return Array.from(set);
+  }, [usersList]);
+
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [projRes, repRes, actionsRes] = await Promise.all([
+      const [projRes, repRes, actionsRes, periodsRes, usersRes] = await Promise.all([
         fetch("/api/projects"),
         fetch("/api/reports"),
         fetch("/api/next-actions"),
+        fetch("/api/report-periods"),
+        fetch("/api/users"),
       ]);
 
       const fetchedProjects = projRes.ok ? await projRes.json() : [];
       const fetchedReports = repRes.ok ? await repRes.json() : [];
       const fetchedNextActions = actionsRes.ok ? await actionsRes.json() : [];
+      const fetchedPeriods = periodsRes.ok ? await periodsRes.json() : [];
+      const fetchedUsers = usersRes.ok ? await usersRes.json() : [];
 
+      setProjectsList(fetchedProjects);
+      setRawReports(fetchedReports);
       setNextActions(fetchedNextActions);
+      setPeriodsList(fetchedPeriods);
+      setUsersList(fetchedUsers);
 
       const combined = (fetchedProjects || []).map((p: any) => {
         const matchingReports = (fetchedReports || []).filter(
@@ -703,10 +729,25 @@ function ManagerVisualBubbleExplorer() {
     }
   };
 
-  const filteredProjects = projectClusters.filter((p: any) =>
-    (p.project_title || "").includes(searchQuery) ||
-    (p.code || "").includes(searchQuery)
-  );
+  const filteredProjects = useMemo(() => {
+    return projectClusters.filter((p: any) => {
+      const matchesSearch =
+        (p.project_title || "").includes(searchQuery) ||
+        (p.code || "").includes(searchQuery);
+      if (!matchesSearch) return false;
+
+      if (selectedDeputy) {
+        // فیلتر بر اساس نام معاونت
+        const hasDeputyReport = (p.reports || []).some((r: any) => {
+          const user = (usersList || []).find((u) => u.id === r.user_id);
+          const dep = r.deputy_name || r.user_job_title || user?.job_title;
+          return dep === selectedDeputy;
+        });
+        return hasDeputyReport;
+      }
+      return true;
+    });
+  }, [projectClusters, searchQuery, selectedDeputy, usersList]);
 
   const handleOpenAiAudit = (rep: any) => {
     setSelectedAuditReport({
@@ -746,26 +787,52 @@ function ManagerVisualBubbleExplorer() {
           </p>
         </div>
 
-        {activeProjectLayer ? (
+        <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
           <button
-            onClick={() => setActiveProjectLayer(null)}
-            className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-4 py-2 rounded-2xl text-xs flex items-center gap-2 transition-all cursor-pointer shadow-md shrink-0"
+            type="button"
+            onClick={() => setPdfModalOpen(true)}
+            className="bg-emerald-800 hover:bg-emerald-700 active:scale-95 text-white font-extrabold text-xs px-4 py-2.5 rounded-2xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer border border-emerald-600/40 whitespace-nowrap shrink-0"
+            title="صدور نسخه رسمی PDF از تمامی گزارش‌ها"
           >
-            <ArrowRight className="w-4 h-4" />
-            <span>بازگشت به نمای تمام پروژه‌ها</span>
+            <Printer className="w-4 h-4 text-emerald-300" />
+            <span>خروجی PDF تمام گزارش‌ها</span>
           </button>
-        ) : (
-          <div className="relative w-full md:w-64">
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="جستجوی پروژه‌ها..."
-              className="w-full bg-slate-50 border border-slate-200 text-xs text-slate-800 rounded-2xl px-3.5 py-2 pr-9 focus:outline-none focus:border-emerald-600 transition-colors"
-            />
-            <Search className="w-4 h-4 text-slate-400 absolute right-3 top-2.5" />
-          </div>
-        )}
+
+          {activeProjectLayer ? (
+            <button
+              onClick={() => setActiveProjectLayer(null)}
+              className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-4 py-2.5 rounded-2xl text-xs flex items-center gap-2 transition-all cursor-pointer shadow-md shrink-0"
+            >
+              <ArrowRight className="w-4 h-4" />
+              <span>بازگشت به نمای تمام پروژه‌ها</span>
+            </button>
+          ) : (
+            <div className="flex items-center gap-2 flex-1 md:flex-initial">
+              {/* فیلتر معاونت */}
+              <div className="w-44 sm:w-52">
+                <CustomSelect
+                  value={selectedDeputy}
+                  onChange={(v) => setSelectedDeputy(String(v))}
+                  options={[
+                    { value: "", label: "همه معاونت‌ها" },
+                    ...deputyOptions.map((dep) => ({ value: dep, label: dep })),
+                  ]}
+                />
+              </div>
+
+              <div className="relative w-full md:w-60">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="جستجوی پروژه‌ها..."
+                  className="w-full bg-slate-50 border border-slate-200 text-xs text-slate-800 rounded-2xl px-3.5 py-2.5 pr-9 focus:outline-none focus:border-emerald-600 transition-colors"
+                />
+                <Search className="w-4 h-4 text-slate-400 absolute right-3 top-3" />
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {!activeProjectLayer && (
@@ -946,13 +1013,22 @@ function ManagerVisualBubbleExplorer() {
         onRefresh={fetchData}
       />
 
+      {/* 📄 رندر مودال خروجی PDF جامع */}
+      <ReportsPdfDocument
+        isOpen={pdfModalOpen}
+        onClose={() => setPdfModalOpen(false)}
+        reports={rawReports}
+        periods={periodsList}
+        projects={projectsList}
+        users={usersList}
+      />
+
     </div>
   );
 }
 // =================================================================
 // ✏️ مودال ویرایش گزارش شخصی (قبل از ددلاین)
 // =================================================================
-import { CustomSelect, ShamsiDatePicker } from "../components";
 
 interface EditNextAction {
   action_text: string;

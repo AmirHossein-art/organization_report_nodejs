@@ -17,6 +17,7 @@ export interface Project {
   description: string;
   wbs_file_name?: string | null; 
   code: string;
+  order_index?: number;
   is_active: boolean;
   created_at: string;
   updatedAt?: string;  
@@ -72,6 +73,8 @@ export interface Report {
   user_id: number;
   user_full_name: string;
   user_username: string;
+  user_job_title?: string | null;
+  deputy_name?: string | null;
   project_id: number;
   project_title: string;
   report_type: "weekly" | "monthly";
@@ -108,8 +111,11 @@ export interface DashboardRow {
   user_id: number;
   user_full_name: string;
   user_username: string;
+  user_job_title?: string | null;
+  deputy_name?: string | null;
+  project_id: number;
   project_title: string;
   status_key: "submitted" | "late" | "missing";
   status_label: string;
-  report: Report | null;
+  report?: Report | null;
 }
