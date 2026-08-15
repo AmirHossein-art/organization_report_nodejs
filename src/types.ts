@@ -50,11 +50,21 @@ export interface ReportFile {
 
 export interface NextAction {
   id: number;
-  report_id: number;
+  report_id?: number | null;
+  project_id?: number | null;
+  user_id?: number | null;
+  created_by_role?: "user" | "manager";
   action_text: string;
   target_date: string | null;
+  target_date_raw?: string | null;
+  claimed_completed?: boolean;
+  claimed_at?: string | null;
+  claimed_report_id?: number | null;
   is_completed: boolean;
-  completed_at:  string | null;
+  completed_at: string | null;
+  verified_at?: string | null;
+  project?: { id: number; title: string };
+  user?: { id: number; full_name: string; job_title: string | null };
 }
 
 export interface Report {
@@ -76,6 +86,8 @@ export interface Report {
   submitted_at: string;
   files: ReportFile[];
   nextActions?: NextAction[];
+  next_actions?: any;
+  achievedActions?: NextAction[];
 }
 
 export interface DeadlineSetting {

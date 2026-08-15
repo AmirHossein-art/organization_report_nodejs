@@ -17,7 +17,11 @@ import {
   Search,
   User as UserIcon,
   Calendar,
-  CheckSquare
+  CheckSquare,
+  Square,
+  Crown,
+  FileCheck2,
+  CheckCheck
 } from "lucide-react";
 import { User, Report, Project, ReportPeriod } from "../types";
 
@@ -116,6 +120,7 @@ function RawReportDetailsModal({
   onClose,
   onRunAudit,
   showAiAudit = false,
+  onToggleActionStatus,
 }: {
   report: any | null;
   kpiMap: Record<number, any>;
@@ -123,6 +128,7 @@ function RawReportDetailsModal({
   onClose: () => void;
   onRunAudit: (rep: any) => void;
   showAiAudit?: boolean;
+  onToggleActionStatus?: (actionId: number, currentStatus: boolean) => void;
 }) {
   if (!isOpen || !report) return null;
 
@@ -194,18 +200,89 @@ function RawReportDetailsModal({
             </p>
           </div>
 
-          {/* نتایج حاصله */}
-          {report.results_achieved && (
-            <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-2xs space-y-2">
-              <h4 className="font-extrabold text-slate-900 text-xs md:text-sm flex items-center gap-2 border-b border-slate-100 pb-2">
-                <TrendingUp className="w-4 h-4 text-blue-600" />
-                نتایج و خروجی‌های ملموس حاصله
-              </h4>
+          {/* نتایج و اقدامات تحقق‌یافته */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-2xs space-y-3">
+            <h4 className="font-extrabold text-slate-900 text-xs md:text-sm flex items-center gap-2 border-b border-slate-100 pb-2">
+              <FileCheck2 className="w-4 h-4 text-emerald-600" />
+              نتایج و اقدامات تحقق‌یافته این دوره
+            </h4>
+
+            {report.achievedActions && report.achievedActions.length > 0 ? (
+              <div className="space-y-2">
+                {report.achievedActions.map((act: any) => {
+                  const isManager = act.created_by_role === "manager";
+                  const isVerified = act.is_completed;
+
+                  return (
+                    <div
+                      key={act.id}
+                      className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs transition-all ${
+                        isVerified
+                          ? "bg-emerald-50/80 border-emerald-200 text-emerald-950"
+                          : "bg-indigo-50/70 border-indigo-200 text-indigo-950"
+                      }`}
+                    >
+                      <div className="space-y-1 flex-1">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className={`w-4 h-4 shrink-0 ${isVerified ? "text-emerald-600" : "text-indigo-600"}`} />
+                          <span className="font-bold">{act.action_text}</span>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 text-[10px] pr-6">
+                          {isManager ? (
+                            <span className="inline-flex items-center gap-1 bg-purple-100 text-purple-800 px-1.5 py-0.2 rounded font-bold">
+                              <Crown className="w-2.5 h-2.5" />
+                              ابلاغیه مدیر
+                            </span>
+                          ) : (
+                            <span className="bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded">اقدام قبلی پرسنل</span>
+                          )}
+
+                          {act.target_date && (
+                            <span className="text-slate-500 font-sans">
+                              📅 سررسید: {formatPersianDate(act.target_date)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 self-end sm:self-center">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
+                          isVerified ? "bg-emerald-600 text-white" : "bg-indigo-600 text-white"
+                        }`}>
+                          {isVerified ? "تایید شده توسط مدیر" : "اعلام پرسنل (در انتظار تایید)"}
+                        </span>
+
+                        {onToggleActionStatus && (
+                          <button
+                            type="button"
+                            onClick={() => onToggleActionStatus(act.id, act.is_completed)}
+                            className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-[10px] font-bold text-slate-800 transition-all cursor-pointer shadow-2xs"
+                          >
+                            {isVerified ? "لغو تایید" : "تایید صحت"}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : report.results_achieved ? (
               <p className="text-xs md:text-sm text-slate-700 leading-relaxed whitespace-pre-line pt-1">
                 {report.results_achieved}
               </p>
-            </div>
-          )}
+            ) : (
+              <p className="text-xs text-slate-400">نتیجه یا اقدامی برای این دوره ثبت نشده است.</p>
+            )}
+
+            {/* در صورتی که هم اقدامات ساختاریافته وجود داشت و هم متن تکمیلی */}
+            {report.achievedActions && report.achievedActions.length > 0 && report.results_achieved && !report.results_achieved.startsWith("•") && (
+              <div className="pt-2 border-t border-slate-100 text-xs text-slate-600">
+                <span className="font-bold text-slate-700">توضیحات تکمیلی: </span>
+                <span>{report.results_achieved}</span>
+              </div>
+            )}
+          </div>
 
           {/* شاخص‌های ساختاریافته (Structured KPIs) */}
           {report.kpiValues && report.kpiValues.length > 0 && (
@@ -610,12 +687,15 @@ function ManagerVisualBubbleExplorer() {
     fetchData();
   }, []);
 
-  const handleToggleActionStatus = async (actionId: number, currentStatus: boolean) => {
+  const handleToggleActionStatus = async (actionId: number, currentStatus: boolean, resetClaim?: boolean) => {
     try {
       const res = await fetch(`/api/next-actions/${actionId}/toggle`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ is_completed: !currentStatus }),
+        body: JSON.stringify({
+          is_completed: resetClaim ? false : !currentStatus,
+          reset_claim: resetClaim || false,
+        }),
       });
       if (res.ok) fetchData();
     } catch (err) {
@@ -847,6 +927,7 @@ function ManagerVisualBubbleExplorer() {
         onClose={() => setRawModalOpen(false)}
         onRunAudit={handleOpenAiAudit}
         showAiAudit={true}
+        onToggleActionStatus={handleToggleActionStatus}
       />
 
       <SingleReportAuditModal
@@ -862,6 +943,7 @@ function ManagerVisualBubbleExplorer() {
         project={selectedProjectForActions}
         actions={nextActions.filter((a) => a.project?.id === selectedProjectForActions?.id)}
         onToggleStatus={handleToggleActionStatus}
+        onRefresh={fetchData}
       />
 
     </div>
@@ -889,8 +971,12 @@ function ReportEditModal({
   onSaved: () => void;
 }) {
   const [activitiesDone, setActivitiesDone] = useState("");
-  const [resultsAchieved, setResultsAchieved] = useState("");
+  const [extraResultsNotes, setExtraResultsNotes] = useState("");
   const [nextActions, setNextActions] = useState<EditNextAction[]>([]);
+  const [pendingActions, setPendingActions] = useState<any[]>([]);
+  const [pendingActionsLoading, setPendingActionsLoading] = useState(false);
+  const [selectedActionIds, setSelectedActionIds] = useState<number[]>([]);
+  const [showExtraNotes, setShowExtraNotes] = useState(false);
 
   const [kpis, setKpis] = useState<any[]>([]);
   const [kpiValues, setKpiValues] = useState<Record<number, any>>({});
@@ -909,7 +995,9 @@ function ReportEditModal({
     if (!isOpen || !report) return;
 
     setActivitiesDone(report.activities_done || "");
-    setResultsAchieved(report.results_achieved || "");
+    setExtraResultsNotes(
+      report.results_achieved && !report.results_achieved.startsWith("•") ? report.results_achieved : ""
+    );
     setNextActions(
       Array.isArray(report.nextActions) && report.nextActions.length > 0
         ? report.nextActions.map((a: any) => ({
@@ -920,6 +1008,22 @@ function ReportEditModal({
     );
     setSuccessMsg("");
     setErrorMsg("");
+
+    // واکشی اقدامات منتظر و در جریان برای این پروژه و کاربر
+    setPendingActionsLoading(true);
+    fetch(`/api/next-actions?project_id=${report.project_id}&user_id=${report.user_id}&pending_for_report=true&report_id=${report.id}`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: any[]) => {
+        const list = Array.isArray(data) ? data : [];
+        setPendingActions(list);
+        // اقدامات قبلاً تیک خورده در این گزارش
+        const initialSelected = list
+          .filter((a) => a.claimed_report_id === report.id || (report.achievedActions || []).some((aa: any) => aa.id === a.id))
+          .map((a) => a.id);
+        setSelectedActionIds(initialSelected);
+      })
+      .catch(() => setPendingActions([]))
+      .finally(() => setPendingActionsLoading(false));
 
     // واکشی شاخص‌های فعال پروژه
     setKpisLoading(true);
@@ -958,6 +1062,12 @@ function ReportEditModal({
     }));
   };
 
+  const toggleActionSelected = (actionId: number) => {
+    setSelectedActionIds((prev) =>
+      prev.includes(actionId) ? prev.filter((id) => id !== actionId) : [...prev, actionId]
+    );
+  };
+
   const kpiIncomplete = kpis.some((k) => {
     const v = kpiValues[k.id];
     if (!v) return true;
@@ -990,7 +1100,8 @@ function ReportEditModal({
     setLoading(true);
     const formData = new FormData();
     formData.append("activities_done", activitiesDone);
-    formData.append("results_achieved", resultsAchieved);
+    formData.append("results_achieved", extraResultsNotes);
+    formData.append("achieved_action_ids", JSON.stringify(selectedActionIds));
     formData.append("next_actions", JSON.stringify(nextActions));
 
     // ساخت آرایه مقادیر شاخص
@@ -1079,27 +1190,128 @@ function ReportEditModal({
             />
           </div>
 
-          {/* نتایج */}
-          <div className="space-y-2">
-            <label className="text-sm font-semibold text-slate-700">نتایج حاصل‌شده</label>
-            <textarea
-              value={resultsAchieved}
-              onChange={(e) => setResultsAchieved(e.target.value)}
-              className="w-full bg-white border border-slate-200 focus:border-emerald-600 rounded-2xl p-3 text-xs min-h-[80px] focus:outline-none transition-all"
-              placeholder="نتایج ملموس..."
-            />
+          {/* نتایج و چک‌لیست اقدامات */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 space-y-4 shadow-2xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/80 pb-3">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <FileCheck2 className="w-5 h-5 text-emerald-700" />
+                  <label className="text-sm font-extrabold text-slate-850">
+                    نتایج حاصل‌شده (اقدامات تحقق‌یافته در این دوره)
+                  </label>
+                  {pendingActions.length > 0 && (
+                    <span className="bg-emerald-100 text-emerald-800 text-[11px] font-bold px-2 py-0.5 rounded-full">
+                      {toPersianDigits(selectedActionIds.length)} از {toPersianDigits(pendingActions.length)} اقدام انتخاب شده
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-500 font-medium">
+                  اقداماتی که در این بازه تکمیل کرده‌اید را علامت بزنید.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowExtraNotes(!showExtraNotes)}
+                className="text-xs text-slate-600 hover:text-emerald-800 font-bold flex items-center gap-1 self-start sm:self-center transition-colors cursor-pointer bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs"
+              >
+                <span>{showExtraNotes ? "بستن یادداشت متفرقه" : "+ افزودن دستاورد متفرقه / یادداشت"}</span>
+              </button>
+            </div>
+
+            {pendingActionsLoading ? (
+              <div className="text-xs text-slate-400 flex items-center justify-center gap-2 py-6">
+                <RefreshCw className="w-4 h-4 animate-spin text-emerald-600" />
+                <span>در حال بارگذاری اقدامات این پروژه...</span>
+              </div>
+            ) : pendingActions.length === 0 ? (
+              <div className="bg-slate-50 p-4 rounded-xl text-center text-xs text-slate-500">
+                اقدام آتی باز یا ابلاغیه‌ای برای این پروژه ثبت نشده است.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {pendingActions.map((action) => {
+                  const isSelected = selectedActionIds.includes(action.id);
+                  const isManagerCreated = action.created_by_role === "manager";
+                  const isOverdue = action.target_date && new Date(action.target_date).getTime() < Date.now();
+
+                  return (
+                    <div
+                      key={action.id}
+                      onClick={() => toggleActionSelected(action.id)}
+                      className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex items-start justify-between gap-3 ${
+                        isSelected
+                          ? "bg-emerald-50/90 border-emerald-400 shadow-xs ring-1 ring-emerald-400"
+                          : "bg-slate-50 hover:bg-slate-100 border-slate-200/80 shadow-2xs"
+                      }`}
+                    >
+                      <div className="flex items-start gap-3 flex-1 min-w-0">
+                        <div className="pt-0.5 shrink-0">
+                          {isSelected ? (
+                            <CheckSquare className="w-5 h-5 text-emerald-600" />
+                          ) : (
+                            <Square className="w-5 h-5 text-slate-300" />
+                          )}
+                        </div>
+
+                        <div className="space-y-1.5 flex-1 min-w-0">
+                          <p className={`text-xs font-bold leading-relaxed line-clamp-2 ${isSelected ? "text-emerald-950" : "text-slate-800"}`}>
+                            {action.action_text}
+                          </p>
+
+                          <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                            {isManagerCreated ? (
+                              <span className="inline-flex items-center gap-1 bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded-md font-bold">
+                                <Crown className="w-3 h-3 text-purple-600" />
+                                <span>ابلاغیه مدیر</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 bg-slate-100 text-slate-600 border border-slate-200 px-2 py-0.5 rounded-md font-medium">
+                                <span>اقدام قبلی</span>
+                              </span>
+                            )}
+
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-medium ${
+                              isOverdue ? "bg-rose-50 text-rose-700 border border-rose-100" : "bg-white text-slate-600 border border-slate-200/60"
+                            }`}>
+                              <Calendar className="w-3 h-3 text-slate-400" />
+                              <span>مهلت: {formatPersianDate(action.target_date)}</span>
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* فیلد اختیاری توضیحات متفرقه نتایج */}
+            {showExtraNotes && (
+              <div className="space-y-2 pt-2 border-t border-slate-200/60 animate-fade-in">
+                <label className="text-xs font-bold text-slate-700 block">
+                  سایر دستاوردها یا توضیحات تکمیلی (اختیاری)
+                </label>
+                <textarea
+                  value={extraResultsNotes}
+                  onChange={(e) => setExtraResultsNotes(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 focus:border-emerald-600 rounded-2xl p-3 text-xs min-h-[70px] focus:outline-none transition-all"
+                  placeholder="اگر دستاورد یا خروجی خارج از برنامه قبلی داشته‌اید در اینجا شرح دهید..."
+                />
+              </div>
+            )}
           </div>
 
           {/* اقدامات آتی */}
           <div className="bg-white p-4 rounded-2xl border border-slate-200/60 space-y-3">
             <div className="flex justify-between items-center border-b border-slate-200 pb-2">
-              <label className="text-sm font-bold text-slate-850">اقدامات آتی</label>
+              <label className="text-sm font-bold text-slate-850">اقدامات آتی و برنامه دور بعد</label>
               <button
                 type="button"
                 onClick={() => setNextActions([...nextActions, { action_text: "", target_date: "" }])}
                 className="text-xs bg-emerald-800 text-white px-3 py-1.5 rounded-xl font-medium hover:bg-emerald-900 cursor-pointer"
               >
-                + افزودن
+                + افزودن اقدام
               </button>
             </div>
             {nextActions.map((item, index) => (

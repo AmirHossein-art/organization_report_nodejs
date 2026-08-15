@@ -40,6 +40,12 @@ const adapter = new PrismaPg(pool);
 // ۴. ساخت کلاینت پریزما با آداپتور مربوطه
 const prisma = new PrismaClient({ adapter });
 
+// تمیزکاری و همگام‌سازی خودکار وضعیت اقداماتی که پرسنل در گزارش تیک نزده بودند
+prisma.nextAction.updateMany({
+  where: { claimed_report_id: null, claimed_completed: true },
+  data: { claimed_completed: false }
+}).catch((e) => console.error("Error auto-sanitizing unlinked actions:", e));
+
 // Set up file storage for report attachments
 const uploadDir = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(uploadDir)) {
@@ -241,7 +247,24 @@ async function validateAndBuildKpiValues(
   return built;
 }
 
-function parseNextActions(rawNextActions: unknown): { action_text: string; target_date: Date }[] {
+function parseAchievedActionIds(raw: unknown): number[] {
+  if (raw === undefined || raw === null || raw === "") return [];
+  let parsed: unknown;
+  try {
+    parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.map((x) => Number(x)).filter((id) => !isNaN(id) && id > 0);
+}
+
+function parseNextActions(
+  rawNextActions: unknown,
+  projectId?: number,
+  userId?: number,
+  role: "user" | "manager" = "user"
+): { action_text: string; target_date: Date; project_id?: number; user_id?: number; created_by_role?: "user" | "manager" }[] {
   if (rawNextActions === undefined || rawNextActions === null || rawNextActions === "") {
     return [];
   }
@@ -273,8 +296,32 @@ function parseNextActions(rawNextActions: unknown): { action_text: string; targe
     return {
       action_text: actionText,
       target_date: date,
+      project_id: projectId || undefined,
+      user_id: userId || undefined,
+      created_by_role: role,
     };
   });
+}
+
+function serializeAction(action: any) {
+  const hasClaimedReport = action.claimed_report_id !== null && action.claimed_report_id !== undefined;
+  return {
+    ...action,
+    claimed_completed: hasClaimedReport ? Boolean(action.claimed_completed) : false,
+    target_date: action.target_date
+      ? action.target_date.toISOString().split("T")[0]
+      : null,
+    target_date_raw: action.target_date_raw ?? null,
+    claimed_at: action.claimed_at
+      ? action.claimed_at.toISOString()
+      : null,
+    completed_at: action.completed_at
+      ? action.completed_at.toISOString()
+      : null,
+    verified_at: action.verified_at
+      ? action.verified_at.toISOString()
+      : null,
+  };
 }
 
 function serializeReport(report: any) {
@@ -290,19 +337,11 @@ function serializeReport(report: any) {
       : null,
 
     nextActions: Array.isArray(report.nextActions)
-      ? report.nextActions.map((action: any) => ({
-          ...action,
+      ? report.nextActions.map(serializeAction)
+      : [],
 
-          target_date: action.target_date
-            ? action.target_date.toISOString().split("T")[0]
-            : null,
-
-          target_date_raw: action.target_date_raw ?? null,
-
-          completed_at: action.completed_at
-            ? action.completed_at.toISOString()
-            : null,
-        }))
+    achievedActions: Array.isArray(report.achievedActions)
+      ? report.achievedActions.map(serializeAction)
       : [],
 
     kpiValues: Array.isArray(report.kpiValues)
@@ -1562,7 +1601,7 @@ app.put("/api/deadline-settings/:id", async (req, res) => {
 app.get("/api/reports", async (req, res) => {
   try {
     const reports = await prisma.report.findMany({
-      include: { files: true, nextActions: true, kpiValues: true },
+      include: { files: true, nextActions: true, achievedActions: true, kpiValues: true },
       orderBy: { id: "desc" }
     });
     res.json(reports.map(serializeReport));
@@ -1581,11 +1620,14 @@ app.post("/api/reports", upload.array("files"), async (req, res) => {
       period_id,
       activities_done,
       results_achieved,
+      achieved_action_ids,
       next_actions,
       kpi_text,
       kpi_values,
     } = req.body;
-    const parsedNextActions = parseNextActions(next_actions);
+
+    const parsedAchievedActionIds = parseAchievedActionIds(achieved_action_ids);
+    const parsedNextActions = parseNextActions(next_actions, parseInt(project_id), parseInt(user_id), "user");
 
     const user = await prisma.user.findUnique({ where: { id: parseInt(user_id) } });
     const project = await prisma.project.findUnique({ where: { id: parseInt(project_id) } });
@@ -1616,7 +1658,6 @@ app.post("/api/reports", upload.array("files"), async (req, res) => {
     if (deadline) {
       try {
         const now = new Date();
-        // محاسبه ددلاین واقعی با تابع جدید
         const deadlineDate = getDeadlineDate(
           new Date(period.period_end),
           deadline.deadline_day,
@@ -1624,7 +1665,6 @@ app.post("/api/reports", upload.array("files"), async (req, res) => {
           report_type as "weekly" | "monthly"
         );
         
-        // اگر زمان فعلی از ددلاین گذشته باشد، گزارش تأخیری ثبت می‌شود
         if (now > deadlineDate) {
           status = "late";
         }
@@ -1642,6 +1682,20 @@ app.post("/api/reports", upload.array("files"), async (req, res) => {
       report_type as "weekly" | "monthly"
     );
 
+    // آماده‌سازی متن نتایج حاصل شده بر اساس اقدامات تیک‌خورده
+    let finalResultsAchieved = typeof results_achieved === "string" ? results_achieved.trim() : "";
+    if (parsedAchievedActionIds.length > 0) {
+      const claimedActions = await prisma.nextAction.findMany({
+        where: { id: { in: parsedAchievedActionIds } },
+      });
+      const bulletList = claimedActions.map((a) => `• ${a.action_text}`).join("\n");
+      if (!finalResultsAchieved) {
+        finalResultsAchieved = bulletList;
+      } else if (!finalResultsAchieved.includes("•")) {
+        finalResultsAchieved = `${bulletList}\n\nتوضیحات تکمیلی: ${finalResultsAchieved}`;
+      }
+    }
+
     const newReport = await prisma.report.create({
       data: {
         user_id: user.id,
@@ -1655,7 +1709,7 @@ app.post("/api/reports", upload.array("files"), async (req, res) => {
         period_start: period.period_start,
         period_end: period.period_end,
         activities_done,
-        results_achieved,
+        results_achieved: finalResultsAchieved,
         kpi_text,
         status: status as any,
         nextActions: parsedNextActions.length
@@ -1678,8 +1732,19 @@ app.post("/api/reports", upload.array("files"), async (req, res) => {
             }
           : undefined,
       },
-      include: { files: true, nextActions: true, kpiValues: true }
+      include: { files: true, nextActions: true, achievedActions: true, kpiValues: true }
     });
+
+    if (parsedAchievedActionIds.length > 0) {
+      await prisma.nextAction.updateMany({
+        where: { id: { in: parsedAchievedActionIds } },
+        data: {
+          claimed_completed: true,
+          claimed_at: new Date(),
+          claimed_report_id: newReport.id,
+        }
+      });
+    }
 
     res.json(serializeReport(newReport));
   } catch (error) {
@@ -1695,14 +1760,19 @@ app.post("/api/reports", upload.array("files"), async (req, res) => {
 app.put("/api/reports/:id", upload.array("files"), async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { activities_done, results_achieved, next_actions, kpi_text, kpi_values } = req.body;
+    const { activities_done, results_achieved, achieved_action_ids, next_actions, kpi_text, kpi_values } = req.body;
+    const shouldUpdateAchievedActions = achieved_action_ids !== undefined;
+    const parsedAchievedActionIds = shouldUpdateAchievedActions ? parseAchievedActionIds(achieved_action_ids) : [];
     const shouldUpdateNextActions = next_actions !== undefined;
-    const parsedNextActions = shouldUpdateNextActions ? parseNextActions(next_actions) : [];
 
     const existingReport = await prisma.report.findUnique({ where: { id } });
     if (!existingReport) {
       return res.status(404).json({ error: "گزارش پیدا نشد." });
     }
+
+    const parsedNextActions = shouldUpdateNextActions
+      ? parseNextActions(next_actions, existingReport.project_id, existingReport.user_id, "user")
+      : [];
 
     const period = await prisma.reportPeriod.findUnique({ where: { id: existingReport.period_id } });
     if (period) {
@@ -1712,7 +1782,6 @@ app.put("/api/reports/:id", upload.array("files"), async (req, res) => {
       
       if (deadline) {
         const now = new Date();
-        // محاسبه ددلاین واقعی بر اساس نوع گزارش ثبت‌شده
         const deadlineDate = getDeadlineDate(
           new Date(period.period_end),
           deadline.deadline_day,
@@ -1749,6 +1818,17 @@ app.put("/api/reports/:id", upload.array("files"), async (req, res) => {
       ? await validateAndBuildKpiValues(kpi_values, existingReport.project_id, existingReport.report_type)
       : null;
 
+    let finalResultsAchieved = results_achieved !== undefined ? (typeof results_achieved === "string" ? results_achieved.trim() : "") : undefined;
+    if (shouldUpdateAchievedActions && parsedAchievedActionIds.length > 0) {
+      const claimedActions = await prisma.nextAction.findMany({
+        where: { id: { in: parsedAchievedActionIds } },
+      });
+      const bulletList = claimedActions.map((a) => `• ${a.action_text}`).join("\n");
+      if (!finalResultsAchieved) {
+        finalResultsAchieved = bulletList;
+      }
+    }
+
     const updated = await prisma.$transaction(async (tx) => {
       if (deletedFileIds.length) {
         await tx.reportFile.deleteMany({
@@ -1779,6 +1859,27 @@ app.put("/api/reports/:id", upload.array("files"), async (req, res) => {
         }
       }
 
+      if (shouldUpdateAchievedActions) {
+        await tx.nextAction.updateMany({
+          where: { claimed_report_id: id },
+          data: {
+            claimed_completed: false,
+            claimed_at: null,
+            claimed_report_id: null,
+          }
+        });
+        if (parsedAchievedActionIds.length > 0) {
+          await tx.nextAction.updateMany({
+            where: { id: { in: parsedAchievedActionIds } },
+            data: {
+              claimed_completed: true,
+              claimed_at: new Date(),
+              claimed_report_id: id,
+            }
+          });
+        }
+      }
+
       if (validatedKpiValues !== null) {
         await tx.reportKpiValue.deleteMany({ where: { report_id: id } });
         if (validatedKpiValues.length > 0) {
@@ -1792,10 +1893,10 @@ app.put("/api/reports/:id", upload.array("files"), async (req, res) => {
         where: { id },
         data: {
           activities_done: activities_done !== undefined ? activities_done : undefined,
-          results_achieved: results_achieved !== undefined ? results_achieved : undefined,
+          results_achieved: finalResultsAchieved !== undefined ? finalResultsAchieved : undefined,
           kpi_text: kpi_text !== undefined ? kpi_text : undefined,
         },
-        include: { files: true, nextActions: true, kpiValues: true }
+        include: { files: true, nextActions: true, achievedActions: true, kpiValues: true }
       });
     });
 
@@ -2012,35 +2113,99 @@ const toEnglishDigits = (str: string): string => {
     .trim();
 };
 
-// 1️⃣ دریافت لیست تمامی اقدامات آتی همراه با اطلاعات پروژه و کاربر از طریق Report
+// 1️⃣ دریافت لیست اقدامات آتی همراه با اطلاعات پروژه، کاربر، ادعای پرسنل و وضعیت تایید مدیر
 app.get("/api/next-actions", async (req, res) => {
   try {
-    const { project_id } = req.query;
+    const { project_id, user_id, pending_for_report, status, report_id } = req.query;
+
+    const andConditions: any[] = [];
+
+    if (project_id) {
+      const pid = Number(project_id);
+      andConditions.push({
+        OR: [
+          { project_id: pid },
+          { report: { project_id: pid } }
+        ]
+      });
+    }
+
+    if (user_id) {
+      const uid = Number(user_id);
+      andConditions.push({
+        OR: [
+          { user_id: uid },
+          { user_id: null },
+          { report: { user_id: uid } }
+        ]
+      });
+    }
+
+    if (pending_for_report === "true") {
+      const repId = report_id ? Number(report_id) : null;
+      const pendingOr: any[] = [
+        { is_completed: false, claimed_completed: false }
+      ];
+      if (repId) {
+        pendingOr.push({ claimed_report_id: repId });
+      }
+      andConditions.push({ OR: pendingOr });
+    } else if (status === "pending") {
+      andConditions.push({ is_completed: false, claimed_completed: false });
+    } else if (status === "claimed") {
+      andConditions.push({ claimed_completed: true, is_completed: false });
+    } else if (status === "completed") {
+      andConditions.push({ is_completed: true });
+    }
+
+    const whereClause = andConditions.length > 0 ? { AND: andConditions } : {};
 
     const actions = await prisma.nextAction.findMany({
-      where: project_id ? {
-        report: { project_id: Number(project_id) }
-      } : {},
+      where: whereClause,
       include: {
+        project: { select: { id: true, title: true } },
+        user: { select: { id: true, full_name: true, job_title: true } },
         report: {
           include: {
             project: { select: { id: true, title: true } },
             user: { select: { id: true, full_name: true, job_title: true } },
+          }
+        },
+        claimedReport: {
+          select: {
+            id: true,
+            period_title: true,
+            user_full_name: true,
+            submitted_at: true
           }
         }
       },
       orderBy: { target_date: "asc" },
     });
 
-    // مپ کردن داده‌ها جهت ارسال ساختار تمیز به فرانت‌اند
     const formattedActions = actions.map((a) => ({
       id: a.id,
+      report_id: a.report_id,
+      project_id: a.project_id || a.report?.project_id,
+      user_id: a.user_id || a.report?.user_id,
+      created_by_role: a.created_by_role,
       action_text: a.action_text,
-      target_date: a.target_date,
+      target_date: a.target_date ? a.target_date.toISOString().split("T")[0] : null,
+      target_date_raw: a.target_date_raw,
+      claimed_completed: a.claimed_completed,
+      claimed_at: a.claimed_at ? a.claimed_at.toISOString() : null,
+      claimed_report_id: a.claimed_report_id,
+      claimed_report: a.claimedReport ? {
+        id: a.claimedReport.id,
+        period_title: a.claimedReport.period_title,
+        user_full_name: a.claimedReport.user_full_name,
+        submitted_at: a.claimedReport.submitted_at.toISOString(),
+      } : null,
       is_completed: a.is_completed,
-      completed_at: a.completed_at,
-      project: a.report?.project,
-      user: a.report?.user,
+      completed_at: a.completed_at ? a.completed_at.toISOString() : null,
+      verified_at: a.verified_at ? a.verified_at.toISOString() : null,
+      project: a.project || a.report?.project,
+      user: a.user || a.report?.user,
     }));
 
     res.json(formattedActions);
@@ -2050,22 +2215,99 @@ app.get("/api/next-actions", async (req, res) => {
   }
 });
 
-// 2️⃣ تغییر وضعیت تحویل اقدام (Mark as Completed / Uncompleted)
+// 2️⃣ ثبت اقدام / ابلاغیه جدید توسط مدیر یا برای پروژه
+app.post("/api/next-actions", async (req, res) => {
+  try {
+    const { project_id, user_id, action_text, target_date, created_by_role } = req.body;
+    const trimmedText = typeof action_text === "string" ? action_text.trim() : "";
+
+    if (!trimmedText) {
+      return res.status(400).json({ error: "شرح اقدام یا ابلاغیه الزامی است." });
+    }
+    if (!target_date || !/^\d{4}-\d{2}-\d{2}$/.test(target_date)) {
+      return res.status(400).json({ error: "تاریخ سررسید ددلاین روز الزامی و باید با فرمت YYYY-MM-DD باشد." });
+    }
+    if (!project_id) {
+      return res.status(400).json({ error: "انتخاب پروژه الزامی است." });
+    }
+
+    const targetDateObj = new Date(`${target_date}T00:00:00.000Z`);
+    if (isNaN(targetDateObj.getTime())) {
+      return res.status(400).json({ error: "تاریخ سررسید وارد شده نامعتبر است." });
+    }
+
+    const newAction = await prisma.nextAction.create({
+      data: {
+        project_id: Number(project_id),
+        user_id: user_id ? Number(user_id) : null,
+        action_text: trimmedText,
+        target_date: targetDateObj,
+        created_by_role: created_by_role === "manager" ? "manager" : "user",
+        is_completed: false,
+        claimed_completed: false,
+      },
+      include: {
+        project: { select: { id: true, title: true } },
+        user: { select: { id: true, full_name: true, job_title: true } },
+      }
+    });
+
+    res.json({
+      id: newAction.id,
+      report_id: newAction.report_id,
+      project_id: newAction.project_id,
+      user_id: newAction.user_id,
+      created_by_role: newAction.created_by_role,
+      action_text: newAction.action_text,
+      target_date: newAction.target_date ? newAction.target_date.toISOString().split("T")[0] : null,
+      target_date_raw: newAction.target_date_raw,
+      claimed_completed: newAction.claimed_completed,
+      claimed_at: newAction.claimed_at ? newAction.claimed_at.toISOString() : null,
+      claimed_report_id: newAction.claimed_report_id,
+      is_completed: newAction.is_completed,
+      completed_at: newAction.completed_at ? newAction.completed_at.toISOString() : null,
+      verified_at: newAction.verified_at ? newAction.verified_at.toISOString() : null,
+      project: newAction.project,
+      user: newAction.user,
+    });
+  } catch (error) {
+    console.error("Error creating next action:", error);
+    res.status(500).json({ error: "خطا در ثبت اقدام جدید در دیتابیس." });
+  }
+});
+
+// 3️⃣ تایید / لغو تایید تحقق اقدام توسط مدیر (Manager Verification)
 app.patch("/api/next-actions/:id/toggle", async (req, res) => {
   try {
     const actionId = Number(req.params.id);
-    const { is_completed } = req.body;
+    const { is_completed, reset_claim } = req.body;
 
     const action = await prisma.nextAction.findUnique({ where: { id: actionId } });
     if (!action) {
       return res.status(404).json({ error: "اقدام مورد نظر یافت نشد." });
     }
 
+    const willBeCompleted = Boolean(is_completed);
+    const now = new Date();
+
+    // اگر مدیر درخواست رد ادعای پرسنل را داده باشد (reset_claim = true)
+    const shouldResetClaim = Boolean(reset_claim);
+
     const updatedAction = await prisma.nextAction.update({
       where: { id: actionId },
       data: {
-        is_completed: Boolean(is_completed),
-        completed_at: is_completed ? new Date() : null,
+        is_completed: willBeCompleted,
+        completed_at: willBeCompleted ? now : null,
+        verified_at: willBeCompleted ? now : null,
+        // اگر اقدام دارای گزارش منتسب (claimed_report_id) باشد و مدیر ادعا را ریست نکرده باشد، claimed_completed باقی می‌ماند.
+        // در غیر این صورت (یا در صورت لغو تایید اقدامی که پرسنل اعلام نکرده بود)، claimed_completed برابر false می‌شود.
+        claimed_completed: shouldResetClaim
+          ? false
+          : action.claimed_report_id !== null
+          ? true
+          : false,
+        claimed_report_id: shouldResetClaim ? null : action.claimed_report_id,
+        claimed_at: shouldResetClaim ? null : action.claimed_at,
       },
     });
 
@@ -2073,6 +2315,18 @@ app.patch("/api/next-actions/:id/toggle", async (req, res) => {
   } catch (error) {
     console.error("Error toggling action status:", error);
     res.status(500).json({ error: "خطا در تغییر وضعیت اقدام." });
+  }
+});
+
+// 4️⃣ حذف اقدام
+app.delete("/api/next-actions/:id", async (req, res) => {
+  try {
+    const actionId = Number(req.params.id);
+    await prisma.nextAction.delete({ where: { id: actionId } });
+    res.json({ success: true, message: "اقدام با موفقیت حذف شد." });
+  } catch (error) {
+    console.error("Error deleting next action:", error);
+    res.status(500).json({ error: "خطا در حذف اقدام." });
   }
 });
 

@@ -47,6 +47,7 @@ model User {
 
   userProjects UserProject[]
   reports      Report[]
+  nextActions  NextAction[]
 }
 
 // ۲. جدول پروژه‌ها
@@ -62,6 +63,7 @@ model Project {
   userProjects UserProject[]
   reports      Report[]
   kpis         ProjectKpi[]
+  nextActions  NextAction[]
 }
 
 // ۳. جدول دوره‌های گزارش‌دهی
@@ -127,28 +129,45 @@ model Report {
   is_legacy_import Boolean   @default(false)
   imported_at      DateTime?
 
-  user        User             @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  project     Project          @relation(fields: [project_id], references: [id], onDelete: Cascade)
-  period      ReportPeriod     @relation(fields: [period_id], references: [id], onDelete: Cascade)
-  files       ReportFile[]
-  nextActions NextAction[]
-  kpiValues   ReportKpiValue[]
+  user            User             @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  project         Project          @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  period          ReportPeriod     @relation(fields: [period_id], references: [id], onDelete: Cascade)
+  files           ReportFile[]
+  nextActions     NextAction[]     @relation("ReportNextActions")
+  achievedActions NextAction[]     @relation("ReportAchievedActions")
+  kpiValues       ReportKpiValue[]
 
   @@unique([project_id, period_id], name: "one_report_per_project_period")
 }
 
 model NextAction {
-  id          Int    @id @default(autoincrement())
-  report_id   Int
-  action_text String @db.Text
+  id              Int       @id @default(autoincrement())
+  report_id       Int?
+  project_id      Int?
+  user_id         Int?
+  created_by_role Role      @default(user)
+  action_text     String    @db.Text
 
   target_date     DateTime?
   target_date_raw String?
 
-  is_completed Boolean   @default(false)
-  completed_at DateTime?
+  claimed_completed Boolean   @default(false)
+  claimed_at        DateTime?
+  claimed_report_id Int?
 
-  report Report @relation(fields: [report_id], references: [id], onDelete: Cascade)
+  is_completed      Boolean   @default(false)
+  completed_at      DateTime?
+  verified_at       DateTime?
+
+  report         Report?  @relation("ReportNextActions", fields: [report_id], references: [id], onDelete: Cascade)
+  claimedReport  Report?  @relation("ReportAchievedActions", fields: [claimed_report_id], references: [id], onDelete: SetNull)
+  project        Project? @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  user           User?    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([project_id])
+  @@index([user_id])
+  @@index([report_id])
+  @@index([claimed_report_id])
 }
 
 model ProjectKpi {

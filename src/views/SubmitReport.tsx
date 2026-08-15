@@ -1,6 +1,26 @@
 // src/views/SubmitReport.tsx
 import { useState, useEffect } from "react";
-import { Plus, X, CheckCircle2, AlertTriangle, RefreshCw, AlertCircle, Clock, ShieldCheck, BarChart3, FolderGit2, ArrowLeft, Target } from "lucide-react";
+import { 
+  Plus, 
+  X, 
+  CheckCircle2, 
+  AlertTriangle, 
+  RefreshCw, 
+  AlertCircle, 
+  Clock, 
+  ShieldCheck, 
+  BarChart3, 
+  FolderGit2, 
+  ArrowLeft, 
+  Target, 
+  CheckSquare, 
+  Square, 
+  Crown, 
+  Calendar, 
+  CheckCheck,
+  FileCheck2,
+  HelpCircle
+} from "lucide-react";
 import { Project, ReportPeriod, User, Report } from "../types";
 import { CustomSelect, ShamsiDatePicker } from "../components";
 
@@ -9,6 +29,18 @@ const toPersianDigits = (n: string | number | undefined | null): string => {
   if (n === undefined || n === null) return "";
   const farsiDigits = ["۰", "۱", "۲", "۳", "۴", "۵", "۶", "۷", "۸", "۹"];
   return n.toString().replace(/\d/g, (x) => farsiDigits[parseInt(x)]);
+};
+
+const formatPersianDate = (value: string | null | undefined): string => {
+  if (!value) return "بدون تاریخ مشخص";
+  const date = new Date(value);
+  if (isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: "Asia/Tehran",
+  }).format(date);
 };
 
 interface SubmitReportProps {
@@ -30,8 +62,14 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
   const [subPeriodId, setSubPeriodId] = useState<number>(0);
   const [subProjectId, setSubProjectId] = useState<number>(0);
   const [activitiesDone, setActivitiesDone] = useState("");
-  const [resultsAchieved, setResultsAchieved] = useState("");
+  const [extraResultsNotes, setExtraResultsNotes] = useState("");
   const [subFiles, setSubFiles] = useState<FileList | null>(null);
+
+  // 🟢 چک‌لیست اقدامات تحقق‌یافته در این دوره
+  const [pendingActions, setPendingActions] = useState<any[]>([]);
+  const [pendingActionsLoading, setPendingActionsLoading] = useState(false);
+  const [selectedActionIds, setSelectedActionIds] = useState<number[]>([]);
+  const [showExtraNotes, setShowExtraNotes] = useState(false);
 
   // 🟢 وضعیت شاخص‌های ساختاریافته پروژه
   const [kpis, setKpis] = useState<any[]>([]);
@@ -81,6 +119,24 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
     (r) => r.user_id === user?.id && r.project_id === subProjectId && r.period_id === subPeriodId
   );
 
+  // 🟢 واکشی اقدامات جاری/ابلاغیه‌های در انتظار برای پرسنل در پروژه انتخابی
+  useEffect(() => {
+    if (!subProjectId || !user?.id) {
+      setPendingActions([]);
+      setSelectedActionIds([]);
+      return;
+    }
+    setPendingActionsLoading(true);
+    fetch(`/api/next-actions?project_id=${subProjectId}&user_id=${user.id}&pending_for_report=true`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: any[]) => {
+        setPendingActions(Array.isArray(data) ? data : []);
+        setSelectedActionIds([]);
+      })
+      .catch(() => setPendingActions([]))
+      .finally(() => setPendingActionsLoading(false));
+  }, [subProjectId, user?.id]);
+
   // 🟢 واکشی شاخص‌های فعالِ کاربردی برای پروژه و نوع گزارش انتخاب‌شده
   useEffect(() => {
     if (!subProjectId || !subPeriodId) {
@@ -111,6 +167,12 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
       ...prev,
       [kpiId]: { ...(prev[kpiId] || { current_value: "", baseline_value: "", not_measured: false, missing_reason: "" }), ...patch },
     }));
+  };
+
+  const toggleActionSelected = (actionId: number) => {
+    setSelectedActionIds((prev) =>
+      prev.includes(actionId) ? prev.filter((id) => id !== actionId) : [...prev, actionId]
+    );
   };
 
   // بررسی تکمیل بودن تمام شاخص‌های اعمال‌شده
@@ -177,7 +239,8 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
     formData.append("report_type", subReportType);
     formData.append("period_id", subPeriodId.toString());
     formData.append("activities_done", activitiesDone);
-    formData.append("results_achieved", resultsAchieved);
+    formData.append("results_achieved", extraResultsNotes);
+    formData.append("achieved_action_ids", JSON.stringify(selectedActionIds));
     formData.append("kpi_text", "");
 
     // 🟢 ساخت آرایه مقادیر شاخص‌ها (فقط برای شاخص‌های اعمال‌شده)
@@ -213,7 +276,8 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
       if (res.ok) {
         flashSuccess("گزارش شما با موفقیت ثبت شد.");
         setActivitiesDone("");
-        setResultsAchieved("");
+        setExtraResultsNotes("");
+        setSelectedActionIds([]);
         setNextActions([{ action_text: "", target_date: "" }]);
         setKpiValues({});
         setSubFiles(null);
@@ -431,15 +495,122 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
                 />
               </div>
 
-              {/* فیلد نتایج حاصل شده */}
-              <div className="space-y-2">
-                <label className="text-sm font-semibold text-slate-700">نتایج حاصل‌شده</label>
-                <textarea
-                  value={resultsAchieved}
-                  onChange={(e) => setResultsAchieved(e.target.value)}
-                  className="w-full bg-slate-50/50 border border-slate-200 focus:border-emerald-600 rounded-2xl p-3 text-xs min-h-[80px] focus:outline-none transition-all"
-                  placeholder="نتایج ملموس، دستاوردها و خروجی‌هایی که بدست آمد..."
-                />
+              {/* فیلد نتایج حاصل شده (چک‌لیست اقدامات آتی و ابلاغیه‌ها) */}
+              <div className="bg-slate-50/70 p-5 rounded-3xl border border-slate-200/80 space-y-4 shadow-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/80 pb-3">
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-2">
+                      <FileCheck2 className="w-5 h-5 text-emerald-700" />
+                      <label className="text-sm font-extrabold text-slate-850">
+                        نتایج حاصل‌شده (اقدامات تحقق‌یافته در این دوره)
+                      </label>
+                      {pendingActions.length > 0 && (
+                        <span className="bg-emerald-100 text-emerald-800 text-[11px] font-bold px-2 py-0.5 rounded-full">
+                          {toPersianDigits(selectedActionIds.length)} از {toPersianDigits(pendingActions.length)} اقدام انتخاب شده
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-500 font-medium">
+                      اقداماتی که در این بازه تکمیل و محقق کرده‌اید را علامت بزنید (جهت بررسی و تایید نهایی توسط مدیر).
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowExtraNotes(!showExtraNotes)}
+                    className="text-xs text-slate-600 hover:text-emerald-800 font-bold flex items-center gap-1 self-start sm:self-center transition-colors cursor-pointer bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs"
+                  >
+                    <span>{showExtraNotes ? "بستن یادداشت متفرقه" : "+ افزودن دستاورد متفرقه / یادداشت"}</span>
+                  </button>
+                </div>
+
+                {pendingActionsLoading ? (
+                  <div className="text-xs text-slate-400 flex items-center justify-center gap-2 py-8 bg-white rounded-2xl border border-slate-200/60">
+                    <RefreshCw className="w-4 h-4 animate-spin text-emerald-600" />
+                    <span>در حال بارگذاری اقدامات و ابلاغیه‌های این پروژه...</span>
+                  </div>
+                ) : pendingActions.length === 0 ? (
+                  <div className="bg-white p-6 rounded-2xl border border-dashed border-slate-300 text-center space-y-2">
+                    <CheckSquare className="w-8 h-8 mx-auto text-slate-300" />
+                    <p className="text-xs font-bold text-slate-700">
+                      هیچ اقدام آتی باز یا ابلاغیه مدیریتی در انتظاری برای این پروژه یافت نشد.
+                    </p>
+                    <p className="text-[11px] text-slate-400">
+                      در صورتی که خروجی یا دستاورد خاصی در این دوره داشته‌اید، از دکمه «افزودن دستاورد متفرقه» در بالا استفاده کنید.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {pendingActions.map((action) => {
+                      const isSelected = selectedActionIds.includes(action.id);
+                      const isManagerCreated = action.created_by_role === "manager";
+                      const isOverdue = action.target_date && new Date(action.target_date).getTime() < Date.now();
+
+                      return (
+                        <div
+                          key={action.id}
+                          onClick={() => toggleActionSelected(action.id)}
+                          className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex items-start justify-between gap-3 ${
+                            isSelected
+                              ? "bg-emerald-50/90 border-emerald-400 shadow-xs ring-1 ring-emerald-400"
+                              : "bg-white hover:bg-slate-50 border-slate-200/80 shadow-2xs"
+                          }`}
+                        >
+                          <div className="flex items-start gap-3 flex-1 min-w-0">
+                            <div className="pt-0.5 shrink-0">
+                              {isSelected ? (
+                                <CheckSquare className="w-5 h-5 text-emerald-600" />
+                              ) : (
+                                <Square className="w-5 h-5 text-slate-300" />
+                              )}
+                            </div>
+
+                            <div className="space-y-1.5 flex-1 min-w-0">
+                              <p className={`text-xs font-bold leading-relaxed line-clamp-2 ${isSelected ? "text-emerald-950" : "text-slate-800"}`}>
+                                {action.action_text}
+                              </p>
+
+                              <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                                {isManagerCreated ? (
+                                  <span className="inline-flex items-center gap-1 bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded-md font-bold">
+                                    <Crown className="w-3 h-3 text-purple-600" />
+                                    <span>ابلاغیه مدیر</span>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 bg-slate-100 text-slate-600 border border-slate-200 px-2 py-0.5 rounded-md font-medium">
+                                    <span>اقدام قبلی شما</span>
+                                  </span>
+                                )}
+
+                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-medium ${
+                                  isOverdue ? "bg-rose-50 text-rose-700 border border-rose-100" : "bg-slate-50 text-slate-600 border border-slate-200/60"
+                                }`}>
+                                  <Calendar className="w-3 h-3 text-slate-400" />
+                                  <span>مهلت: {formatPersianDate(action.target_date)}</span>
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* فیلد اختیاری توضیحات متفرقه نتایج */}
+                {showExtraNotes && (
+                  <div className="space-y-2 pt-2 border-t border-slate-200/60 animate-fade-in">
+                    <label className="text-xs font-bold text-slate-700 block">
+                      سایر دستاوردها، نتایج ملموس یا توضیحات تکمیلی (اختیاری)
+                    </label>
+                    <textarea
+                      value={extraResultsNotes}
+                      onChange={(e) => setExtraResultsNotes(e.target.value)}
+                      className="w-full bg-white border border-slate-200 focus:border-emerald-600 rounded-2xl p-3 text-xs min-h-[70px] focus:outline-none transition-all"
+                      placeholder="اگر دستاورد یا خروجی خارج از برنامه قبلی داشته‌اید در اینجا شرح دهید..."
+                    />
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
