@@ -17,9 +17,7 @@ import {
   Square, 
   Crown, 
   Calendar, 
-  CheckCheck,
-  FileCheck2,
-  HelpCircle
+  FileCheck2
 } from "lucide-react";
 import { Project, ReportPeriod, User, Report } from "../types";
 import { CustomSelect, ShamsiDatePicker } from "../components";

@@ -4,109 +4,249 @@ import path from "path";
 import fs from "fs";
 import cors from "cors";
 import multer from "multer";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import { createServer as createViteServer } from "vite";
 import { OpenAI } from "openai";
-import { parseExcelWBS } from "./src/utils/wbsParser";
-
 import bcrypt from "bcrypt";
-const SALT_ROUNDS = 10;
-
 import jwt from "jsonwebtoken";
 import cookieParser from "cookie-parser";
-
-const JWT_SECRET = process.env.JWT_SECRET || "SUPER_SECRET_KEY_FOR_TRAFFIC_ORG_2026";
-
-// ایمپورت‌های جدید برای پریزما ۷ و پایگاه داده
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 
-const PORT = 3000;
+import { config } from "./src/config/env";
+import { parseExcelWBS } from "./src/utils/wbsParser";
+
+const SALT_ROUNDS = 10;
 const app = express();
 
+// ۱. تنظیم پروکسی برای استقرار در ریل‌وی و زیرساخت‌های کلود
+app.set("trust proxy", 1);
+app.disable("x-powered-by");
 
-app.use(cors());
-app.use(express.json());
+// ۲. هدرهای امنیتی پایه با Helmet
+app.use(
+  helmet({
+    contentSecurityPolicy: false, // برای اجرای بدون مشکل Vite SPA و Three.js
+    crossOriginEmbedderPolicy: false,
+  })
+);
+
+// ۳. پیکربندی ایمن CORS بر اساس محیط اجرایی
+if (config.ALLOWED_ORIGINS.length > 0) {
+  // در صورت تعیین لیست صریح مبداها (چه پروداکشن و چه دولوپمنت)، فقط مبداهای مجاز پذیرفته می‌شوند
+  app.use(
+    cors({
+      origin: (requestOrigin, callback) => {
+        if (!requestOrigin || config.ALLOWED_ORIGINS.includes(requestOrigin)) {
+          return callback(null, true);
+        }
+        return callback(new Error("CORS origin not allowed"), false);
+      },
+      credentials: true,
+    })
+  );
+} else if (config.NODE_ENV !== "production") {
+  // در محیط توسعه محلی با لیست خالی، دسترسی برای تسهیل توسعه محلی فعال است
+  app.use(
+    cors({
+      origin: true,
+      credentials: true,
+    })
+  );
+}
+// در محیط پروداکشن با لیست خالی ALLOWED_ORIGINS، میدلور CORS اضافه نمی‌شود (Same-Origin استاندارد مرورگر)
+
+app.use(express.json({ limit: "5mb" }));
 app.use(cookieParser());
 
-// ۲. ساخت استخر اتصالات (Connection Pool) برای PostgreSQL
+// ۴. اتصال به دیتابیس PostgreSQL از طریق Prisma 7
 const pool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: config.DATABASE_URL,
 });
-
-// ۳. تعریف آداپتور برای اتصال پریزما به درایور پایگاه داده
 const adapter = new PrismaPg(pool);
-
-// ۴. ساخت کلاینت پریزما با آداپتور مربوطه
 const prisma = new PrismaClient({ adapter });
 
-// تمیزکاری و همگام‌سازی خودکار وضعیت اقداماتی که پرسنل در گزارش تیک نزده بودند
-prisma.nextAction.updateMany({
-  where: { claimed_report_id: null, claimed_completed: true },
-  data: { claimed_completed: false }
-}).catch((e) => console.error("Error auto-sanitizing unlinked actions:", e));
+// ۵. تنظیمات ذخیره‌سازی فایل‌ها در مسیر ایمن STORAGE_ROOT
+const uploadDir = config.UPLOAD_DIR;
+const wbsDir = config.WBS_DIR;
 
-// Set up file storage for report attachments
-const uploadDir = path.join(process.cwd(), "uploads");
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
+// اعتبارسنجی و جلوگیری از Path Traversal در دسترسی به فایل‌ها
+function safeResolvePath(baseDirectory: string, userFilename: string | null | undefined): string | null {
+  if (!userFilename || typeof userFilename !== "string") return null;
+  const sanitized = path.basename(userFilename);
+  if (!sanitized || sanitized === "." || sanitized === "..") return null;
+  const resolved = path.resolve(baseDirectory, sanitized);
+  if (!resolved.startsWith(path.resolve(baseDirectory))) {
+    return null;
+  }
+  return resolved;
 }
+
+// تنظیمات Multer برای فایل‌های ضمیمه گزارش‌ها
+const ALLOWED_ATTACHMENT_EXTS = [
+  ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+  ".png", ".jpg", ".jpeg", ".zip", ".rar", ".csv", ".txt"
+];
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
     cb(null, uploadDir);
   },
   filename: (_req, file, cb) => {
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    cb(null, uniqueSuffix + "-" + file.originalname);
+    const ext = path.extname(file.originalname).toLowerCase();
+    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+    cb(null, `${uniqueSuffix}${ext}`);
   },
 });
 
 const upload = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB limit per file
+    files: 10, // حداکثر ۱۰ فایل در هر درخواست
+  },
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ALLOWED_ATTACHMENT_EXTS.includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error("فرمت فایل ارسالی مجاز نیست."));
+    }
+  },
 });
 
-// 🟢 ساخت پوشه wbs_files و تنظیمات ذخیره‌سازی فایل اکسل
+// تنظیمات Multer برای فایل‌های ساختار WBS اکسل
 const wbsStorage = multer.diskStorage({
   destination: (_req, _file, cb) => {
-    const uploadDir = path.join(process.cwd(), "wbs_files");
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
+    cb(null, wbsDir);
   },
   filename: (_req, file, cb) => {
-    // ذخیره فایل با نام یکتا برای جلوگیری از اوررایت شدن
-    const ext = path.extname(file.originalname);
-    const uniqueName = `wbs_project_${Date.now()}${ext}`;
+    const ext = path.extname(file.originalname).toLowerCase();
+    const uniqueName = `wbs_project_${Date.now()}_${Math.round(Math.random() * 1e6)}${ext}`;
     cb(null, uniqueName);
   },
 });
 
 const uploadWBS = multer({
   storage: wbsStorage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
   fileFilter: (_req, file, cb) => {
-    // فقط اجازه آپلود فایل‌های اکسل داده می‌شود
-    if (file.originalname.match(/\.(xlsx|xls)$/)) {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ext === ".xlsx" || ext === ".xls") {
       cb(null, true);
     } else {
-      cb(new Error("فقط فایل‌های اکسل (xlsx, xls) مجاز هستند."));
+      cb(new Error("فقط فایل‌های اکسل (xlsx, xls) برای WBS مجاز هستند."));
     }
   },
 });
 
-// -----------------------------
+// ۶. محدودکننده‌های نرخ درخواست (Rate Limiters)
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // 10 attempts
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "تعداد تلاش‌های ناموفق بیش از حد مجاز است. لطفاً ۱۵ دقیقه دیگر مجدداً تلاش کنید." },
+});
 
-type NextActionInput = {
-  action_text: string;
-  target_date: string;
+const aiLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 20, // 20 requests per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "سقف تعداد درخواست‌های هوش مصنوعی در دقیقه پر شده است. لطفاً کمی بعد تلاش فرمایید." },
+});
+
+// ۷. توابع کمکی اعتبارسنجی و تبدیل
+const toEnglishDigits = (str: string): string => {
+  if (!str) return "";
+  return str
+    .replace(/[۰-۹]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".indexOf(d).toString())
+    .replace(/[٠-٩]/g, (d) => "٠١٢٣٤٥٦٧٨٩".indexOf(d).toString())
+    .trim();
 };
 
+function parseBooleanField(val: any): boolean | undefined {
+  if (val === undefined || val === null) return undefined;
+  if (typeof val === "boolean") return val;
+  if (typeof val === "string") {
+    const lower = val.trim().toLowerCase();
+    if (lower === "true" || lower === "1") return true;
+    if (lower === "false" || lower === "0") return false;
+  }
+  return undefined;
+}
+
+function sanitizeUser(user: any) {
+  if (!user) return null;
+  return {
+    id: user.id,
+    username: user.username,
+    full_name: user.full_name,
+    role: user.role,
+    job_title: user.job_title || null,
+    is_active: Boolean(user.is_active),
+    must_change_password: Boolean(user.must_change_password),
+    password_changed_at: user.password_changed_at ? user.password_changed_at.toISOString() : null,
+    created_at: user.created_at ? user.created_at.toISOString() : null,
+  };
+}
+
+// تمیزکاری خودکار وضعیت اقداماتی که در گزارش تیک نخورده بودند
+prisma.nextAction.updateMany({
+  where: { claimed_report_id: null, claimed_completed: true },
+  data: { claimed_completed: false }
+}).catch((e) => console.error("Error auto-sanitizing unlinked actions:", e));
+
+// -----------------------------
+// Middlewares: احراز هویت و کنترل دسترسی
+// -----------------------------
+async function authenticate(req: any, res: any, next: any) {
+  try {
+    let token = req.cookies?.token;
+    if (!token && req.headers.authorization) {
+      const authHeader = req.headers.authorization;
+      if (authHeader.startsWith("Bearer ")) {
+        token = authHeader.substring(7).trim();
+      }
+    }
+
+    if (!token) {
+      return res.status(401).json({ error: "عدم دسترسی، لطفاً ابتدا وارد شوید." });
+    }
+
+    const decoded = jwt.verify(token, config.JWT_SECRET) as { id: number; username: string; role: string };
+    const user = await prisma.user.findUnique({ where: { id: decoded.id } });
+
+    if (!user || !user.is_active) {
+      return res.status(401).json({ error: "حساب کاربری یافت نشد یا غیرفعال است." });
+    }
+
+    req.user = user;
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: "توکن نامعتبر یا منقضی شده است." });
+  }
+}
+
+function requireManager(req: any, res: any, next: any) {
+  if (req.user?.role !== "manager") {
+    return res.status(403).json({ error: "دسترسی فقط برای مدیران مجاز است." });
+  }
+  next();
+}
+
+// -----------------------------
+// Validation Helpers for KPIs & Next Actions
+// -----------------------------
 class NextActionsValidationError extends Error {}
 class KpiValidationError extends Error {}
 
 const KPI_INPUT_TYPES = ["direct", "percentage_change"];
+const KPI_TARGET_DIRECTIONS = ["minimum", "maximum"];
+const REPORT_TYPES = ["weekly", "monthly"];
 
 function parseKpiValues(rawKpiValues: unknown): any[] {
   if (rawKpiValues === undefined || rawKpiValues === null || rawKpiValues === "") {
@@ -124,8 +264,6 @@ function parseKpiValues(rawKpiValues: unknown): any[] {
   return parsed;
 }
 
-// اعتبارسنجی و محاسبه سمت سرور مقادیر شاخص گزارش.
-// کلاینت اعتماد نمی‌شود: شاخص‌ها از روی پروژه و نوع گزارش مجدداً خوانده می‌شوند.
 async function validateAndBuildKpiValues(
   rawKpiValues: unknown,
   projectId: number,
@@ -133,7 +271,6 @@ async function validateAndBuildKpiValues(
 ): Promise<any[]> {
   const submitted = parseKpiValues(rawKpiValues);
 
-  // شاخص‌های فعالِ کاربردی برای این پروژه و نوع گزارش (منبع حقیقت)
   const applicableKpis = await prisma.projectKpi.findMany({
     where: {
       project_id: projectId,
@@ -142,14 +279,12 @@ async function validateAndBuildKpiValues(
     },
   });
 
-  // پروژه‌های بدون شاخص → هیچ مقداری لازم نیست
   if (applicableKpis.length === 0) return [];
 
   if (submitted.length === 0) {
     throw new KpiValidationError("مقادیر تمامی شاخص‌های فعال باید وارد شوند.");
   }
 
-  // ۵. عدم تکرار شناسه شاخص
   const seenIds = new Set<number>();
   for (const v of submitted) {
     const id = Number(v?.project_kpi_id);
@@ -159,7 +294,6 @@ async function validateAndBuildKpiValues(
     seenIds.add(id);
   }
 
-  // ۱. هر شاخص فعالِ کاربردی دقیقاً یک رکورد ارسالی داشته باشد
   for (const kpi of applicableKpis) {
     const rec = submitted.find((v) => Number(v?.project_kpi_id) === kpi.id);
     if (!rec) {
@@ -173,7 +307,6 @@ async function validateAndBuildKpiValues(
     const kpiId = Number(v.project_kpi_id);
     const kpi = applicableKpis.find((k) => k.id === kpiId);
 
-    // ۲، ۳، ۴. شاخص باید متعلق به پروژه، فعال و کاربردی برای نوع گزارش باشد
     if (!kpi) {
       throw new KpiValidationError("شناسه شاخص نامعتبر، تکراری یا غیرفعال است.");
     }
@@ -182,11 +315,9 @@ async function validateAndBuildKpiValues(
     const missingReason = typeof v.missing_reason === "string" ? v.missing_reason.trim() : "";
 
     if (notMeasured) {
-      // ۹. دلیل اندازه‌گیری‌نشدن الزامی
       if (!missingReason) {
         throw new KpiValidationError(`دلیل عدم اندازه‌گیری شاخص «${kpi.name}» الزامی است.`);
       }
-      // ۱۰. شاخص اندازه‌گیری‌نشده مقدار محاسبه‌شده ندارد
       built.push({
         project_kpi_id: kpiId,
         current_value: null,
@@ -205,7 +336,6 @@ async function validateAndBuildKpiValues(
     };
 
     if (kpi.input_type === "direct") {
-      // ۶. شاخص مستقیم: current_value معتبر لازم است
       const current = toNumberOrNull(v.current_value);
       if (current === null) {
         throw new KpiValidationError(`مقدار این دوره شاخص «${kpi.name}» باید عددی معتبر باشد.`);
@@ -219,7 +349,6 @@ async function validateAndBuildKpiValues(
         missing_reason: null,
       });
     } else {
-      // ۷. شاخص درصد تغییر: baseline و current معتبر لازم‌اند
       const baseline = toNumberOrNull(v.baseline_value);
       const current = toNumberOrNull(v.current_value);
       if (baseline === null) {
@@ -228,7 +357,6 @@ async function validateAndBuildKpiValues(
       if (current === null) {
         throw new KpiValidationError(`مقدار دوره جاری شاخص «${kpi.name}» باید عددی معتبر باشد.`);
       }
-      // ۸. مبنا نمی‌تواند صفر باشد
       if (baseline === 0) {
         throw new KpiValidationError(`مقدار مبنای شاخص «${kpi.name}» نمی‌تواند صفر باشد.`);
       }
@@ -280,7 +408,7 @@ function parseNextActions(
     throw new NextActionsValidationError("ساختار اقدامات آتی باید آرایه JSON باشد.");
   }
 
-  return parsed.map((item: NextActionInput, index: number) => {
+  return parsed.map((item: any, index: number) => {
     const actionText = typeof item?.action_text === "string" ? item.action_text.trim() : "";
     const targetDate = typeof item?.target_date === "string" ? item.target_date : "";
 
@@ -327,6 +455,7 @@ function serializeAction(action: any) {
 function serializeReport(report: any) {
   return {
     ...report,
+    user: report.user ? sanitizeUser(report.user) : undefined,
     user_job_title: report.user?.job_title || null,
     deputy_name: report.user?.job_title || report.user_full_name,
 
@@ -361,379 +490,61 @@ function serializeReport(report: any) {
   };
 }
 
-// 🔮 تابع محاسباتی ددلاین هوشمند بر اساس تنظیمات مدیریتی دیتابیس
 function getDeadlineDate(periodEnd: Date, deadlineDay: number, deadlineTime: string, reportType: "weekly" | "monthly"): Date {
   const deadlineDate = new Date(periodEnd);
   
   if (reportType === "weekly") {
-    // در جاوااسکریپت: 0 = یکشنبه، 1 = دوشنبه، ...، 6 = شنبه
-    // حرکت رو به جلو از فردای پایان دوره برای پیدا کردن روز ددلاین مشخص شده
     deadlineDate.setDate(deadlineDate.getDate() + 1);
     while (deadlineDate.getDay() !== deadlineDay) {
       deadlineDate.setDate(deadlineDate.getDate() + 1);
     }
   } else {
-    // گزارش ماهانه: deadlineDay عدد روز از ماه است (مثلاً 5 برای پنجم ماه بعد)
-    // اگر عدد روز ددلاین کوچک‌تر یا مساوی روز پایان دوره باشد، یعنی مربوط به ماه بعد است
     if (deadlineDay <= periodEnd.getDate()) {
       deadlineDate.setMonth(deadlineDate.getMonth() + 1);
     }
     deadlineDate.setDate(deadlineDay);
   }
 
-  // اعمال فرمت ساعت و دقیقه "HH:MM" تنظیم شده توسط مدیر
   const [hours, minutes] = deadlineTime.split(":").map(Number);
   deadlineDate.setHours(hours || 0, minutes || 0, 0, 0);
   
   return deadlineDate;
 }
 
-function formatNextActionsForPrompt(nextActions: any[] | undefined): string {
-  if (!Array.isArray(nextActions) || nextActions.length === 0) {
-    return "ثبت نشده";
+// استراتژی بازیابی فایل WBS با پشتیبانی از داده‌های قدیمی (Legacy Safe Lookup)
+function resolveProjectWbsFilePath(project: { wbs_storage_filename?: string | null; wbs_file_name?: string | null }): string | null {
+  if (project.wbs_storage_filename) {
+    const primaryPath = safeResolvePath(wbsDir, project.wbs_storage_filename);
+    if (primaryPath && fs.existsSync(primaryPath)) return primaryPath;
   }
 
-  return nextActions
-    .map((action) => {
-      const targetDate = action.target_date instanceof Date
-        ? action.target_date.toISOString().split("T")[0]
-        : String(action.target_date || "").split("T")[0];
-      return `- ${action.action_text} (تاریخ هدف: ${targetDate})`;
-    })
-    .join("\n");
+  if (project.wbs_file_name) {
+    const wbsLookupPath = safeResolvePath(wbsDir, project.wbs_file_name);
+    if (wbsLookupPath && fs.existsSync(wbsLookupPath)) return wbsLookupPath;
+
+    const legacyUploadPath = safeResolvePath(uploadDir, project.wbs_file_name);
+    if (legacyUploadPath && fs.existsSync(legacyUploadPath)) return legacyUploadPath;
+  }
+
+  return null;
 }
 
-// Helper: format structured KPI values for AI prompts
-function formatKpiValuesForPrompt(kpiValues: any[] | undefined): string {
-  if (!Array.isArray(kpiValues) || kpiValues.length === 0) {
-    return "بدون شاخص ساختاریافته";
-  }
-
-  return kpiValues
-    .map((kv, idx) => {
-      const measured = !kv.not_measured && kv.calculated_value !== null;
-      const inputTypeLabel = kv.input_type === "direct" ? "مقدار مستقیم" : "درصد تغییر";
-      const directionLabel = kv.target_direction === "minimum" ? "حداقل" : "حداکثر";
-
-      if (!measured) {
-        return `${idx + 1}. ${kv.name || "شاخص"} — اندازه‌گیری نشده (${kv.missing_reason || "دلیل مشخص نشده"})`;
-      }
-
-      if (kv.input_type === "direct") {
-        return `${idx + 1}. ${kv.name || "شاخص"} (${inputTypeLabel}) — ${kv.unit || ""}: ${kv.current_value} (هدف: ${directionLabel} ${kv.target_value})`;
-      } else {
-        return `${idx + 1}. ${kv.name || "شاخص"} (${inputTypeLabel}) — مبنا: ${kv.baseline_value}، جاری: ${kv.current_value}، محاسبه‌شده: ${kv.calculated_value}٪ (هدف: ${directionLabel} ${kv.target_value}٪)`;
-      }
-    })
-    .join("\n");
-}
-
-// Serve uploaded files
-app.use("/uploads", express.static(uploadDir));
-
-// =================================================================
-// 🔮 سیستم مرکزی فراخوانی هوش مصنوعی (مجهز به Fallback و ترجمه خطای فارسی)
-// =================================================================
-async function callAiWithFallback(systemPrompt: string, userPrompt: string) {
-  // لیست پروایدرهای فعال بر اساس فایل .env
-  const providers = [
-    {
-      id: "sambanova",
-      name: "SambaNova (Llama 3.3 70B)",
-      baseURL: process.env.AI_BASE_URL_1 || process.env.AI_BASE_URL || "https://api.sambanova.ai/v1",
-      apiKey: process.env.AI_API_KEY_1 || process.env.AI_API_KEY,
-      model: process.env.AI_MODEL_1 || process.env.AI_MODEL_NAME || "Meta-Llama-3.3-70B-Instruct",
-    },
-    {
-      id: "cerebras",
-      name: "Cerebras (Llama 3.3 70B)",
-      baseURL: process.env.AI_BASE_URL_2 || "https://api.cerebras.ai/v1",
-      apiKey: process.env.AI_API_KEY_2,
-      model: process.env.AI_MODEL_2 || "llama-3.3-70b",
-    },
-    {
-      id: "gemini",
-      name: "Google AI Studio (gemini-1.5-flash)",
-      baseURL: process.env.AI_BASE_URL_3 || "https://generativelanguage.googleapis.com/v1beta/openai/",
-      apiKey: process.env.AI_API_KEY_3,
-      model: process.env.AI_MODEL_3 || "gemini-1.5-flash",
-    },
-  ].filter((p) => p.apiKey && p.apiKey.trim() !== "");
-
-  if (providers.length === 0) {
-    throw new Error("هیچ کلید API فعال برای هوش مصنوعی در فایل .env یافت نشد. لطفاً تنظیمات .env را بررسی کنید.");
-  }
-
-  // 🧹 پاک‌سازی متون HTML (مثل صفحات مسدودی Cloudflare) و تبدیل به ارور تک‌خطی
-  const formatPersianError = (err: any, providerName: string) => {
-    const status = err?.status || err?.statusCode;
-    let msg = err?.message || String(err || "");
-
-    if (typeof msg === "string" && (msg.includes("<!DOCTYPE") || msg.includes("<html") || msg.includes("Cloudflare"))) {
-      return `تامین‌کننده «${providerName}»: درخواست توسط فایروال یا محدودیت شبکه/آی‌پی مسدود شد (خطای 403 Cloudflare).`;
-    }
-
-    if (status === 429 || msg.includes("429") || msg.includes("Rate limit")) {
-      return `تامین‌کننده «${providerName}»: سقف تعداد درخواست مجاز در دقیقه یا روز به پایان رسیده است.`;
-    }
-    if (status === 401 || msg.includes("401") || msg.includes("Unauthorized")) {
-      return `تامین‌کننده «${providerName}»: کلید API وارد شده نامعتبر است.`;
-    }
-    
-    return `تامین‌کننده «${providerName}»: ${msg.substring(0, 120)}`;
-  };
-
-  const parseJsonFromText = (rawText: string) => {
-    let cleaned = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
-    const firstBrace = cleaned.indexOf("{");
-    const lastBrace = cleaned.lastIndexOf("}");
-    if (firstBrace !== -1 && lastBrace !== -1) {
-      cleaned = cleaned.substring(firstBrace, lastBrace + 1);
-    }
-    return JSON.parse(cleaned);
-  };
-
-  const providerErrorLogs: string[] = [];
-
-  for (const provider of providers) {
-    try {
-      console.log(`🤖 در حال درخواست پردازش از: ${provider.name}...`);
-
-      const client = new OpenAI({
-        apiKey: provider.apiKey,
-        baseURL: provider.baseURL,
-        defaultHeaders: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0",
-        },
-      });
-
-      const completion = await client.chat.completions.create({
-        model: provider.model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        temperature: 0.0,
-      });
-
-      const rawContent = completion.choices[0]?.message?.content || "";
-      const parsed = parseJsonFromText(rawContent);
-      const analysisData = parsed.analysis ? parsed.analysis : parsed;
-
-      return {
-        analysis: analysisData,
-        model_used: provider.name,
-      };
-
-    } catch (err: any) {
-      const persianErr = formatPersianError(err, provider.name);
-      console.warn(`⚠️ ${persianErr} -> در حال سوئیچ به تامین‌کننده بعدی...`);
-      providerErrorLogs.push(persianErr);
-    }
-  }
-
-  throw new Error(`تمامی تامین‌کنندگان هوش مصنوعی ناموفق بودند:\n` + providerErrorLogs.join("\n"));
-}
-
-// =================================================================
-// 1️⃣ اندپوینت تحلیل کلی و کلان دوره
-// =================================================================
-app.post("/api/reports/analyze", async (req, res) => {
+// -----------------------------
+// 1. Health Check Endpoint
+// -----------------------------
+app.get("/api/health", async (_req, res) => {
   try {
-    const { period_title, reports } = req.body;
-
-    const submittedReports = Array.isArray(reports) 
-      ? reports.filter((r: any) => r.activities_done && r.activities_done.trim() !== "") 
-      : [];
-
-    if (submittedReports.length === 0) {
-      return res.status(400).json({ error: "هیچ گزارش ثبت‌شده‌ای برای تحلیل در این دوره یافت نشد." });
-    }
-
-    const reportsText = submittedReports
-      .map((r, index) => {
-        const kpiSection = (r.kpiValues && r.kpiValues.length > 0)
-          ? `شاخص‌های ساختاریافته:\n${formatKpiValuesForPrompt(r.kpiValues)}`
-          : `شاخص‌ها (متن آزاد): ${r.kpi_text || "ثبت نشده"}`;
-        return `--- گزارش ${index + 1} ---
-نویسنده: ${r.user_full_name}
-پروژه: ${r.project_title}
-فعالیت‌ها: ${r.activities_done}
-نتایج: ${r.results_achieved || "ثبت نشده"}
-اقدامات آتی: ${formatNextActionsForPrompt(r.nextActions)}
-${kpiSection}`;
-      })
-      .join("\n\n");
-
-    const systemPrompt = `شما یک دستیار هوشمند و ارشد مدیریت استراتژیک در سازمان حمل‌ونقل و ترافیک هستید.
-وظیفه شما تحلیل دقیق گزارش‌های عملکرد پرسنل و ارائه خروجی کاملاً ساختاریافته به فرمت JSON است.
-
-پاسخ شما باید حتماً و فقط یک جی‌سون معتبر با کلید ریشه "analysis" باشد. نمونه ساختار مورد انتظار:
-{
-  "analysis": {
-    "health_score": 85,
-    "overall_status": "پایدار",
-    "executive_summary": "متن خلاصه مدیریتی در دو پاراگراف...",
-    "key_achievements": ["دستاورد ۱", "دستاورد ۲"],
-    "risks_and_delays": [
-      { "project_title": "عنوان پروژه", "risk_level": "high", "description": "شرح دقیق موانع" }
-    ],
-    "actionable_recommendations": ["پیشنهاد ۱", "پیشنهاد ۲"]
-  }
-}
-نکته بسیار مهم: هیچ متن اضافی، مقدمه، مؤخره یا علامت‌های اضافی قبل و بعد از JSON ننویسید.`;
-
-    const userPrompt = `گزارش‌های عملکرد بازه "${period_title}":\n\n${reportsText}`;
-
-    const result = await callAiWithFallback(systemPrompt, userPrompt);
-    res.json(result);
-
-  } catch (err: any) {
-    console.error("AI Global Analysis Error:", err.message);
-    res.status(500).json({ error: err.message });
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ status: "ok" });
+  } catch {
+    res.status(503).json({ status: "error" });
   }
 });
 
-
-// =================================================================
-// 2️⃣ اندپوینت ممیزی اختصاصی تک‌گزارش (بر اساس WBS اکسل)
-// =================================================================
-app.post("/api/reports/analyze-single", async (req, res) => {
-  try {
-    const { report_id } = req.body;
-
-    if (!report_id) {
-      return res.status(400).json({ error: "شناسه گزارش (report_id) ارسال نشده است." });
-    }
-
-    const currentReport = await prisma.report.findUnique({
-      where: { id: Number(report_id) },
-      include: {
-        user: true,
-        project: true,
-        nextActions: true,
-        kpiValues: true,
-      },
-    });
-
-    if (!currentReport) {
-      return res.status(404).json({ error: "گزارش مورد نظر یافت نشد." });
-    }
-
-    const previousReports = await prisma.report.findMany({
-      where: {
-        user_id: currentReport.user_id,
-        project_id: currentReport.project_id,
-        id: { lt: currentReport.id },
-      },
-      orderBy: { submitted_at: "desc" },
-      take: 3,
-      include: { nextActions: true },
-    });
-
-    const formatPreviousKpi = (r: any) => {
-      if (r.kpiValues && r.kpiValues.length > 0) {
-        return formatKpiValuesForPrompt(r.kpiValues);
-      }
-      return r.kpi_text || "ثبت نشده";
-    };
-
-    const previousReportsText = previousReports.length > 0
-      ? previousReports.map((r, i) => `--- گزارش سابقه ${i + 1} ---
-فعالیت‌ها: ${r.activities_done}
-نتایج: ${r.results_achieved || "ثبت نشده"}
-شاخص‌ها:\n${formatPreviousKpi(r)}`).join("\n\n")
-      : "هیچ گزارش قبلی برای این کاربر ثبت نشده است (اولین گزارش کاربر).";
-
-    const projectWbsFileName = (currentReport.project as any)?.wbs_file_name;
-    let wbsContextText = "سند WBS اکسل برای این پروژه بارگذاری نشده است.";
-
-    if (projectWbsFileName) {
-      const excelFilePath = path.join(process.cwd(), "wbs_files", projectWbsFileName);
-      try {
-        if (fs.existsSync(excelFilePath)) {
-          const parsed = parseExcelWBS(excelFilePath);
-          wbsContextText = parsed.formattedPromptText;
-        }
-      } catch (e: any) {
-        console.warn("خطا در خواندن فایل اکسل WBS:", e.message);
-      }
-    }
-
-    const systemPrompt = `شما یک ارزیاب و ممیز ارشد مدیریت استراتژیک، کنترل پروژه و ترافیک شهری هستید.
-وظیفه شما ارزیابی دقیق "یک گزارش عملکرد" در برابر "سند استراتژیک و WBS مرجع پروژه" و "سابقه گزارش‌های قبلی کاربر" است.
-
-پاسخ شما باید حتماً و فقط یک جی‌سون (JSON) معتبر با کلید ریشه "analysis" باشد. ساختار مورد انتظار:
-
-{
-  "analysis": {
-    "executive_summary": "خلاصه مدیریتی پروژه با محوریت مهم‌ترین اقدامات انجام‌شده در این گزارش...",
-    "kpis_evaluation": [
-      {
-        "kpi_name": "نام شاخص ذکر شده",
-        "previous_value": "مقدار سابقه قبلی یا 'ثبت نشده در سابقه'",
-        "current_value": "مقدار فعلی یا 'فاقد شاخص'",
-        "has_kpi": true
-      }
-    ],
-    "recommendations": [
-      "پیشنهاد و اقدام کارآمد ۱ با توجه به داده‌های ورودی...",
-      "پیشنهاد ۲..."
-    ],
-    "future_actions_with_deadlines": [
-      {
-        "action": "شرح اقدام آتی",
-        "deadline": "تاریخ هدف (مثلاً ۱۴۰۵/۰۵/۱۰) یا 'تعیین‌نشده'"
-      }
-    ],
-    "repetitiveness_assessment": {
-      "similarity_percentage": 15,
-      "is_duplicate_risk": false,
-      "analysis_details": "توضیح کوتاه در مورد اینکه آیا گزارش کپی‌برداری از گزارش‌های قبلی است یا خیر."
-    },
-    "strategic_alignment": {
-      "is_aligned": true,
-      "value_creation": "عالی / متوسط / ضعیف",
-      "wbs_matching_task": "کد یا نام بسته کاری WBS مرتبط",
-      "alignment_analysis": "بررسی تطابق استراتژیک فعالیت با هدف پروژه و خلق فایده آن."
-    }
-  }
-}
-نکته مهم: خروجی باید فقط JSON معتبر به زبان فارسی باشد بدون هیچ عبارت اضافه یا Markdown.`;
-
-    const currentKpiSection = (currentReport.kpiValues && currentReport.kpiValues.length > 0)
-      ? `شاخص‌های ساختاریافته:\n${formatKpiValuesForPrompt(currentReport.kpiValues)}`
-      : `شاخص‌ها (متن آزاد): ${currentReport.kpi_text || "ثبت نشده"}`;
-
-    const userPrompt = `
-🏢 **سند مرجع WBS و اهداف استراتژیک پروژه:**
-${wbsContextText}
-
----
-📜 **سابقه گزارش‌های قبلی همین کارشناس (جهت بررسی شباهت و کپی‌برداری):**
-${previousReportsText}
-
----
-📝 **گزارش عملکرد جاری (جهت ممیزی و ارزیابی):**
-نویسنده: ${currentReport.user_full_name || (currentReport.user as any)?.name}
-پروژه: ${currentReport.project_title || (currentReport.project as any)?.title}
-فعالیت‌های انجام‌شده: ${currentReport.activities_done}
-نتایج حاصله: ${currentReport.results_achieved || "ثبت نشده"}
-${currentKpiSection}
-اقدامات آتی: ${currentReport.nextActions?.map((a: any) => `${a.action_text || a.title} (ددلاین: ${a.target_date || "ندارد"})`).join(", ") || "ثبت نشده"}
-`;
-
-    const result = await callAiWithFallback(systemPrompt, userPrompt);
-    res.json(result);
-
-  } catch (err: any) {
-    console.error("Single Report Audit Error:", err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// 🟢 اندپوینت ورود کاربران به سیستم
-app.post("/api/auth/login", async (req, res) => {
+// -----------------------------
+// 2. Authentication & Profile Endpoints
+// -----------------------------
+app.post("/api/auth/login", authLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
 
@@ -741,11 +552,8 @@ app.post("/api/auth/login", async (req, res) => {
       return res.status(400).json({ error: "لطفاً نام کاربری و رمز عبور را وارد کنید." });
     }
 
-    // نرمال‌سازی رمز عبور: تبدیل ارقام فارسی/عربی به انگلیسی
-    // (مثلاً ورودی «۱۲۳۴۵۶» معادل «123456» در نظر گرفته شود)
     const normalizedPassword = toEnglishDigits(password || "");
 
-    // ۱. پیدا کردن کاربر در دیتابیس
     const user = await prisma.user.findUnique({
       where: { username: username.trim() },
     });
@@ -754,181 +562,178 @@ app.post("/api/auth/login", async (req, res) => {
       return res.status(401).json({ error: "نام کاربری یا رمز عبور نادرست است." });
     }
 
-    // ۲. مقایسه رمز عبور وارد شده با هش bcrypt
     const isPasswordValid = await bcrypt.compare(normalizedPassword, user.password);
     if (!isPasswordValid) {
       return res.status(401).json({ error: "نام کاربری یا رمز عبور نادرست است." });
     }
 
-    // ۳. ساخت توکن JWT
     const token = jwt.sign(
       { id: user.id, username: user.username, role: user.role },
-      JWT_SECRET,
+      config.JWT_SECRET,
       { expiresIn: "1d" }
     );
 
-    // ۴. ست کردن توکن در کوکی مرورگر
     res.cookie("token", token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+      secure: config.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: 24 * 60 * 60 * 1000,
     });
 
-    // ۵. بازگرداندن اطلاعات کاربر
     res.json({
-      user: {
-        id: user.id,
-        username: user.username,
-        full_name: user.full_name,
-        role: user.role,
-        must_change_password: user.must_change_password,
-      },
+      user: sanitizeUser(user),
     });
-  } catch (err: any) {
+  } catch (err) {
     console.error("Login Error:", err);
     res.status(500).json({ error: "خطا در برقراری ارتباط با سرور یا دیتابیس." });
   }
 });
 
 app.post("/api/auth/logout", (_req, res) => {
-  // پاک کردن کوکی توکن از روی مرورگر کاربر
   res.clearCookie("token", {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
+    secure: config.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
   });
   res.json({ success: true, message: "با موفقیت از سیستم خارج شدید." });
 });
 
-// Middleware: احراز هویت و استخراج کاربر از کوکی
-async function authenticate(req: any, res: any, next: any) {
+app.get("/api/auth/me", authenticate, (req: any, res) => {
+  res.json({
+    user: sanitizeUser(req.user),
+  });
+});
+
+app.post("/api/auth/change-password", authenticate, authLimiter, async (req: any, res) => {
   try {
-    const token = req.cookies?.token;
-    if (!token) {
-      return res.status(401).json({ error: "عدم دسترسی، لطفا ابتدا وارد شوید." });
-    }
-    const decoded = jwt.verify(token, JWT_SECRET) as { id: number; username: string; role: string };
-    const user = await prisma.user.findUnique({ where: { id: decoded.id } });
-    if (!user || !user.is_active) {
-      return res.status(401).json({ error: "حساب کاربری یافت نشد یا غیرفعال است." });
-    }
-    req.user = user;
-    next();
-  } catch (err) {
-    return res.status(401).json({ error: "توکن نامعتبر یا منقضی شده است." });
-  }
-}
+    const { current_password, currentPassword, new_password, newPassword } = req.body;
+    const rawCurrent = current_password || currentPassword || "";
+    const rawNew = new_password || newPassword || "";
 
-// Middleware: فقط مدیران
-function requireManager(req: any, res: any, next: any) {
-  if (req.user?.role !== "manager") {
-    return res.status(403).json({ error: "دسترسی فقط برای مدیران مجاز است." });
-  }
-  next();
-}
+    const normalizedCurrent = toEnglishDigits(rawCurrent);
+    const normalizedNew = toEnglishDigits(rawNew);
 
-app.get("/api/auth/me", async (req, res) => {
-  try {
-    // خواندن توکن از کوکی‌های ریکوئست
-    const token = req.cookies.token;
-    if (!token) {
-      return res.status(401).json({ error: "عدم دسترسی، لطفا ابتدا وارد شوید." });
+    if (!normalizedCurrent) {
+      return res.status(400).json({ error: "وارد کردن رمز عبور فعلی الزامی است." });
     }
 
-    // تایید و رمزگشایی توکن JWT
-    const decoded = jwt.verify(token, JWT_SECRET) as { id: number; username: string; role: string };
-
-    // پیدا کردن اطلاعات تازه کاربر از دیتابیس
-    const user = await prisma.user.findUnique({
-      where: { id: decoded.id }
-    });
-
-    if (!user || !user.is_active) {
-      return res.status(401).json({ error: "حساب کاربری یافت نشد یا غیرفعال است." });
+    if (!normalizedNew || normalizedNew.length < 10) {
+      return res.status(400).json({ error: "رمز عبور جدید باید حداقل ۱۰ کاراکتر باشد." });
     }
 
-    res.json({
-      user: {
-        id: user.id,
-        username: user.username,
-        full_name: user.full_name,
-        role: user.role,
-        must_change_password: user.must_change_password,
+    // اعتبارسنجی اجباری رمز عبور فعلی کاربر با هش دیتابیس
+    const isCurrentValid = await bcrypt.compare(normalizedCurrent, req.user.password);
+    if (!isCurrentValid) {
+      return res.status(400).json({ error: "رمز عبور فعلی وارد شده نادرست است." });
+    }
+
+    const isSamePassword = await bcrypt.compare(normalizedNew, req.user.password);
+    if (isSamePassword) {
+      return res.status(400).json({
+        error: "رمز عبور جدید نمی‌تواند مشابه رمز عبور قبلی باشد. لطفاً رمز جدیدی وارد نمایید."
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(normalizedNew, SALT_ROUNDS);
+
+    const updatedUser = await prisma.user.update({
+      where: { id: req.user.id },
+      data: {
+        password: hashedPassword,
+        must_change_password: false,
+        password_changed_at: new Date(),
       },
     });
-  } catch (err) {
-    res.status(401).json({ error: "توکن نامعتبر یا منقضی شده است." });
+
+    res.json({
+      success: true,
+      message: "رمز عبور شما با موفقیت به‌روزرسانی شد.",
+      user: sanitizeUser(updatedUser),
+    });
+  } catch (error) {
+    console.error("Change password error:", error);
+    res.status(500).json({ error: "خطا در ذخیره‌سازی رمز عبور جدید در دیتابیس." });
   }
 });
 
-// --- User Management ---
-app.get("/api/users", async (_req, res) => {
+// -----------------------------
+// 3. User Administration (Manager Only)
+// -----------------------------
+app.get("/api/users", authenticate, async (_req, res) => {
   try {
-    // رفتن به دیتابیس و خواندن تمام رکوردهای جدول User
     const users = await prisma.user.findMany({
       orderBy: { id: "asc" }
     });
-    res.json(users);
+    res.json(users.map(sanitizeUser));
   } catch (error) {
     console.error("Error fetching users:", error);
     res.status(500).json({ error: "خطا در دریافت اطلاعات کاربران از دیتابیس" });
   }
 });
 
-app.post("/api/users", async (req, res) => {
+app.post("/api/users", authenticate, requireManager, async (req, res) => {
   try {
     const { username, full_name, role, job_title, password, must_change_password } = req.body;
 
-    // ۱. بررسی تکراری نبودن نام کاربری در دیتابیس
+    const trimmedUsername = typeof username === "string" ? username.trim() : "";
+    const trimmedFullName = typeof full_name === "string" ? full_name.trim() : "";
+    const normalizedPassword = toEnglishDigits(password || "");
+
+    if (!trimmedUsername || !trimmedFullName) {
+      return res.status(400).json({ error: "نام کاربری و نام کامل الزامی هستند." });
+    }
+
+    if (!normalizedPassword || normalizedPassword.length < 10) {
+      return res.status(400).json({ error: "رمز عبور اولیه باید حداقل ۱۰ کاراکتر باشد." });
+    }
+
     const existingUser = await prisma.user.findUnique({
-      where: { username: username }
+      where: { username: trimmedUsername }
     });
 
     if (existingUser) {
       return res.status(400).json({ error: "نام کاربری تکراری است." });
     }
 
-    // ۲. هش کردن رمز عبور اولیه و ساخت کاربر جدید در دیتابیس PostgreSQL
-    const rawPassword = password || "123456";
-    const hashedPassword = await bcrypt.hash(rawPassword, SALT_ROUNDS);
+    const hashedPassword = await bcrypt.hash(normalizedPassword, SALT_ROUNDS);
 
     const newUser = await prisma.user.create({
       data: {
-        username,
-        full_name,
-        role: role || "user", // در پریزما به حروف کوچک/بزرگ Enum دقت کن
-        job_title: job_title ? job_title.trim() : null,
+        username: trimmedUsername,
+        full_name: trimmedFullName,
+        role: role === "manager" ? "manager" : "user",
+        job_title: job_title ? String(job_title).trim() : null,
         password: hashedPassword,
         is_active: true,
-        must_change_password: must_change_password !== undefined ? must_change_password : true,
+        must_change_password: must_change_password !== undefined ? Boolean(must_change_password) : true,
       },
     });
 
-    // ۳. بازگرداندن اطلاعات کاربر ساخته شده به فرانت‌اند
-    res.status(201).json(newUser);
-
+    res.status(201).json(sanitizeUser(newUser));
   } catch (error) {
     console.error("Error creating user:", error);
     res.status(500).json({ error: "خطا در ثبت کاربر جدید در دیتابیس" });
   }
 });
 
-app.put("/api/users/:id", async (req, res) => {
+app.put("/api/users/:id", authenticate, requireManager, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { full_name, username, role,job_title, is_active } = req.body;
+    const { full_name, username, role, job_title, is_active } = req.body;
 
     const existingUser = await prisma.user.findUnique({
-      where: { id: id }
+      where: { id }
     });
 
     if (!existingUser) {
       return res.status(404).json({ error: "کاربر مورد نظر یافت نشد." });
     }
 
-    if (username !== undefined && username !== existingUser.username) {
+    if (username !== undefined && username.trim() !== existingUser.username) {
       const dupeUser = await prisma.user.findUnique({
-        where: { username }
+        where: { username: username.trim() }
       });
       if (dupeUser) {
         return res.status(400).json({ error: "نام کاربری تکراری است." });
@@ -936,41 +741,47 @@ app.put("/api/users/:id", async (req, res) => {
     }
 
     const updatedUser = await prisma.user.update({
-      where: { id: id },
+      where: { id },
       data: {
-        full_name: full_name !== undefined ? full_name : undefined,
-        username: username !== undefined ? username : undefined,
-        role: role !== undefined ? role : undefined,
-        job_title: job_title !== undefined ? job_title: undefined,
-        is_active: is_active !== undefined ? is_active : undefined,
+        full_name: full_name !== undefined ? String(full_name).trim() : undefined,
+        username: username !== undefined ? String(username).trim() : undefined,
+        role: role !== undefined ? (role === "manager" ? "manager" : "user") : undefined,
+        job_title: job_title !== undefined ? (job_title ? String(job_title).trim() : null) : undefined,
+        is_active: is_active !== undefined ? Boolean(is_active) : undefined,
       }
     });
 
-    res.json(updatedUser);
+    res.json(sanitizeUser(updatedUser));
   } catch (error) {
     console.error("Error updating user:", error);
     res.status(500).json({ error: "خطا در ویرایش اطلاعات کاربر در دیتابیس" });
   }
 });
 
-app.post("/api/users/:id/reset-password", async (req, res) => {
+app.post("/api/users/:id/reset-password", authenticate, requireManager, authLimiter, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { temporary_password } = req.body;
-    const user = await prisma.user.findUnique({ where: { id } });
+    const { temporary_password, temporaryPassword } = req.body;
+    const rawResetPassword = temporary_password || temporaryPassword || "";
+    const normalizedResetPassword = toEnglishDigits(rawResetPassword);
 
+    if (!normalizedResetPassword || normalizedResetPassword.length < 10) {
+      return res.status(400).json({ error: "رمز عبور جدید موقت باید حداقل ۱۰ کاراکتر باشد." });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id } });
     if (!user) {
       return res.status(404).json({ error: "کاربر پیدا نشد." });
     }
 
-    const rawResetPassword = temporary_password || "123456";
-    const hashedResetPassword = await bcrypt.hash(rawResetPassword, SALT_ROUNDS);
+    const hashedResetPassword = await bcrypt.hash(normalizedResetPassword, SALT_ROUNDS);
 
     await prisma.user.update({
       where: { id },
       data: {
         password: hashedResetPassword,
-        must_change_password: true
+        must_change_password: true,
+        password_changed_at: null,
       }
     });
 
@@ -981,11 +792,41 @@ app.post("/api/users/:id/reset-password", async (req, res) => {
   }
 });
 
-// --- Project Management ---
-app.get("/api/projects", async (_req, res) => {
+app.delete("/api/users/:id", authenticate, requireManager, async (req: any, res) => {
   try {
-    const projects = await (prisma.project as any).findMany({
-      orderBy: [{ order_index: "asc" }, { id: "asc" }] as any,
+    const id = parseInt(req.params.id);
+
+    if (id === req.user.id) {
+      return res.status(400).json({ error: "امکان حذف یا غیرفعال‌سازی حساب کاربری خودتان وجود ندارد." });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id } });
+    if (!user) {
+      return res.status(404).json({ error: "کاربر پیدا نشد." });
+    }
+
+    // غیرفعال‌سازی نرم (Soft-Deactivation) بدون حذف فیزیکی جهت حفظ سوابق و اسناد سازمانی
+    await prisma.user.update({
+      where: { id },
+      data: { is_active: false }
+    });
+
+    res.json({ success: true, message: "حساب کاربری پرسنل با حفظ سوابق سازمانی غیرفعال شد." });
+  } catch (error) {
+    console.error("Error deactivating user:", error);
+    res.status(500).json({ error: "خطا در غیرفعال‌سازی کاربر در دیتابیس" });
+  }
+});
+
+// -----------------------------
+// 4. Project Management Endpoints
+// -----------------------------
+app.get("/api/projects", authenticate, async (req: any, res) => {
+  try {
+    const where = req.user.role === "manager" ? {} : { is_active: true };
+    const projects = await prisma.project.findMany({
+      where,
+      orderBy: [{ order_index: "asc" }, { id: "asc" }],
     });
     res.json(projects);
   } catch (error) {
@@ -994,22 +835,21 @@ app.get("/api/projects", async (_req, res) => {
   }
 });
 
-// تغییر ترتیبی پروژه‌ها (Reorder)
-app.patch("/api/projects/reorder", async (req, res) => {
+app.patch("/api/projects/reorder", authenticate, requireManager, async (req, res) => {
   try {
     const { ordered_ids } = req.body;
     if (Array.isArray(ordered_ids)) {
       await prisma.$transaction(
         ordered_ids.map((id: number, idx: number) =>
-          (prisma.project as any).update({
+          prisma.project.update({
             where: { id: Number(id) },
-            data: { order_index: idx + 1 } as any,
+            data: { order_index: idx + 1 },
           })
         )
       );
     }
-    const projects = await (prisma.project as any).findMany({
-      orderBy: [{ order_index: "asc" }, { id: "asc" }] as any,
+    const projects = await prisma.project.findMany({
+      orderBy: [{ order_index: "asc" }, { id: "asc" }],
     });
     res.json({ success: true, projects });
   } catch (error) {
@@ -1018,14 +858,13 @@ app.patch("/api/projects/reorder", async (req, res) => {
   }
 });
 
-// به‌روزرسانی رتبه تکی پروژه
-app.patch("/api/projects/:id/order", async (req, res) => {
+app.patch("/api/projects/:id/order", authenticate, requireManager, async (req, res) => {
   try {
     const projectId = Number(req.params.id);
     const { order_index } = req.body;
-    const updated = await (prisma.project as any).update({
+    const updated = await prisma.project.update({
       where: { id: projectId },
-      data: { order_index: Number(order_index) || 0 } as any,
+      data: { order_index: Number(order_index) || 0 },
     });
     res.json({ success: true, project: updated });
   } catch (error) {
@@ -1034,61 +873,50 @@ app.patch("/api/projects/:id/order", async (req, res) => {
   }
 });
 
-app.post("/api/projects", uploadWBS.single("wbs_file"), async (req, res) => {
+app.post("/api/projects", authenticate, requireManager, uploadWBS.single("wbs_file"), async (req, res) => {
+  const file = req.file;
   try {
     const { title, description, code } = req.body;
-    const file = req.file;
 
-   // ۱. بررسی تکراری بودن کد پروژه
-    const existingCode = await prisma.project.findUnique({ 
-      where: { code: code.trim() } 
+    if (!code || !title) {
+      if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
+      return res.status(400).json({ error: "کد و عنوان پروژه الزامی هستند." });
+    }
+
+    const existingCode = await prisma.project.findUnique({
+      where: { code: code.trim() }
     });
     if (existingCode) {
-      if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path); // پاک کردن فایل آپلود شده
+      if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
       return res.status(400).json({ error: "کد پروژه تکراری است." });
     }
 
-    // ۲. 🟢 بررسی تکراری بودن نام فایل اکسل در تمامی پروژه‌های سامانه
-    if (file) {
-      const duplicateFileProject = await prisma.project.findFirst({
-        where: { wbs_file_name: file.originalname }
-      });
-
-      if (duplicateFileProject) {
-        // حذف فایل آپلود شده موقت از پوشه uploads جهت جلوگیری از پر شدن حافظه
-        if (fs.existsSync(file.path)) {
-          fs.unlinkSync(file.path);
-        }
-        return res.status(400).json({ 
-          error: `فایلی با نام «${file.originalname}» قبلاً برای پروژه «${duplicateFileProject.title}» بارگذاری شده است. لطفاً نام فایل را تغییر دهید.` 
-        });
-      }
-    }
-
-    // ۳. ایجاد پروژه در دیتابیس
     const newProject = await prisma.project.create({
       data: {
         code: code.trim(),
         title: title.trim(),
         description: description ? description.trim() : null,
         wbs_file_name: file ? file.originalname : null,
+        wbs_storage_filename: file ? file.filename : null,
       },
     });
 
-    res.json(newProject);
+    res.status(201).json(newProject);
   } catch (error) {
+    if (file && fs.existsSync(file.path)) {
+      try { fs.unlinkSync(file.path); } catch (_) {}
+    }
     console.error("Error creating project:", error);
     res.status(500).json({ error: "خطا در ساخت پروژه در دیتابیس" });
   }
 });
 
-app.put("/api/projects/:id", upload.single("wbs_file"), async (req, res) => {
+app.put("/api/projects/:id", authenticate, requireManager, uploadWBS.single("wbs_file"), async (req, res) => {
+  const file = req.file;
   try {
     const id = parseInt(req.params.id);
-    const { title, code, description, remove_wbs_file } = req.body;
-    const file = req.file;
+    const { title, code, description, remove_wbs_file, is_active } = req.body;
 
-    // ۱. بررسی وجود پروژه
     const existingProject = await prisma.project.findUnique({
       where: { id },
     });
@@ -1098,7 +926,6 @@ app.put("/api/projects/:id", upload.single("wbs_file"), async (req, res) => {
       return res.status(404).json({ error: "پروژه مورد نظر یافت نشد." });
     }
 
-    // ۲. بررسی تکراری نبودن کد پروژه
     if (code && code.trim() !== existingProject.code) {
       const dupeCode = await prisma.project.findUnique({
         where: { code: code.trim() },
@@ -1110,71 +937,116 @@ app.put("/api/projects/:id", upload.single("wbs_file"), async (req, res) => {
     }
 
     let updatedWbsFileName: string | null = existingProject.wbs_file_name;
+    let updatedWbsStorageFilename: string | null = existingProject.wbs_storage_filename;
+    let oldPhysicalPathToDelete: string | null = null;
 
-    // بررسی اینکه آیا درخواست حذف فایل صادر شده است یا خیر
-    const isRemoveRequested = 
-      remove_wbs_file === "true" || 
-      remove_wbs_file === true || 
+    const isRemoveRequested =
+      remove_wbs_file === "true" ||
+      remove_wbs_file === true ||
       String(remove_wbs_file) === "true";
 
-    // حالت الف: فایل جدید بارگذاری شده است
     if (file) {
-      // چک تکراری نبودن نام فایل جدید در سایر پروژه‌ها
-      const duplicateFileProject = await prisma.project.findFirst({
-        where: {
-          wbs_file_name: file.originalname,
-          id: { not: id },
-        },
-      });
-
-      if (duplicateFileProject) {
-        if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
-        return res.status(400).json({
-          error: `فایلی با نام «${file.originalname}» قبلاً برای پروژه «${duplicateFileProject.title}» ثبت شده است.`,
-        });
-      }
-
-      // حذف فایل فیزیکی قبلی از پوشه uploads
-      if (existingProject.wbs_file_name) {
-        const oldFilePath = path.join(process.cwd(), "uploads", existingProject.wbs_file_name);
-        if (fs.existsSync(oldFilePath)) {
-          try { fs.unlinkSync(oldFilePath); } catch (e) { console.error("Error deleting old file:", e); }
-        }
-      }
-
+      oldPhysicalPathToDelete = resolveProjectWbsFilePath(existingProject);
       updatedWbsFileName = file.originalname;
-    } 
-    // حالت ب: فایل جدیدی نیست و درخواست حذف فایل فعلی داده شده است
-    else if (isRemoveRequested) {
-      if (existingProject.wbs_file_name) {
-        const oldFilePath = path.join(process.cwd(), "uploads", existingProject.wbs_file_name);
-        if (fs.existsSync(oldFilePath)) {
-          try { fs.unlinkSync(oldFilePath); } catch (e) { console.error("Error deleting file from disk:", e); }
-        }
-      }
-      updatedWbsFileName = null; // 🟢 صریحاً null ست می‌شود تا در دیتابیس پاک گردد
+      updatedWbsStorageFilename = file.filename;
+    } else if (isRemoveRequested) {
+      oldPhysicalPathToDelete = resolveProjectWbsFilePath(existingProject);
+      updatedWbsFileName = null;
+      updatedWbsStorageFilename = null;
     }
 
-    // ۳. به‌روزرسانی پروژه در دیتابیس
+    const parsedIsActive = parseBooleanField(is_active);
+
+    // به‌روزرسانی در دیتابیس قبل از حذف فایل فیزیکی قبلی
     const updatedProject = await prisma.project.update({
       where: { id },
       data: {
         title: title !== undefined ? title.trim() : undefined,
         code: code !== undefined ? code.trim() : undefined,
         description: description !== undefined ? description.trim() : undefined,
-        wbs_file_name: updatedWbsFileName, // اعمال تغییر (نام جدید یا null یا مقدار قبلی)
+        is_active: parsedIsActive !== undefined ? parsedIsActive : undefined,
+        wbs_file_name: updatedWbsFileName,
+        wbs_storage_filename: updatedWbsStorageFilename,
       },
     });
 
+    // پس از موفقیت در دیتابیس، فایل قدیمی پاک می‌شود
+    if (oldPhysicalPathToDelete && fs.existsSync(oldPhysicalPathToDelete)) {
+      try { fs.unlinkSync(oldPhysicalPathToDelete); } catch (_) {}
+    }
+
     res.json(updatedProject);
   } catch (error) {
+    // در صورت بروز خطا در دیتابیس، فایل جدید آپلود شده پاک می‌شود
+    if (file && fs.existsSync(file.path)) {
+      try { fs.unlinkSync(file.path); } catch (_) {}
+    }
     console.error("Error updating project:", error);
     res.status(500).json({ error: "خطا در ویرایش اطلاعات پروژه در دیتابیس" });
   }
 });
 
-// --- Report Period Management ---
-app.get(["/api/report-periods", "/api/periods"], async (_req, res) => {
+app.delete("/api/projects/:id", authenticate, requireManager, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const existingProject = await prisma.project.findUnique({ where: { id } });
+
+    if (!existingProject) {
+      return res.status(404).json({ error: "پروژه پیدا نشد." });
+    }
+
+    // غیرفعال‌سازی نرم پروژه بدون حذف فیزیکی جهت حفظ کلیه سوابق گزارش‌ها و اسناد تاریخی
+    await prisma.project.update({
+      where: { id },
+      data: { is_active: false }
+    });
+
+    res.json({ success: true, message: "پروژه با موفقیت غیرفعال شد و تمامی سوابق گزارش‌های آن محفوظ ماند." });
+  } catch (error) {
+    console.error("Error deactivating project:", error);
+    res.status(500).json({ error: "خطا در غیرفعال‌سازی پروژه در دیتابیس" });
+  }
+});
+
+// دانلود احرازهویت‌شده فایل WBS پروژه با اعتبارسنجی سطح دسترسی و وضعیت پروژه
+app.get("/api/projects/:id/wbs-file", authenticate, async (req: any, res) => {
+  try {
+    const projectId = parseInt(req.params.id);
+    const project = await prisma.project.findUnique({ where: { id: projectId } });
+
+    if (!project || (!project.wbs_file_name && !project.wbs_storage_filename)) {
+      return res.status(404).json({ error: "فایل WBS برای این پروژه یافت نشد." });
+    }
+
+    // پرسنل عادی تنها مجاز به دانلود فایل WBS پروژه‌های فعال تخصیص‌یافته به خود هستند
+    if (req.user.role !== "manager") {
+      if (!project.is_active) {
+        return res.status(403).json({ error: "این پروژه غیرفعال است." });
+      }
+      const allocation = await prisma.userProject.findUnique({
+        where: { user_id_project_id: { user_id: req.user.id, project_id: projectId } }
+      });
+      if (!allocation) {
+        return res.status(403).json({ error: "شما به این پروژه تخصیص داده نشده‌اید." });
+      }
+    }
+
+    const filePath = resolveProjectWbsFilePath(project);
+    if (!filePath || !fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "فایل فیزیکی WBS در حافظه سرور یافت نشد." });
+    }
+
+    res.download(filePath, project.wbs_file_name || "wbs_file.xlsx");
+  } catch (error) {
+    console.error("Error downloading WBS file:", error);
+    res.status(500).json({ error: "خطا در دریافت فایل WBS." });
+  }
+});
+
+// -----------------------------
+// 5. Report Period Management
+// -----------------------------
+app.get(["/api/report-periods", "/api/periods"], authenticate, async (_req, res) => {
   try {
     const periods = await prisma.reportPeriod.findMany({
       orderBy: { id: "asc" }
@@ -1190,7 +1062,7 @@ app.get(["/api/report-periods", "/api/periods"], async (_req, res) => {
   }
 });
 
-app.post("/api/report-periods", async (req, res) => {
+app.post("/api/report-periods", authenticate, requireManager, async (req, res) => {
   try {
     const { title, report_type, period_start, period_end } = req.body;
 
@@ -1204,7 +1076,7 @@ app.post("/api/report-periods", async (req, res) => {
       }
     });
 
-    res.json({
+    res.status(201).json({
       ...newPeriod,
       period_start: newPeriod.period_start.toISOString().split("T")[0],
       period_end: newPeriod.period_end.toISOString().split("T")[0]
@@ -1215,7 +1087,7 @@ app.post("/api/report-periods", async (req, res) => {
   }
 });
 
-app.put("/api/report-periods/:id", async (req, res) => {
+app.put("/api/report-periods/:id", authenticate, requireManager, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const { is_open, title, period_start, period_end } = req.body;
@@ -1228,7 +1100,7 @@ app.put("/api/report-periods/:id", async (req, res) => {
     const updated = await prisma.reportPeriod.update({
       where: { id },
       data: {
-        is_open: is_open !== undefined ? is_open : undefined,
+        is_open: is_open !== undefined ? Boolean(is_open) : undefined,
         title: title !== undefined ? title : undefined,
         period_start: period_start !== undefined ? new Date(period_start) : undefined,
         period_end: period_end !== undefined ? new Date(period_end) : undefined
@@ -1246,33 +1118,29 @@ app.put("/api/report-periods/:id", async (req, res) => {
   }
 });
 
-// DELETE a report period and all its reports cascades
-app.delete("/api/report-periods/:id", async (req, res) => {
+// بازه‌های دارای گزارش به هیچ عنوان حذف نمی‌شوند تا سوابق گزارش‌ها حفظ گردد
+app.delete("/api/report-periods/:id", authenticate, requireManager, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
+    const reportCount = await prisma.report.count({ where: { period_id: id } });
 
-    // Find all reports in this period
-    const reports = await prisma.report.findMany({ where: { period_id: id } });
-    const reportIds = reports.map((r) => r.id);
+    if (reportCount > 0) {
+      return res.status(409).json({
+        error: `این بازه گزارش‌دهی دارای ${reportCount} گزارش ثبت‌شده است و امکان حذف آن وجود ندارد. لطفاً در صورت نیاز بازه را ببندید (is_open = false).`
+      });
+    }
 
-    // Delete physical uploads
-    await cleanPhysicalFilesForReports(reportIds);
-
-    // Delete period from PostgreSQL (Prisma onDelete: Cascade deletes reports)
     await prisma.reportPeriod.delete({ where: { id } });
-
-    res.json({ success: true, message: "بازه گزارش‌دهی و تمامی داده‌های مربوطه با موفقیت حذف شدند." });
+    res.json({ success: true, message: "بازه گزارش‌دهی خالی با موفقیت حذف شد." });
   } catch (error) {
     console.error("Error deleting period:", error);
     res.status(500).json({ error: "خطا در حذف بازه گزارش‌دهی از دیتابیس" });
   }
 });
 
-// --- Project KPI Management (شاخص‌های عملکرد پروژه) ---
-const KPI_TARGET_DIRECTIONS = ["minimum", "maximum"];
-const REPORT_TYPES = ["weekly", "monthly"];
-
-// لیست تمام شاخص‌ها (همراه با نام پروژه) — برای تحلیل‌های مدیریتی
+// -----------------------------
+// 6. Project KPI Management
+// -----------------------------
 app.get("/api/project-kpis", authenticate, requireManager, async (_req, res) => {
   try {
     const kpis = await prisma.projectKpi.findMany({
@@ -1288,16 +1156,30 @@ app.get("/api/project-kpis", authenticate, requireManager, async (_req, res) => 
   }
 });
 
-// لیست شاخص‌های یک پروژه.
-// بدون پارامتر: تمام شاخص‌ها (فعال/غیرفعال) — صفحه مدیریت.
-// با ?report_type=weekly|monthly: فقط شاخص‌های فعالِ کاربردی برای آن نوع — فرم ثبت گزارش.
-app.get("/api/projects/:projectId/kpis", async (req, res) => {
+app.get("/api/projects/:projectId/kpis", authenticate, async (req: any, res) => {
   try {
     const projectId = Number(req.params.projectId);
     const { report_type } = req.query;
 
     if (!projectId || isNaN(projectId)) {
       return res.status(400).json({ error: "شناسه پروژه نامعتبر است." });
+    }
+
+    const project = await prisma.project.findUnique({ where: { id: projectId } });
+    if (!project) {
+      return res.status(404).json({ error: "پروژه یافت نشد." });
+    }
+
+    if (req.user.role !== "manager") {
+      if (!project.is_active) {
+        return res.status(403).json({ error: "این پروژه غیرفعال است." });
+      }
+      const allocation = await prisma.userProject.findUnique({
+        where: { user_id_project_id: { user_id: req.user.id, project_id: projectId } }
+      });
+      if (!allocation) {
+        return res.status(403).json({ error: "شما به این پروژه تخصیص داده نشده‌اید." });
+      }
     }
 
     const where: any = { project_id: projectId };
@@ -1317,20 +1199,11 @@ app.get("/api/projects/:projectId/kpis", async (req, res) => {
   }
 });
 
-// ایجاد شاخص جدید برای یک پروژه
 app.post("/api/project-kpis", authenticate, requireManager, async (req, res) => {
   try {
     const {
-      project_id,
-      name,
-      description,
-      unit,
-      input_type,
-      target_value,
-      target_direction,
-      report_type,
-      is_active,
-      sort_order,
+      project_id, name, description, unit, input_type,
+      target_value, target_direction, report_type, is_active, sort_order,
     } = req.body;
 
     const projectId = Number(project_id);
@@ -1343,14 +1216,10 @@ app.post("/api/project-kpis", authenticate, requireManager, async (req, res) => 
     }
 
     const kpiName = typeof name === "string" ? name.trim() : "";
-    if (!kpiName) {
-      return res.status(400).json({ error: "نام شاخص نمی‌تواند خالی باشد." });
-    }
+    if (!kpiName) return res.status(400).json({ error: "نام شاخص نمی‌تواند خالی باشد." });
 
     const kpiUnit = typeof unit === "string" ? unit.trim() : "";
-    if (!kpiUnit) {
-      return res.status(400).json({ error: "واحد سنجش نمی‌تواند خالی باشد." });
-    }
+    if (!kpiUnit) return res.status(400).json({ error: "واحد سنجش نمی‌تواند خالی باشد." });
 
     if (!KPI_INPUT_TYPES.includes(input_type)) {
       return res.status(400).json({ error: "نوع محاسبه شاخص نامعتبر است." });
@@ -1364,20 +1233,24 @@ app.post("/api/project-kpis", authenticate, requireManager, async (req, res) => 
       return res.status(400).json({ error: "جهت هدف شاخص نامعتبر است." });
     }
 
-    let reportType: "weekly" | "monthly" | null = null;
+    let reportTypeVal: "weekly" | "monthly" | null = null;
     if (report_type !== undefined && report_type !== null && report_type !== "") {
       if (!REPORT_TYPES.includes(report_type)) {
         return res.status(400).json({ error: "نوع دوره گزارش‌دهی نامعتبر است." });
       }
-      reportType = report_type;
+      reportTypeVal = report_type;
     }
 
-    const sortOrder = sort_order !== undefined && sort_order !== null && sort_order !== ""
-      ? Number(sort_order)
-      : 0;
-    if (isNaN(sortOrder)) {
-      return res.status(400).json({ error: "ترتیب نمایش باید عددی باشد." });
+    let sortOrderVal = 0;
+    if (sort_order !== undefined && sort_order !== null && sort_order !== "") {
+      const parsedSortOrder = Number(sort_order);
+      if (isNaN(parsedSortOrder)) {
+        return res.status(400).json({ error: "ترتیب نمایش شاخص باید عدد معتبر باشد." });
+      }
+      sortOrderVal = parsedSortOrder;
     }
+
+    const parsedIsActive = parseBooleanField(is_active);
 
     const newKpi = await prisma.projectKpi.create({
       data: {
@@ -1388,9 +1261,9 @@ app.post("/api/project-kpis", authenticate, requireManager, async (req, res) => 
         input_type,
         target_value: Number(target_value),
         target_direction,
-        report_type: reportType,
-        is_active: is_active === undefined ? true : Boolean(is_active),
-        sort_order: sortOrder,
+        report_type: reportTypeVal,
+        is_active: parsedIsActive !== undefined ? parsedIsActive : true,
+        sort_order: sortOrderVal,
       },
     });
 
@@ -1401,20 +1274,12 @@ app.post("/api/project-kpis", authenticate, requireManager, async (req, res) => 
   }
 });
 
-// ویرایش شاخص (شامل فعال/غیرفعال و ترتیب نمایش)
 app.patch("/api/project-kpis/:id", authenticate, requireManager, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const {
-      name,
-      description,
-      unit,
-      input_type,
-      target_value,
-      target_direction,
-      report_type,
-      is_active,
-      sort_order,
+      name, description, unit, input_type,
+      target_value, target_direction, report_type, is_active, sort_order,
     } = req.body;
 
     const existing = await prisma.projectKpi.findUnique({ where: { id } });
@@ -1423,19 +1288,18 @@ app.patch("/api/project-kpis/:id", authenticate, requireManager, async (req, res
     }
 
     const data: any = {};
-
     if (name !== undefined) {
-      const kpiName = String(name).trim();
-      if (!kpiName) return res.status(400).json({ error: "نام شاخص نمی‌تواند خالی باشد." });
-      data.name = kpiName;
+      const trimmed = String(name).trim();
+      if (!trimmed) return res.status(400).json({ error: "نام شاخص نمی‌تواند خالی باشد." });
+      data.name = trimmed;
     }
     if (description !== undefined) {
       data.description = String(description).trim() || null;
     }
     if (unit !== undefined) {
-      const kpiUnit = String(unit).trim();
-      if (!kpiUnit) return res.status(400).json({ error: "واحد سنجش نمی‌تواند خالی باشد." });
-      data.unit = kpiUnit;
+      const trimmed = String(unit).trim();
+      if (!trimmed) return res.status(400).json({ error: "واحد سنجش نمی‌تواند خالی باشد." });
+      data.unit = trimmed;
     }
     if (input_type !== undefined) {
       if (!KPI_INPUT_TYPES.includes(input_type)) {
@@ -1458,17 +1322,26 @@ app.patch("/api/project-kpis/:id", authenticate, requireManager, async (req, res
     if (report_type !== undefined) {
       if (report_type === null || report_type === "") {
         data.report_type = null;
-      } else if (REPORT_TYPES.includes(report_type)) {
-        data.report_type = report_type;
-      } else {
+      } else if (!REPORT_TYPES.includes(report_type)) {
         return res.status(400).json({ error: "نوع دوره گزارش‌دهی نامعتبر است." });
+      } else {
+        data.report_type = report_type;
       }
     }
-    if (is_active !== undefined) data.is_active = Boolean(is_active);
+    if (is_active !== undefined) {
+      const parsed = parseBooleanField(is_active);
+      if (parsed !== undefined) data.is_active = parsed;
+    }
     if (sort_order !== undefined) {
-      const so = Number(sort_order);
-      if (isNaN(so)) return res.status(400).json({ error: "ترتیب نمایش باید عددی باشد." });
-      data.sort_order = so;
+      if (sort_order === null || sort_order === "") {
+        data.sort_order = 0;
+      } else {
+        const parsedSortOrder = Number(sort_order);
+        if (isNaN(parsedSortOrder)) {
+          return res.status(400).json({ error: "ترتیب نمایش شاخص باید عدد معتبر باشد." });
+        }
+        data.sort_order = parsedSortOrder;
+      }
     }
 
     const updated = await prisma.projectKpi.update({ where: { id }, data });
@@ -1479,8 +1352,6 @@ app.patch("/api/project-kpis/:id", authenticate, requireManager, async (req, res
   }
 });
 
-// حذف شاخص — فقط در صورتی که هیچ مقدار ثبت‌شده‌ای در گزارش‌ها نداشته باشد.
-// شاخص‌های دارای تاریخچه باید غیرفعال شوند نه حذف.
 app.delete("/api/project-kpis/:id", authenticate, requireManager, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
@@ -1504,7 +1375,6 @@ app.delete("/api/project-kpis/:id", authenticate, requireManager, async (req, re
   }
 });
 
-// دریافت مقادیر ثبت‌شده یک شاخص برای نمودار روند (مرتب‌شده بر اساس پایان دوره)
 app.get("/api/project-kpis/:id/values", authenticate, requireManager, async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -1551,12 +1421,13 @@ app.get("/api/project-kpis/:id/values", authenticate, requireManager, async (req
   }
 });
 
-// --- User Project Assignments ---
-// ۱. دریافت تمامی تخصیص‌های فعلی دیتابیس
-app.get("/api/user-projects", async (_req, res) => {
+// -----------------------------
+// 7. User Project Allocations
+// -----------------------------
+app.get("/api/user-projects", authenticate, async (req: any, res) => {
   try {
-    const allocations = await prisma.userProject.findMany();
-    // خروجی شامل: [{ id: 1, user_id: 2, project_id: 5 }, ...]
+    const where = req.user.role === "manager" ? {} : { user_id: req.user.id };
+    const allocations = await prisma.userProject.findMany({ where });
     res.json(allocations);
   } catch (error) {
     console.error("Error fetching user projects:", error);
@@ -1564,31 +1435,24 @@ app.get("/api/user-projects", async (_req, res) => {
   }
 });
 
-// ۲. ذخیره و به‌روزرسانی لیست پروژه‌های یک کاربر
-app.post("/api/users/:user_id/projects", async (req, res) => {
+app.post("/api/users/:user_id/projects", authenticate, requireManager, async (req, res) => {
   try {
     const user_id = Number(req.params.user_id);
-    const { projectIds } = req.body; // آرایه‌ای از ID پروژه‌ها [1, 2, 5]
+    const { projectIds } = req.body;
 
     if (isNaN(user_id)) {
       return res.status(400).json({ error: "شناسه کاربر نامعتبر است." });
     }
 
-    // ۱. حذف تمامی تخصیص‌های قبلی این کاربر
     await prisma.userProject.deleteMany({
       where: { user_id }
     });
 
-    // ۲. یکتا کردن پروژه ها با Set برای جلوگیری از اختصاص تکراری یک پروژه به یک فرد
     if (Array.isArray(projectIds) && projectIds.length > 0) {
       const uniqueProjectIds = Array.from(new Set(projectIds.map(Number)));
-
       for (const project_id of uniqueProjectIds) {
         await prisma.userProject.create({
-          data: {
-            user_id,
-            project_id
-          }
+          data: { user_id, project_id }
         });
       }
     }
@@ -1600,8 +1464,10 @@ app.post("/api/users/:user_id/projects", async (req, res) => {
   }
 });
 
-// --- Deadline Settings ---
-app.get("/api/deadline-settings", async (_req, res) => {
+// -----------------------------
+// 8. Deadline Settings
+// -----------------------------
+app.get("/api/deadline-settings", authenticate, async (_req, res) => {
   try {
     const settings = await prisma.deadlineSetting.findMany({
       orderBy: { id: "asc" }
@@ -1613,7 +1479,7 @@ app.get("/api/deadline-settings", async (_req, res) => {
   }
 });
 
-app.put("/api/deadline-settings/:id", async (req, res) => {
+app.put("/api/deadline-settings/:id", authenticate, requireManager, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const { deadline_day, deadline_time } = req.body;
@@ -1638,13 +1504,26 @@ app.put("/api/deadline-settings/:id", async (req, res) => {
   }
 });
 
-// --- Reports ---
-app.get("/api/reports", async (_req, res) => {
+// -----------------------------
+// 9. Report Submissions & Management
+// -----------------------------
+app.get("/api/reports", authenticate, async (req: any, res) => {
   try {
+    // پرسنل عادی تنها گزارش‌های ارسالی خود را دریافت می‌کنند (جلوگیری از BOLA / IDOR)
+    const where = req.user.role === "manager" ? {} : { user_id: req.user.id };
+
     const reports = await prisma.report.findMany({
-      include: { user: true, files: true, nextActions: true, achievedActions: true, kpiValues: true },
+      where,
+      include: {
+        user: true,
+        files: true,
+        nextActions: true,
+        achievedActions: true,
+        kpiValues: true
+      },
       orderBy: { id: "desc" }
     });
+
     res.json(reports.map(serializeReport));
   } catch (error) {
     console.error("Error fetching reports:", error);
@@ -1652,10 +1531,10 @@ app.get("/api/reports", async (_req, res) => {
   }
 });
 
-app.post("/api/reports", upload.array("files"), async (req, res) => {
+app.post("/api/reports", authenticate, upload.array("files", 10), async (req: any, res) => {
+  const uploadedFiles = req.files && Array.isArray(req.files) ? req.files : [];
   try {
     const {
-      user_id,
       project_id,
       report_type,
       period_id,
@@ -1667,15 +1546,64 @@ app.post("/api/reports", upload.array("files"), async (req, res) => {
       kpi_values,
     } = req.body;
 
-    const parsedAchievedActionIds = parseAchievedActionIds(achieved_action_ids);
-    const parsedNextActions = parseNextActions(next_actions, parseInt(project_id), parseInt(user_id), "user");
+    const projectIdNum = parseInt(project_id);
+    const periodIdNum = parseInt(period_id);
 
-    const user = await prisma.user.findUnique({ where: { id: parseInt(user_id) } });
-    const project = await prisma.project.findUnique({ where: { id: parseInt(project_id) } });
-    const period = await prisma.reportPeriod.findUnique({ where: { id: parseInt(period_id) } });
+    const project = await prisma.project.findUnique({ where: { id: projectIdNum } });
+    const period = await prisma.reportPeriod.findUnique({ where: { id: periodIdNum } });
 
-    if (!user || !project || !period) {
-      return res.status(400).json({ error: "اطلاعات فرستاده شده کاربر، پروژه یا بازه نامعتبر است." });
+    if (!project || !period) {
+      if (uploadedFiles.length > 0) {
+        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+      }
+      return res.status(400).json({ error: "اطلاعات پروژه یا بازه گزارش‌دهی نامعتبر است." });
+    }
+
+    // اعتبارسنجی نوع گزارش با نوع بازه
+    if (report_type !== period.report_type) {
+      if (uploadedFiles.length > 0) {
+        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+      }
+      return res.status(400).json({ error: "نوع گزارش ارسالی با نوع بازه گزارش‌دهی مطابقت ندارد." });
+    }
+
+    // اعتبارسنجی برای پرسنل عادی
+    if (req.user.role !== "manager") {
+      if (!project.is_active) {
+        if (uploadedFiles.length > 0) {
+          uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+        }
+        return res.status(400).json({ error: "این پروژه غیرفعال است و امکان ثبت گزارش برای آن وجود ندارد." });
+      }
+
+      if (!period.is_open) {
+        if (uploadedFiles.length > 0) {
+          uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+        }
+        return res.status(400).json({ error: "این بازه گزارش‌دهی بسته شده است و امکان ثبت گزارش وجود ندارد." });
+      }
+
+      const allocation = await prisma.userProject.findUnique({
+        where: { user_id_project_id: { user_id: req.user.id, project_id: projectIdNum } }
+      });
+      if (!allocation) {
+        if (uploadedFiles.length > 0) {
+          uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+        }
+        return res.status(403).json({ error: "شما به این پروژه تخصیص داده نشده‌اید." });
+      }
+    }
+
+    const targetUserId = req.user.role === "manager" && req.body.user_id
+      ? Number(req.body.user_id)
+      : req.user.id;
+
+    const user = await prisma.user.findUnique({ where: { id: targetUserId } });
+    if (!user) {
+      if (uploadedFiles.length > 0) {
+        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+      }
+      return res.status(400).json({ error: "کاربر مورد نظر یافت نشد." });
     }
 
     const existingReport = await prisma.report.findFirst({
@@ -1687,10 +1615,20 @@ app.post("/api/reports", upload.array("files"), async (req, res) => {
     });
 
     if (existingReport) {
+      if (uploadedFiles.length > 0) {
+        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+      }
       return res.status(400).json({ error: "شما قبلاً برای این پروژه در این دوره گزارش ثبت کرده‌اید." });
     }
 
-    // Calculate status (submitted or late) based on deadline settings
+    const parsedAchievedActionIds = parseAchievedActionIds(achieved_action_ids);
+    const parsedNextActions = parseNextActions(
+      next_actions,
+      project.id,
+      user.id,
+      req.user.role === "manager" ? "manager" : "user"
+    );
+
     const deadline = await prisma.deadlineSetting.findFirst({
       where: { report_type: report_type as any }
     });
@@ -1705,7 +1643,6 @@ app.post("/api/reports", upload.array("files"), async (req, res) => {
           deadline.deadline_time,
           report_type as "weekly" | "monthly"
         );
-        
         if (now > deadlineDate) {
           status = "late";
         }
@@ -1714,16 +1651,12 @@ app.post("/api/reports", upload.array("files"), async (req, res) => {
       }
     }
 
-    const uploadedFiles = req.files && Array.isArray(req.files) ? req.files : [];
-
-    // اعتبارسنجی و محاسبه سمت سرور مقادیر شاخص‌های ساختاریافته
     const validatedKpiValues = await validateAndBuildKpiValues(
       kpi_values,
       project.id,
       report_type as "weekly" | "monthly"
     );
 
-    // آماده‌سازی متن نتایج حاصل شده بر اساس اقدامات تیک‌خورده
     let finalResultsAchieved = typeof results_achieved === "string" ? results_achieved.trim() : "";
     if (parsedAchievedActionIds.length > 0) {
       const claimedActions = await prisma.nextAction.findMany({
@@ -1754,18 +1687,14 @@ app.post("/api/reports", upload.array("files"), async (req, res) => {
         kpi_text,
         status: status as any,
         nextActions: parsedNextActions.length
-          ? {
-              create: parsedNextActions,
-            }
+          ? { create: parsedNextActions }
           : undefined,
         kpiValues: validatedKpiValues.length
-          ? {
-              create: validatedKpiValues,
-            }
+          ? { create: validatedKpiValues }
           : undefined,
         files: uploadedFiles.length
           ? {
-              create: uploadedFiles.map((file) => ({
+              create: uploadedFiles.map((file: any) => ({
                 filename: file.filename,
                 original_filename: file.originalname,
                 file_size: file.size,
@@ -1787,8 +1716,11 @@ app.post("/api/reports", upload.array("files"), async (req, res) => {
       });
     }
 
-    res.json(serializeReport(newReport));
+    res.status(201).json(serializeReport(newReport));
   } catch (error) {
+    if (uploadedFiles.length > 0) {
+      uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+    }
     console.error("Error creating report:", error);
     res.status(error instanceof NextActionsValidationError || error instanceof KpiValidationError ? 400 : 500).json({
       error: error instanceof NextActionsValidationError || error instanceof KpiValidationError
@@ -1798,29 +1730,46 @@ app.post("/api/reports", upload.array("files"), async (req, res) => {
   }
 });
 
-app.put("/api/reports/:id", upload.array("files"), async (req, res) => {
+app.put("/api/reports/:id", authenticate, upload.array("files", 10), async (req: any, res) => {
+  const uploadedFiles = req.files && Array.isArray(req.files) ? req.files : [];
   try {
     const id = parseInt(req.params.id);
     const { activities_done, results_achieved, achieved_action_ids, next_actions, kpi_text, kpi_values } = req.body;
+
+    const existingReport = await prisma.report.findUnique({ where: { id } });
+    if (!existingReport) {
+      if (uploadedFiles.length > 0) {
+        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+      }
+      return res.status(404).json({ error: "گزارش پیدا نشد." });
+    }
+
+    // کنترل BOLA: کاربر عادی تنها مجاز به ویرایش گزارش خودش است
+    if (req.user.role !== "manager" && existingReport.user_id !== req.user.id) {
+      if (uploadedFiles.length > 0) {
+        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+      }
+      return res.status(403).json({ error: "شما مجاز به ویرایش این گزارش نیستید." });
+    }
+
     const shouldUpdateAchievedActions = achieved_action_ids !== undefined;
     const parsedAchievedActionIds = shouldUpdateAchievedActions ? parseAchievedActionIds(achieved_action_ids) : [];
     const shouldUpdateNextActions = next_actions !== undefined;
 
-    const existingReport = await prisma.report.findUnique({ where: { id } });
-    if (!existingReport) {
-      return res.status(404).json({ error: "گزارش پیدا نشد." });
-    }
-
     const parsedNextActions = shouldUpdateNextActions
-      ? parseNextActions(next_actions, existingReport.project_id, existingReport.user_id, "user")
+      ? parseNextActions(
+          next_actions,
+          existingReport.project_id,
+          existingReport.user_id,
+          req.user.role === "manager" ? "manager" : "user"
+        )
       : [];
 
     const period = await prisma.reportPeriod.findUnique({ where: { id: existingReport.period_id } });
-    if (period) {
+    if (period && req.user.role !== "manager") {
       const deadline = await prisma.deadlineSetting.findFirst({
         where: { report_type: existingReport.report_type as any }
       });
-      
       if (deadline) {
         const now = new Date();
         const deadlineDate = getDeadlineDate(
@@ -1829,31 +1778,29 @@ app.put("/api/reports/:id", upload.array("files"), async (req, res) => {
           deadline.deadline_time,
           existingReport.report_type as "weekly" | "monthly"
         );
-        
         if (now > deadlineDate) {
+          if (uploadedFiles.length > 0) {
+            uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+          }
           return res.status(400).json({ error: "مهلت ویرایش این گزارش به پایان رسیده است." });
         }
       }
     }
 
-    // Handle file deletion from req.body.deleted_file_ids if any
-    if (req.body.deleted_file_ids) {
-      const deletedIds = JSON.parse(req.body.deleted_file_ids).map((fid: any) => parseInt(fid));
-      const filesToDelete = await prisma.reportFile.findMany({
-        where: { id: { in: deletedIds }, report_id: id }
-      });
-      for (const rf of filesToDelete) {
-        try {
-          const filePath = path.join(uploadDir, rf.filename);
-          if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-        } catch (_) {}
-      }
-    }
+    let deletedFileIds: number[] = [];
+    let physicalFilesToDeleteAfterDb: string[] = [];
 
-    const deletedFileIds = req.body.deleted_file_ids
-      ? JSON.parse(req.body.deleted_file_ids).map((fid: any) => parseInt(fid))
-      : [];
-    const uploadedFiles = req.files && Array.isArray(req.files) ? req.files : [];
+    if (req.body.deleted_file_ids) {
+      try {
+        deletedFileIds = JSON.parse(req.body.deleted_file_ids).map((fid: any) => parseInt(fid));
+        const filesToDelete = await prisma.reportFile.findMany({
+          where: { id: { in: deletedFileIds }, report_id: id }
+        });
+        physicalFilesToDeleteAfterDb = filesToDelete
+          .map((rf) => safeResolvePath(uploadDir, rf.filename))
+          .filter((p): p is string => p !== null);
+      } catch (_) {}
+    }
 
     const validatedKpiValues = kpi_values !== undefined
       ? await validateAndBuildKpiValues(kpi_values, existingReport.project_id, existingReport.report_type)
@@ -1879,7 +1826,7 @@ app.put("/api/reports/:id", upload.array("files"), async (req, res) => {
 
       if (uploadedFiles.length) {
         await tx.reportFile.createMany({
-          data: uploadedFiles.map((file) => ({
+          data: uploadedFiles.map((file: any) => ({
             report_id: id,
             filename: file.filename,
             original_filename: file.originalname,
@@ -1941,8 +1888,18 @@ app.put("/api/reports/:id", upload.array("files"), async (req, res) => {
       });
     });
 
+    // حذف فایل‌های فیزیکی پس از اتمام موفقیت‌آمیز تراکنش دیتابیس
+    for (const fp of physicalFilesToDeleteAfterDb) {
+      if (fs.existsSync(fp)) {
+        try { fs.unlinkSync(fp); } catch (_) {}
+      }
+    }
+
     res.json(serializeReport(updated));
   } catch (error) {
+    if (uploadedFiles.length > 0) {
+      uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+    }
     console.error("Error updating report:", error);
     res.status(error instanceof NextActionsValidationError ? 400 : 500).json({
       error: error instanceof NextActionsValidationError ? error.message : "خطا در ویرایش گزارش در دیتابیس",
@@ -1950,26 +1907,61 @@ app.put("/api/reports/:id", upload.array("files"), async (req, res) => {
   }
 });
 
-// Delete a report file directly
-app.delete("/api/report-files/:id", async (req, res) => {
+// دانلود ایمن و احرازهویت‌شده فایل ضمیمه گزارش
+app.get("/api/report-files/:id/download", authenticate, async (req: any, res) => {
+  try {
+    const fileId = parseInt(req.params.id);
+    const file = await prisma.reportFile.findUnique({
+      where: { id: fileId },
+      include: { report: true }
+    });
+
+    if (!file) {
+      return res.status(404).json({ error: "فایل مورد نظر یافت نشد." });
+    }
+
+    // اعتبارسنجی مالکیت گزارش: پرسنل عادی فقط ضمیمه‌های گزارش‌های خود را دانلود کنند
+    if (req.user.role !== "manager" && file.report.user_id !== req.user.id) {
+      return res.status(403).json({ error: "شما مجاز به دانلود فایل‌های این گزارش نیستید." });
+    }
+
+    const filePath = safeResolvePath(uploadDir, file.filename);
+    if (!filePath || !fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "فایل فیزیکی در سرور یافت نشد." });
+    }
+
+    res.download(filePath, file.original_filename);
+  } catch (error) {
+    console.error("Error downloading report file:", error);
+    res.status(500).json({ error: "خطا در دریافت فایل ضمیمه." });
+  }
+});
+
+app.delete("/api/report-files/:id", authenticate, async (req: any, res) => {
   try {
     const id = parseInt(req.params.id);
-    const file = await prisma.reportFile.findUnique({ where: { id } });
+    const file = await prisma.reportFile.findUnique({
+      where: { id },
+      include: { report: true }
+    });
 
     if (!file) {
       return res.status(404).json({ error: "فایل پیدا نشد." });
     }
 
-    try {
-      const filePath = path.join(uploadDir, file.filename);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-    } catch (err) {
-      console.error("Error deleting file physical file:", err);
+    if (req.user.role !== "manager" && file.report.user_id !== req.user.id) {
+      return res.status(403).json({ error: "شما مجاز به حذف این فایل نیستید." });
     }
 
+    const filePath = safeResolvePath(uploadDir, file.filename);
+
+    // حذف رکورد از دیتابیس قبل از فایل فیزیکی
     await prisma.reportFile.delete({ where: { id } });
+
+    if (filePath && fs.existsSync(filePath)) {
+      try { fs.unlinkSync(filePath); } catch (_) {}
+    }
+
     res.json({ success: true });
   } catch (error) {
     console.error("Error deleting report file:", error);
@@ -1977,9 +1969,10 @@ app.delete("/api/report-files/:id", async (req, res) => {
   }
 });
 
-
-// --- Manager Dashboard Status Summary Helper ---
-app.get("/api/dashboard/summary", async (req, res) => {
+// -----------------------------
+// 10. Manager Dashboard Summary
+// -----------------------------
+app.get("/api/dashboard/summary", authenticate, requireManager, async (req, res) => {
   try {
     const periodId = parseInt(req.query.period_id as string);
     const projectId = req.query.project_id ? parseInt(req.query.project_id as string) : null;
@@ -1991,14 +1984,11 @@ app.get("/api/dashboard/summary", async (req, res) => {
       return res.status(404).json({ error: "بازه مورد نظر یافت نشد." });
     }
 
-    // Get active users who are 'user' role
     const activeStaff = await prisma.user.findMany({
       where: { is_active: true, role: "user" }
     });
+    const staffIds = activeStaff.map((s) => s.id);
 
-    const staffIds = activeStaff.map(s => s.id);
-    
-    // Find assigned project IDs for active users on active projects
     const userProjects = await prisma.userProject.findMany({
       where: {
         user_id: { in: staffIds },
@@ -2010,19 +2000,18 @@ app.get("/api/dashboard/summary", async (req, res) => {
       }
     });
 
-    let expectedPairs: any[] = [];
+    const expectedPairs: any[] = [];
     for (const up of userProjects) {
       if (projectId && up.project_id !== projectId) continue;
       if (user_id && up.user_id !== user_id) continue;
       if (deputyName && up.user.job_title?.trim() !== deputyName) continue;
 
       expectedPairs.push({
-        user: up.user,
+        user: sanitizeUser(up.user),
         project: up.project
       });
     }
 
-    // Fetch reports for this period
     const reports = await prisma.report.findMany({
       where: { period_id: periodId },
       include: { user: true, files: true }
@@ -2053,6 +2042,7 @@ app.get("/api/dashboard/summary", async (req, res) => {
         status_label,
         report: matchingReport ? {
           ...matchingReport,
+          user: sanitizeUser(matchingReport.user),
           user_job_title: pair.user.job_title,
           deputy_name: pair.user.job_title || pair.user.full_name,
           period_start: matchingReport.period_start.toISOString().split("T")[0],
@@ -2062,7 +2052,6 @@ app.get("/api/dashboard/summary", async (req, res) => {
       };
     });
 
-    // Calculate summary counts
     const summary = {
       total_expected: rows.length,
       submitted_count: rows.filter((r) => r.status_key === "submitted").length,
@@ -2085,86 +2074,12 @@ app.get("/api/dashboard/summary", async (req, res) => {
   }
 });
 
-// Helper function to clean physical file uploads from disk for a list of reports
-async function cleanPhysicalFilesForReports(reportIds: number[]) {
-  if (reportIds.length === 0) return;
-  try {
-    const files = await prisma.reportFile.findMany({
-      where: { report_id: { in: reportIds } }
-    });
-    for (const rf of files) {
-      try {
-        const filePath = path.join(uploadDir, rf.filename);
-        if (fs.existsSync(filePath)) {
-          fs.unlinkSync(filePath);
-        }
-      } catch (err) {
-        console.error("Error deleting physical file:", rf.filename, err);
-      }
-    }
-  } catch (error) {
-    console.error("Error cleaning files for reports:", error);
-  }
-}
-
-// DELETE a user and all their associated reports, allocations, and files cascades
-app.delete("/api/users/:id", async (req, res) => {
-  try {
-    const id = parseInt(req.params.id);
-
-    // Find all reports by this user
-    const reports = await prisma.report.findMany({ where: { user_id: id } });
-    const reportIds = reports.map((r) => r.id);
-
-    // Delete physical uploads
-    await cleanPhysicalFilesForReports(reportIds);
-
-    // Delete user from PostgreSQL (Prisma onDelete: Cascade deletes allocations and reports)
-    await prisma.user.delete({ where: { id } });
-
-    res.json({ success: true, message: "کاربر و تمامی داده‌های مربوطه با موفقیت حذف شدند." });
-  } catch (error) {
-    console.error("Error deleting user:", error);
-    res.status(500).json({ error: "خطا در حذف کاربر از دیتابیس" });
-  }
-});
-
-// DELETE a project and all its associated reports and allocations cascades
-app.delete("/api/projects/:id", async (req, res) => {
-  try {
-    const id = parseInt(req.params.id);
-
-    // Find all reports for this project
-    const reports = await prisma.report.findMany({ where: { project_id: id } });
-    const reportIds = reports.map((r) => r.id);
-
-    // Delete physical uploads
-    await cleanPhysicalFilesForReports(reportIds);
-
-    // Delete project from PostgreSQL (Prisma onDelete: Cascade deletes allocations and reports)
-    await prisma.project.delete({ where: { id } });
-
-    res.json({ success: true, message: "پروژه و تمامی داده‌های مربوطه با موفقیت حذف شدند." });
-  } catch (error) {
-    console.error("Error deleting project:", error);
-    res.status(500).json({ error: "خطا در حذف پروژه از دیتابیس" });
-  }
-});
-
-// تابع کمکی تبدیل اعداد فارسی/عربی به انگلیسی و حذف فاصله‌های اضافی
-const toEnglishDigits = (str: string): string => {
-  if (!str) return "";
-  return str
-    .replace(/[۰-۹]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".indexOf(d).toString())
-    .replace(/[٠-٩]/g, (d) => "٠١٢٣٤٥٦٧٨٩".indexOf(d).toString())
-    .trim();
-};
-
-// 1️⃣ دریافت لیست اقدامات آتی همراه با اطلاعات پروژه، کاربر، ادعای پرسنل و وضعیت تایید مدیر
-app.get("/api/next-actions", async (req, res) => {
+// -----------------------------
+// 11. Next Actions Endpoints
+// -----------------------------
+app.get("/api/next-actions", authenticate, async (req: any, res) => {
   try {
     const { project_id, user_id, pending_for_report, status, report_id } = req.query;
-
     const andConditions: any[] = [];
 
     if (project_id) {
@@ -2177,13 +2092,30 @@ app.get("/api/next-actions", async (req, res) => {
       });
     }
 
-    if (user_id) {
-      const uid = Number(user_id);
+    if (req.user.role === "manager") {
+      if (user_id) {
+        const uid = Number(user_id);
+        andConditions.push({
+          OR: [
+            { user_id: uid },
+            { user_id: null },
+            { report: { user_id: uid } }
+          ]
+        });
+      }
+    } else {
+      // پرسنل عادی تنها اقدامات پروژه‌های تخصیص‌یافته به خود یا اقدامات ایجادشده/منتسب به خود را دریافت می‌کنند
+      const userAssignments = await prisma.userProject.findMany({
+        where: { user_id: req.user.id, project: { is_active: true } },
+        select: { project_id: true }
+      });
+      const assignedProjectIds = userAssignments.map((a) => a.project_id);
+
       andConditions.push({
         OR: [
-          { user_id: uid },
-          { user_id: null },
-          { report: { user_id: uid } }
+          { user_id: req.user.id },
+          { project_id: { in: assignedProjectIds } },
+          { report: { user_id: req.user.id } }
         ]
       });
     }
@@ -2262,20 +2194,38 @@ app.get("/api/next-actions", async (req, res) => {
   }
 });
 
-// 2️⃣ ثبت اقدام / ابلاغیه جدید توسط مدیر یا برای پروژه
-app.post("/api/next-actions", async (req, res) => {
+app.post("/api/next-actions", authenticate, async (req: any, res) => {
   try {
-    const { project_id, user_id, action_text, target_date, created_by_role } = req.body;
+    const { project_id, user_id, action_text, target_date } = req.body;
     const trimmedText = typeof action_text === "string" ? action_text.trim() : "";
 
     if (!trimmedText) {
       return res.status(400).json({ error: "شرح اقدام یا ابلاغیه الزامی است." });
     }
     if (!target_date || !/^\d{4}-\d{2}-\d{2}$/.test(target_date)) {
-      return res.status(400).json({ error: "تاریخ سررسید ددلاین روز الزامی و باید با فرمت YYYY-MM-DD باشد." });
+      return res.status(400).json({ error: "تاریخ سررسید ددلاین الزامی و باید با فرمت YYYY-MM-DD باشد." });
     }
     if (!project_id) {
       return res.status(400).json({ error: "انتخاب پروژه الزامی است." });
+    }
+
+    const projectIdNum = Number(project_id);
+    const targetProject = await prisma.project.findUnique({ where: { id: projectIdNum } });
+
+    if (!targetProject) {
+      return res.status(400).json({ error: "پروژه مورد نظر یافت نشد." });
+    }
+
+    if (req.user.role !== "manager") {
+      if (!targetProject.is_active) {
+        return res.status(400).json({ error: "امکان ثبت اقدام برای پروژه غیرفعال وجود ندارد." });
+      }
+      const isAssigned = await prisma.userProject.findUnique({
+        where: { user_id_project_id: { user_id: req.user.id, project_id: projectIdNum } }
+      });
+      if (!isAssigned) {
+        return res.status(403).json({ error: "شما به این پروژه تخصیص داده نشده‌اید." });
+      }
     }
 
     const targetDateObj = new Date(`${target_date}T00:00:00.000Z`);
@@ -2283,13 +2233,19 @@ app.post("/api/next-actions", async (req, res) => {
       return res.status(400).json({ error: "تاریخ سررسید وارد شده نامعتبر است." });
     }
 
+    // استخراج نقش ایجادکننده بر اساس هویت احرازشده در نشست (جلوگیری از جعل نقش مدیریتی توسط پرسنل)
+    const createdByRole = req.user.role === "manager" ? "manager" : "user";
+    const assignedUserId = req.user.role === "manager"
+      ? (user_id ? Number(user_id) : null)
+      : req.user.id;
+
     const newAction = await prisma.nextAction.create({
       data: {
-        project_id: Number(project_id),
-        user_id: user_id ? Number(user_id) : null,
+        project_id: projectIdNum,
+        user_id: assignedUserId,
         action_text: trimmedText,
         target_date: targetDateObj,
-        created_by_role: created_by_role === "manager" ? "manager" : "user",
+        created_by_role: createdByRole,
         is_completed: false,
         claimed_completed: false,
       },
@@ -2299,7 +2255,7 @@ app.post("/api/next-actions", async (req, res) => {
       }
     });
 
-    res.json({
+    res.status(201).json({
       id: newAction.id,
       report_id: newAction.report_id,
       project_id: newAction.project_id,
@@ -2323,8 +2279,7 @@ app.post("/api/next-actions", async (req, res) => {
   }
 });
 
-// 3️⃣ تایید / لغو تایید تحقق اقدام توسط مدیر (Manager Verification)
-app.patch("/api/next-actions/:id/toggle", async (req, res) => {
+app.patch("/api/next-actions/:id/toggle", authenticate, requireManager, async (req, res) => {
   try {
     const actionId = Number(req.params.id);
     const { is_completed, reset_claim } = req.body;
@@ -2336,8 +2291,6 @@ app.patch("/api/next-actions/:id/toggle", async (req, res) => {
 
     const willBeCompleted = Boolean(is_completed);
     const now = new Date();
-
-    // اگر مدیر درخواست رد ادعای پرسنل را داده باشد (reset_claim = true)
     const shouldResetClaim = Boolean(reset_claim);
 
     const updatedAction = await prisma.nextAction.update({
@@ -2346,8 +2299,6 @@ app.patch("/api/next-actions/:id/toggle", async (req, res) => {
         is_completed: willBeCompleted,
         completed_at: willBeCompleted ? now : null,
         verified_at: willBeCompleted ? now : null,
-        // اگر اقدام دارای گزارش منتسب (claimed_report_id) باشد و مدیر ادعا را ریست نکرده باشد، claimed_completed باقی می‌ماند.
-        // در غیر این صورت (یا در صورت لغو تایید اقدامی که پرسنل اعلام نکرده بود)، claimed_completed برابر false می‌شود.
         claimed_completed: shouldResetClaim
           ? false
           : action.claimed_report_id !== null
@@ -2365,8 +2316,7 @@ app.patch("/api/next-actions/:id/toggle", async (req, res) => {
   }
 });
 
-// 4️⃣ حذف اقدام
-app.delete("/api/next-actions/:id", async (req, res) => {
+app.delete("/api/next-actions/:id", authenticate, requireManager, async (req, res) => {
   try {
     const actionId = Number(req.params.id);
     await prisma.nextAction.delete({ where: { id: actionId } });
@@ -2377,118 +2327,331 @@ app.delete("/api/next-actions/:id", async (req, res) => {
   }
 });
 
-// 🔒 تنها اندپوینت معتبر تغییر اجباری رمز عبور موقت توسط کاربر
-app.post("/api/auth/change-password", async (req, res) => {
-  try {
-    const { user_id, userId, newPassword } = req.body;
-    const targetId = Number(user_id || userId);
+// -----------------------------
+// 12. AI Strategy & Audit Endpoints
+// -----------------------------
+async function callAiWithFallback(systemPrompt: string, userPrompt: string) {
+  const providers = [
+    {
+      id: "sambanova",
+      name: "SambaNova (Llama 3.3 70B)",
+      baseURL: process.env.AI_BASE_URL_1 || process.env.AI_BASE_URL || "https://api.sambanova.ai/v1",
+      apiKey: process.env.AI_API_KEY_1 || process.env.AI_API_KEY,
+      model: process.env.AI_MODEL_1 || process.env.AI_MODEL_NAME || "Meta-Llama-3.3-70B-Instruct",
+    },
+    {
+      id: "cerebras",
+      name: "Cerebras (Llama 3.3 70B)",
+      baseURL: process.env.AI_BASE_URL_2 || "https://api.cerebras.ai/v1",
+      apiKey: process.env.AI_API_KEY_2,
+      model: process.env.AI_MODEL_2 || "llama-3.3-70b",
+    },
+    {
+      id: "gemini",
+      name: "Google AI Studio (gemini-1.5-flash)",
+      baseURL: process.env.AI_BASE_URL_3 || "https://generativelanguage.googleapis.com/v1beta/openai/",
+      apiKey: process.env.AI_API_KEY_3,
+      model: process.env.AI_MODEL_3 || "gemini-1.5-flash",
+    },
+  ].filter((p) => p.apiKey && p.apiKey.trim() !== "");
 
-    if (!targetId || isNaN(targetId)) {
-      return res.status(400).json({ error: "شناسه کاربر ارسال نشده یا نامعتبر است." });
+  if (providers.length === 0) {
+    throw new Error("هیچ کلید API فعال برای هوش مصنوعی در فایل .env یافت نشد. لطفاً تنظیمات .env را بررسی کنید.");
+  }
+
+  const formatPersianError = (err: any, providerName: string) => {
+    const status = err?.status || err?.statusCode;
+    const msg = err?.message || String(err || "");
+
+    if (typeof msg === "string" && (msg.includes("<!DOCTYPE") || msg.includes("<html") || msg.includes("Cloudflare"))) {
+      return `تامین‌کننده «${providerName}»: درخواست توسط فایروال یا محدودیت شبکه/آی‌پی مسدود شد.`;
     }
-
-    // ۱. نرم‌افزارسازی کلمه عبور ارسالی (تبدیل کیبورد فارسی به انگلیسی)
-    const normalizedPassword = toEnglishDigits(newPassword || "");
-
-    if (!normalizedPassword || normalizedPassword.length < 6) {
-      return res.status(400).json({ error: "رمز عبور جدید باید حداقل ۶ کاراکتر باشد." });
+    if (status === 429 || msg.includes("429") || msg.includes("Rate limit")) {
+      return `تامین‌کننده «${providerName}»: سقف تعداد درخواست مجاز در دقیقه یا روز به پایان رسیده است.`;
     }
-
-    // ۲. بررسی وجود کاربر در دیتابیس
-    const existingUser = await prisma.user.findUnique({
-      where: { id: targetId },
-    });
-
-    if (!existingUser) {
-      return res.status(404).json({ error: "کاربر مورد نظر در سیستم یافت نشد." });
+    if (status === 401 || msg.includes("401") || msg.includes("Unauthorized")) {
+      return `تامین‌کننده «${providerName}»: کلید API وارد شده نامعتبر است.`;
     }
+    return `تامین‌کننده «${providerName}»: ${msg.substring(0, 120)}`;
+  };
 
-    // ۳. بررسی عدم تکراری بودن رمز عبور جدید با رمز فعلی
-    let isSamePassword = false;
-    if (
-      existingUser.password.startsWith("$2a$") || 
-      existingUser.password.startsWith("$2b$") || 
-      existingUser.password.startsWith("$2y$")
-    ) {
-      isSamePassword = await bcrypt.compare(normalizedPassword, existingUser.password);
-    } else {
-      isSamePassword = (normalizedPassword === existingUser.password);
+  const parseJsonFromText = (rawText: string) => {
+    const cleaned = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
+    const firstBrace = cleaned.indexOf("{");
+    const lastBrace = cleaned.lastIndexOf("}");
+    if (firstBrace !== -1 && lastBrace !== -1) {
+      return JSON.parse(cleaned.substring(firstBrace, lastBrace + 1));
     }
+    return JSON.parse(cleaned);
+  };
 
-    if (isSamePassword) {
-      return res.status(400).json({ 
-        error: "رمز عبور جدید نمی‌تواند مشابه رمز عبور موقت فعلی باشد. لطفاً رمز جدیدی وارد نمایید." 
+  const providerErrorLogs: string[] = [];
+
+  for (const provider of providers) {
+    try {
+      const client = new OpenAI({
+        apiKey: provider.apiKey,
+        baseURL: provider.baseURL,
+        defaultHeaders: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0",
+        },
       });
+
+      const completion = await client.chat.completions.create({
+        model: provider.model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0.0,
+      });
+
+      const rawContent = completion.choices[0]?.message?.content || "";
+      const parsed = parseJsonFromText(rawContent);
+      const analysisData = parsed.analysis ? parsed.analysis : parsed;
+
+      return {
+        analysis: analysisData,
+        model_used: provider.name,
+      };
+    } catch (err: any) {
+      const persianErr = formatPersianError(err, provider.name);
+      console.warn(`⚠️ ${persianErr} -> در حال سوئیچ به تامین‌کننده بعدی...`);
+      providerErrorLogs.push(persianErr);
+    }
+  }
+
+  throw new Error(`تمامی تامین‌کنندگان هوش مصنوعی ناموفق بودند:\n` + providerErrorLogs.join("\n"));
+}
+
+function formatNextActionsForPrompt(nextActions: any[] | undefined): string {
+  if (!Array.isArray(nextActions) || nextActions.length === 0) return "ثبت نشده";
+  return nextActions
+    .map((action) => {
+      const targetDate = action.target_date instanceof Date
+        ? action.target_date.toISOString().split("T")[0]
+        : String(action.target_date || "").split("T")[0];
+      return `- ${action.action_text} (تاریخ هدف: ${targetDate})`;
+    })
+    .join("\n");
+}
+
+function formatKpiValuesForPrompt(kpiValues: any[] | undefined): string {
+  if (!Array.isArray(kpiValues) || kpiValues.length === 0) return "بدون شاخص ساختاریافته";
+  return kpiValues
+    .map((kv, idx) => {
+      const measured = !kv.not_measured && kv.calculated_value !== null;
+      const inputTypeLabel = kv.input_type === "direct" ? "مقدار مستقیم" : "درصد تغییر";
+      const directionLabel = kv.target_direction === "minimum" ? "حداقل" : "حداکثر";
+
+      if (!measured) {
+        return `${idx + 1}. ${kv.name || "شاخص"} — اندازه‌گیری نشده (${kv.missing_reason || "دلیل مشخص نشده"})`;
+      }
+      if (kv.input_type === "direct") {
+        return `${idx + 1}. ${kv.name || "شاخص"} (${inputTypeLabel}) — ${kv.unit || ""}: ${kv.current_value} (هدف: ${directionLabel} ${kv.target_value})`;
+      } else {
+        return `${idx + 1}. ${kv.name || "شاخص"} (${inputTypeLabel}) — مبنا: ${kv.baseline_value}، جاری: ${kv.current_value}، محاسبه‌شده: ${kv.calculated_value}٪ (هدف: ${directionLabel} ${kv.target_value}٪)`;
+      }
+    })
+    .join("\n");
+}
+
+// اندپوینت تحلیل استراتژیک کلان دوره (مدیریتی)
+app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, requireManager, aiLimiter, async (req, res) => {
+  try {
+    const { period_title, reports } = req.body;
+    const submittedReports = Array.isArray(reports)
+      ? reports.filter((r: any) => r.activities_done && r.activities_done.trim() !== "")
+      : [];
+
+    if (submittedReports.length === 0) {
+      return res.status(400).json({ error: "هیچ گزارش ثبت‌شده‌ای برای تحلیل در این دوره یافت نشد." });
     }
 
-    // ۴. هش کردن رمز عبور جدید
-    const hashedPassword = await bcrypt.hash(normalizedPassword, 10);
+    const reportsText = submittedReports
+      .map((r, index) => {
+        const kpiSection = (r.kpiValues && r.kpiValues.length > 0)
+          ? `شاخص‌های ساختاریافته:\n${formatKpiValuesForPrompt(r.kpiValues)}`
+          : `شاخص‌ها (متن آزاد): ${r.kpi_text || "ثبت نشده"}`;
+        return `--- گزارش ${index + 1} ---
+نویسنده: ${r.user_full_name}
+پروژه: ${r.project_title}
+فعالیت‌ها: ${r.activities_done}
+نتایج: ${r.results_achieved || "ثبت نشده"}
+اقدامات آتی: ${formatNextActionsForPrompt(r.nextActions)}
+${kpiSection}`;
+      })
+      .join("\n\n");
 
-    // ۵. به‌روزرسانی رمز عبور در دیتابیس
-    const updatedUser = await prisma.user.update({
-      where: { id: targetId },
-      data: {
-        password: hashedPassword,
-        must_change_password: false,
+    const systemPrompt = `شما یک دستیار هوشمند و ارشد مدیریت استراتژیک در سازمان حمل‌ونقل و ترافیک هستید.
+وظیفه شما تحلیل دقیق گزارش‌های عملکرد پرسنل و ارائه خروجی کاملاً ساختاریافته به فرمت JSON است.
+پاسخ شما باید حتماً و فقط یک جی‌سون معتبر با کلید ریشه "analysis" باشد. نمونه ساختار مورد انتظار:
+{
+  "analysis": {
+    "health_score": 85,
+    "overall_status": "پایدار",
+    "executive_summary": "متن خلاصه مدیریتی در دو پاراگراف...",
+    "key_achievements": ["دستاورد ۱", "دستاورد ۲"],
+    "risks_and_delays": [
+      { "project_title": "عنوان پروژه", "risk_level": "high", "description": "شرح دقیق موانع" }
+    ],
+    "actionable_recommendations": ["پیشنهاد ۱", "پیشنهاد ۲"]
+  }
+}
+نکته: هیچ متن اضافی قبل و بعد از JSON ننویسید.`;
+
+    const userPrompt = `گزارش‌های عملکرد بازه "${period_title}":\n\n${reportsText}`;
+    const result = await callAiWithFallback(systemPrompt, userPrompt);
+    res.json(result);
+  } catch (err: any) {
+    console.error("AI Global Analysis Error:", err);
+    const clientError = config.NODE_ENV === "production"
+      ? "خطایی در پردازش تحلیل کلان هوش مصنوعی رخ داد."
+      : (err.message || "خطا در پردازش هوش مصنوعی.");
+    res.status(500).json({ error: clientError });
+  }
+});
+
+// اندپوینت ممیزی اختصاصی تک‌گزارش (بر اساس WBS اکسل)
+app.post("/api/reports/analyze-single", authenticate, aiLimiter, async (req: any, res) => {
+  try {
+    const { report_id } = req.body;
+    if (!report_id) {
+      return res.status(400).json({ error: "شناسه گزارش (report_id) ارسال نشده است." });
+    }
+
+    const currentReport = await prisma.report.findUnique({
+      where: { id: Number(report_id) },
+      include: {
+        user: true,
+        project: true,
+        nextActions: true,
+        kpiValues: true,
       },
     });
 
-    res.json({ 
-      success: true, 
-      message: "رمز عبور شما با موفقیت به روزرسانی شد.",
-      user: {
-        id: updatedUser.id,
-        username: updatedUser.username,
-        full_name: updatedUser.full_name,
-        role: updatedUser.role,
-        job_title: updatedUser.job_title,
-        must_change_password: false
-      }
+    if (!currentReport) {
+      return res.status(404).json({ error: "گزارش مورد نظر یافت نشد." });
+    }
+
+    // کنترل BOLA: کاربر عادی فقط می‌تواند گزارش خودش را ممیزی کند
+    if (req.user.role !== "manager" && currentReport.user_id !== req.user.id) {
+      return res.status(403).json({ error: "شما مجاز به ممیزی این گزارش نیستید." });
+    }
+
+    const previousReports = await prisma.report.findMany({
+      where: {
+        user_id: currentReport.user_id,
+        project_id: currentReport.project_id,
+        id: { lt: currentReport.id },
+      },
+      orderBy: { submitted_at: "desc" },
+      take: 3,
+      include: { nextActions: true },
     });
-  } catch (error) {
-    console.error("Change password error:", error);
-    res.status(500).json({ error: "خطا در ذخیره‌سازی رمز عبور جدید در دیتابیس." });
+
+    const formatPreviousKpi = (r: any) => {
+      if (r.kpiValues && r.kpiValues.length > 0) {
+        return formatKpiValuesForPrompt(r.kpiValues);
+      }
+      return r.kpi_text || "ثبت نشده";
+    };
+
+    const previousReportsText = previousReports.length > 0
+      ? previousReports.map((r, i) => `--- گزارش سابقه ${i + 1} ---
+فعالیت‌ها: ${r.activities_done}
+نتایج: ${r.results_achieved || "ثبت نشده"}
+شاخص‌ها:\n${formatPreviousKpi(r)}`).join("\n\n")
+      : "هیچ گزارش قبلی برای این کاربر ثبت نشده است (اولین گزارش کاربر).";
+
+    let wbsContextText = "سند WBS اکسل برای این پروژه بارگذاری نشده است.";
+    const wbsFilePath = resolveProjectWbsFilePath(currentReport.project);
+    if (wbsFilePath) {
+      try {
+        const parsed = parseExcelWBS(wbsFilePath);
+        wbsContextText = parsed.formattedPromptText;
+      } catch (e: any) {
+        console.warn("خطا در خواندن فایل اکسل WBS:", e.message);
+      }
+    }
+
+    const systemPrompt = `شما یک ارزیاب و ممیز ارشد مدیریت استراتژیک، کنترل پروژه و ترافیک شهری هستید.
+وظیفه شما ارزیابی دقیق "یک گزارش عملکرد" در برابر "سند استراتژیک و WBS مرجع پروژه" و "سابقه گزارش‌های قبلی کاربر" است.
+پاسخ شما باید حتماً و فقط یک جی‌سون (JSON) معتبر با کلید ریشه "analysis" باشد. ساختار مورد انتظار:
+{
+  "analysis": {
+    "executive_summary": "خلاصه مدیریتی پروژه با محوریت مهم‌ترین اقدامات انجام‌شده در این گزارش...",
+    "kpis_evaluation": [
+      {
+        "kpi_name": "نام شاخص ذکر شده",
+        "previous_value": "مقدار سابقه قبلی یا 'ثبت نشده در سابقه'",
+        "current_value": "مقدار فعلی یا 'فاقد شاخص'",
+        "has_kpi": true
+      }
+    ],
+    "recommendations": [
+      "پیشنهاد و اقدام کارآمد ۱...",
+      "پیشنهاد ۲..."
+    ],
+    "future_actions_with_deadlines": [
+      {
+        "action": "شرح اقدام آتی",
+        "deadline": "تاریخ هدف یا 'تعیین‌نشده'"
+      }
+    ],
+    "repetitiveness_assessment": {
+      "similarity_percentage": 15,
+      "is_duplicate_risk": false,
+      "analysis_details": "توضیح کوتاه در مورد شباهت گزارش با سوابق."
+    },
+    "strategic_alignment": {
+      "is_aligned": true,
+      "value_creation": "عالی / متوسط / ضعیف",
+      "wbs_matching_task": "کد یا نام بسته کاری WBS مرتبط",
+      "alignment_analysis": "بررسی تطابق استراتژیک فعالیت با هدف پروژه."
+    }
+  }
+}
+نکته مهم: خروجی باید فقط JSON معتبر به زبان فارسی باشد بدون هیچ عبارت اضافه یا Markdown.`;
+
+    const currentKpiSection = (currentReport.kpiValues && currentReport.kpiValues.length > 0)
+      ? `شاخص‌های ساختاریافته:\n${formatKpiValuesForPrompt(currentReport.kpiValues)}`
+      : `شاخص‌ها (متن آزاد): ${currentReport.kpi_text || "ثبت نشده"}`;
+
+    const userPrompt = `
+🏢 **سند مرجع WBS و اهداف استراتژیک پروژه:**
+${wbsContextText}
+
+---
+📜 **سابقه گزارش‌های قبلی همین کارشناس (جهت بررسی شباهت و کپی‌برداری):**
+${previousReportsText}
+
+---
+📝 **گزارش عملکرد جاری (جهت ممیزی و ارزیابی):**
+نویسنده: ${currentReport.user_full_name}
+پروژه: ${currentReport.project_title}
+فعالیت‌های انجام‌شده: ${currentReport.activities_done}
+نتایج حاصله: ${currentReport.results_achieved || "ثبت نشده"}
+${currentKpiSection}
+اقدامات آتی: ${currentReport.nextActions?.map((a: any) => `${a.action_text} (ددلاین: ${a.target_date || "ندارد"})`).join(", ") || "ثبت نشده"}
+`;
+
+    const result = await callAiWithFallback(systemPrompt, userPrompt);
+    res.json(result);
+  } catch (err: any) {
+    console.error("Single Report Audit Error:", err);
+    const clientError = config.NODE_ENV === "production"
+      ? "خطایی در ممیزی گزارش با هوش مصنوعی رخ داد."
+      : (err.message || "خطا در پردازش هوش مصنوعی.");
+    res.status(500).json({ error: clientError });
   }
 });
 
 // -----------------------------
-// manager and ahmadi users password fix for security
+// 13. Frontend Serving & Global Error Handler
 // -----------------------------
-
-// 👇 این تابع موقت را دقیقاً قبل از startServer اضافه کن 👇
-//async function fixExistingUsers() {
-  //try {
-    // کلمه عبور دلخواه (مثلاً همان 123456 پیش‌فرض) را هش می‌کنیم
-//    const hashedPassword = await bcrypt.hash("123456", 10);
-    
-    // بروزرسانی کاربر manager
-//    await prisma.user.updateMany({
-//      where: { username: "manager" },
-//      data: { password: hashedPassword }
-//    });
-    
-    // بروزرسانی کاربر ahmadi
-//    await prisma.user.updateMany({
-//      where: { username: "ahmadi" },
-//      data: { password: hashedPassword }
-//    });
-//    
-//    console.log("🟢 [امنیت] رمز عبور کاربران manager و ahmadi با موفقیت به صورت هش‌شده بروزرسانی شد.");
-//  } catch (err) {
-//    console.error("🔴 خطا در بروزرسانی امنیتی کاربران قدیمی:", err);
-//  }
-//}
-
-// صدا زدن تابع برای یک‌بار اجرا در زمان بوت شدن سرور
-//fixExistingUsers();
-// 👆 ==================================================== 👆
-
-// -----------------------------
-// VITE OR STATIC FRONTEND SERVING
-// -----------------------------
-
 async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
+  if (config.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -2502,9 +2665,38 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://0.0.0.0:${PORT}`);
+  // مدیریت خطاهای سراسری Express
+  app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    console.error("Unhandled Application Error:", err);
+    const statusCode = err.status || err.statusCode || 500;
+    const message = config.NODE_ENV === "production"
+      ? "خطایی در پردازش درخواست رخ داد."
+      : (err.message || "خطای ناشناخته سرور.");
+    res.status(statusCode).json({ error: message });
   });
+
+  const server = app.listen(config.PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://0.0.0.0:${config.PORT} [${config.NODE_ENV}]`);
+  });
+
+  // خاموش شدن ایمن سرور (Graceful Shutdown)
+  const shutdown = async (signal: string) => {
+    console.log(`\nReceived ${signal}. Shutting down gracefully...`);
+    server.close(async () => {
+      try {
+        await prisma.$disconnect();
+        await pool.end();
+        console.log("Database connections closed cleanly. Process exited.");
+        process.exit(0);
+      } catch (err) {
+        console.error("Error during graceful shutdown:", err);
+        process.exit(1);
+      }
+    });
+  };
+
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
 startServer();

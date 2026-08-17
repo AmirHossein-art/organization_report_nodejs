@@ -1,16 +1,18 @@
 import React, { useState, useRef } from "react";
-import { 
-  Plus, 
-  Trash2, 
-  Edit2, 
-  Upload, 
-  X, 
-  FileSpreadsheet, 
-  FolderKanban, 
+import {
+  Plus,
+  Trash2,
+  Edit2,
+  Upload,
+  X,
+  FileSpreadsheet,
+  FolderKanban,
   RefreshCw,
   Printer,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  Power,
+  PowerOff
 } from "lucide-react";
 import { Project } from "../types";
 import ReportsPdfDocument from "../components/ReportsPdfDocument";
@@ -41,6 +43,7 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
   const [editTitle, setEditTitle] = useState("");
   const [editCode, setEditCode] = useState("");
   const [editDescription, setEditDescription] = useState("");
+  const [editIsActive, setEditIsActive] = useState(true);
   const [editWbsFile, setEditWbsFile] = useState<File | null>(null);
   const [removeEditWbsFile, setRemoveEditWbsFile] = useState(false);
   const [isEditDragging, setIsEditDragging] = useState(false);
@@ -156,9 +159,37 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
     }
   };
 
-  // 🗑️ حذف کامل پروژه
+  // 🔄 تغییر وضعیت فعال / غیرفعال بودن پروژه توسط مدیر
+  const handleToggleProjectStatus = async (proj: Project) => {
+    const nextStatus = !proj.is_active;
+    const confirmMsg = nextStatus
+      ? `آیا از فعال‌سازی مجدد پروژه «${proj.title}» اطمینان دارید؟`
+      : `آیا از غیرفعال‌سازی پروژه «${proj.title}» اطمینان دارید؟ (سوابق و گزارش‌های پروژه محفوظ خواهد ماند)`;
+
+    if (!confirm(confirmMsg)) return;
+
+    try {
+      const formData = new FormData();
+      formData.append("is_active", String(nextStatus));
+      const res = await fetch(`/api/projects/${proj.id}`, {
+        method: "PUT",
+        body: formData,
+      });
+      if (res.ok && onRefresh) {
+        onRefresh();
+      } else {
+        const data = await res.json();
+        alert(data.error || "خطا در تغییر وضعیت پروژه");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("ارتباط با سرور برقرار نشد.");
+    }
+  };
+
+  // 🗑️ غیرفعال‌سازی نرم پروژه
   const handleDeleteProject = async (id: number) => {
-    if (!confirm("آیا از حذف این پروژه اطمینان دارید؟")) return;
+    if (!confirm("آیا از غیرفعال‌سازی این پروژه اطمینان دارید؟ (کلیه سوابق و گزارش‌های پروژه محفوظ خواهد ماند)")) return;
     try {
       const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });
       if (res.ok && onRefresh) onRefresh();
@@ -173,10 +204,11 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
     setEditTitle(proj.title);
     setEditCode(proj.code);
     setEditDescription(proj.description || "");
+    setEditIsActive(proj.is_active !== false);
     setEditWbsFile(null);
     setRemoveEditWbsFile(false);
   };
-  
+
   // 💾 ذخیره تغییرات پروژه (ویرایش)
   const handleUpdateProject = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -199,11 +231,11 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
       formData.append("code", editCode);
       formData.append("title", editTitle);
       formData.append("description", editDescription);
+      formData.append("is_active", String(editIsActive));
 
       if (editWbsFile) {
         formData.append("wbs_file", editWbsFile);
       } else if (removeEditWbsFile) {
-        // 🟢 ارسال صریح سیگنال حذف به بک‌اند
         formData.append("remove_wbs_file", "true");
       }
 
@@ -214,7 +246,7 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
 
       if (res.ok) {
         setEditingProject(null);
-        if (onRefresh) onRefresh(); // 🔄 فراخوانی لود مجدد لیست پروژه‌ها از سرور
+        if (onRefresh) onRefresh();
       } else {
         const data = await res.json();
         alert(data.error || "خطا در ویرایش پروژه");
@@ -228,7 +260,7 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
 
   return (
     <div className="space-y-6 animate-fade-in text-xs font-sans dir-rtl text-right">
-      
+
       {/* هدر */}
       <div className="border-b border-slate-200 pb-4 flex flex-col sm:flex-row justify-between sm:items-center gap-4">
         <div>
@@ -253,7 +285,7 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
+
         {/* 📝 فرم تعریف پروژه جدید */}
         <div className="bg-white rounded-3xl p-5 border border-slate-200/90 h-fit space-y-4 shadow-2xs">
           <h3 className="font-extrabold text-slate-900 border-b border-slate-100 pb-3 text-sm">
@@ -280,25 +312,26 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
                 required
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="عنوان کامل پروژه را وارد کنید"
+                placeholder="مثلاً: توسعه خطوط بی‌آرتی"
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-emerald-600"
               />
             </div>
 
             <div>
-              <label className="block text-slate-600 font-bold mb-1">شرح و اهداف پروژه:</label>
+              <label className="block text-slate-600 font-bold mb-1">شرح خلاصه پروژه:</label>
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
+                placeholder="توضیحات و اهداف کلیدی پروژه..."
                 rows={3}
-                placeholder="توضیحات مختصر..."
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-emerald-600"
               ></textarea>
             </div>
 
-            {/* Drag and Drop فایل WBS */}
+            {/* 📂 بخش بارگذاری فایل WBS با قابلیت Drag & Drop */}
             <div>
-              <label className="block text-slate-600 font-bold mb-1">فایل ساختار شکست (WBS Excel):</label>
+              <label className="block text-slate-600 font-bold mb-1">سند ساختار شکست کار WBS (اکسل):</label>
+
               <input
                 type="file"
                 ref={fileInputRef}
@@ -307,7 +340,17 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
                 className="hidden"
               />
 
-              {!wbsFile ? (
+              {wbsFile ? (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3 flex items-center justify-between text-xs animate-fade-in">
+                  <div className="flex items-center gap-2 truncate">
+                    <FileSpreadsheet className="w-5 h-5 text-emerald-600 shrink-0" />
+                    <span className="font-bold text-slate-800 truncate">{wbsFile.name}</span>
+                  </div>
+                  <button type="button" onClick={handleRemoveFile} className="text-rose-600 p-1 hover:bg-rose-100 rounded-lg cursor-pointer transition-colors">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
                 <div
                   onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
                   onDragLeave={(e) => { e.preventDefault(); setIsDragging(false); }}
@@ -325,16 +368,7 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
                 >
                   <Upload className="w-5 h-5 text-emerald-700" />
                   <span className="font-bold text-slate-700 text-xs">فایل اکسل WBS را اینجا رها کنید یا کلیک کنید</span>
-                </div>
-              ) : (
-                <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3 flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2 truncate">
-                    <FileSpreadsheet className="w-5 h-5 text-emerald-600 shrink-0" />
-                    <span className="font-bold text-slate-800 truncate">{wbsFile.name}</span>
-                  </div>
-                  <button type="button" onClick={handleRemoveFile} className="text-rose-600 p-1 hover:bg-rose-100 rounded-lg cursor-pointer">
-                    <X className="w-4 h-4" />
-                  </button>
+                  <span className="text-[10px] text-slate-400 font-sans">فقط فرمت‌های xlsx و xls</span>
                 </div>
               )}
             </div>
@@ -342,10 +376,10 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
             <button
               type="submit"
               disabled={isSubmitting}
-              className="w-full bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white py-2.5 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed shadow-md"
+              className="w-full bg-slate-900 text-white py-2.5 rounded-xl font-bold hover:bg-slate-800 disabled:bg-slate-400 transition-all cursor-pointer flex items-center justify-center gap-2 shadow-sm"
             >
               {isSubmitting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-              <span>ثبت پروژه جدید</span>
+              <span>ثبت و ایجاد پروژه</span>
             </button>
           </form>
         </div>
@@ -353,7 +387,7 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
         {/* 📊 لیست پروژه‌ها */}
         <div className="lg:col-span-2 bg-white rounded-3xl border border-slate-200 shadow-2xs overflow-hidden">
           <div className="p-4 bg-slate-50 border-b border-slate-200 font-bold text-slate-700 flex justify-between items-center">
-            <span>لیست پروژه‌های فعال سازمان</span>
+            <span>لیست پروژه‌های سازمان</span>
             <span className="bg-slate-200 text-slate-700 px-2.5 py-0.5 rounded-full text-[11px]">
               {toPersianDigits(projects.length)} پروژه
             </span>
@@ -370,22 +404,39 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
                       <span className="w-5 h-5 rounded-full bg-slate-900 text-white font-bold text-[10px] flex items-center justify-center font-sans shrink-0">
                         {proj.order_index || idx + 1}
                       </span>
-                      <h4 className="font-bold text-slate-900 text-sm">{proj.title}</h4>
+                      <h4 className={`font-bold text-sm ${proj.is_active ? "text-slate-900" : "text-slate-400 line-through"}`}>
+                        {proj.title}
+                      </h4>
                       <span className="font-mono text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md border border-slate-200 font-bold">
                         {toPersianDigits(proj.code)}
                       </span>
+                      {proj.is_active ? (
+                        <span className="text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full">
+                          فعال
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 px-2 py-0.5 rounded-full">
+                          غیرفعال
+                        </span>
+                      )}
                     </div>
                     <p className="text-slate-500 text-[11px] line-clamp-1">{proj.description}</p>
                     {proj.wbs_file_name && (
-                      <span className="inline-flex items-center gap-1 text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">
+                      <a
+                        href={`/api/projects/${proj.id}/wbs-file`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-[10px] text-emerald-700 hover:text-emerald-800 font-bold bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded-md border border-emerald-100 transition-colors"
+                        title="دانلود فایل اکسل WBS"
+                      >
                         <FileSpreadsheet className="w-3.5 h-3.5" /> فایل WBS: {proj.wbs_file_name}
-                      </span>
+                      </a>
                     )}
                   </div>
 
-                  {/* کنترل‌های رتبه‌بندی، ویرایش و حذف پروژه */}
+                  {/* کنترل‌های رتبه‌بندی، وضعیت، ویرایش و حذف پروژه */}
                   <div className="flex items-center gap-2 shrink-0 bg-slate-100/90 p-1.5 rounded-2xl border border-slate-200/80 shadow-2xs">
-                    
+
                     {/* فیلد وارد کردن عدد ترتیب خروجی */}
                     <div className="flex items-center gap-1 text-[10px] text-slate-600 font-bold px-1.5" title="ترتیب این پروژه در خروجی PDF">
                       <span className="hidden sm:inline">ترتیب:</span>
@@ -433,8 +484,23 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
 
                     <div className="w-[1px] h-6 bg-slate-300 mx-0.5"></div>
 
+                    {/* دکمه فعال/غیرفعال‌سازی سریع */}
+                    <button
+                      type="button"
+                      onClick={() => handleToggleProjectStatus(proj)}
+                      className={`p-2 rounded-xl transition-colors cursor-pointer border border-slate-200/60 ${
+                        proj.is_active
+                          ? "text-emerald-600 bg-white hover:bg-emerald-50"
+                          : "text-slate-400 bg-white hover:bg-slate-100"
+                      }`}
+                      title={proj.is_active ? "غیرفعال‌سازی پروژه" : "فعال‌سازی مجدد پروژه"}
+                    >
+                      {proj.is_active ? <Power className="w-3.5 h-3.5" /> : <PowerOff className="w-3.5 h-3.5" />}
+                    </button>
+
                     {/* دکمه ویرایش */}
                     <button
+                      type="button"
                       onClick={() => handleOpenEditModal(proj)}
                       className="p-2 text-blue-600 bg-white hover:bg-blue-50 rounded-xl transition-colors cursor-pointer border border-slate-200/60"
                       title="ویرایش مشخصات پروژه"
@@ -442,11 +508,12 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
                       <Edit2 className="w-3.5 h-3.5" />
                     </button>
 
-                    {/* دکمه حذف */}
+                    {/* دکمه غیرفعال‌سازی */}
                     <button
+                      type="button"
                       onClick={() => handleDeleteProject(proj.id)}
                       className="p-2 text-rose-600 bg-white hover:bg-rose-50 rounded-xl transition-colors cursor-pointer border border-slate-200/60"
-                      title="حذف پروژه"
+                      title="غیرفعال‌سازی پروژه"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -459,13 +526,13 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
 
       </div>
 
-      {/* ✏️ مودال ویرایش پروژه (با امکان مدیریت فایل WBS) */}
+      {/* ✏️ مودال ویرایش پروژه (با امکان مدیریت فایل WBS و وضعیت فعال بودن) */}
       {editingProject && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl w-full max-w-lg shadow-xl border border-slate-200 p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-slate-100 pb-3">
               <h3 className="font-extrabold text-slate-900 text-sm">ویرایش اطلاعات و فایل WBS پروژه</h3>
-              <button onClick={() => setEditingProject(null)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+              <button type="button" onClick={() => setEditingProject(null)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -503,10 +570,23 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
                 ></textarea>
               </div>
 
+              <div className="flex items-center gap-2 p-2 bg-slate-50 rounded-xl border border-slate-200">
+                <input
+                  type="checkbox"
+                  id="edit-is-active"
+                  checked={editIsActive}
+                  onChange={(e) => setEditIsActive(e.target.checked)}
+                  className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
+                />
+                <label htmlFor="edit-is-active" className="text-slate-700 font-bold text-xs cursor-pointer">
+                  پروژه فعال است (پروژه‌های غیرفعال در لیست گزارش‌دهی پرسنل نمایش داده نمی‌شوند)
+                </label>
+              </div>
+
               {/* 📂 مدیریت و ویرایش فایل WBS در مودال */}
               <div>
                 <label className="block text-slate-600 font-bold mb-1">مدیریت فایل WBS (اکسل):</label>
-                
+
                 <input
                   type="file"
                   ref={editFileInputRef}
@@ -530,10 +610,16 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
                   /* ۲. اگر فایل قبلی وجود دارد و هنوز حذف نشده است */
                   <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 space-y-2 text-xs">
                     <div className="flex items-center justify-between">
-                      <span className="font-bold text-slate-700 flex items-center gap-1.5">
+                      <a
+                        href={`/api/projects/${editingProject.id}/wbs-file`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-bold text-emerald-700 hover:text-emerald-800 flex items-center gap-1.5 transition-colors"
+                        title="دانلود فایل اکسل WBS"
+                      >
                         <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
                         فایل فعلی: {editingProject.wbs_file_name}
-                      </span>
+                      </a>
                       <button
                         type="button"
                         onClick={() => setRemoveEditWbsFile(true)}

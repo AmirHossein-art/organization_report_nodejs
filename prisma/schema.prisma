@@ -37,7 +37,7 @@ model User {
   id                   Int       @id @default(autoincrement())
   username             String    @unique
   full_name            String
-  password             String    @default("123456")
+  password             String
   role                 Role      @default(user)
   job_title            String?
   is_active            Boolean   @default(true)
@@ -52,14 +52,15 @@ model User {
 
 // ۲. جدول پروژه‌ها
 model Project {
-  id            Int      @id @default(autoincrement())
-  title         String
-  description   String?
-  wbs_file_name String?
-  code          String   @unique
-  order_index   Int      @default(0)
-  is_active     Boolean  @default(true)
-  created_at    DateTime @default(now())
+  id                   Int      @id @default(autoincrement())
+  title                String
+  description          String?
+  wbs_file_name        String?
+  wbs_storage_filename String?
+  code                 String   @unique
+  order_index          Int      @default(0)
+  is_active            Boolean  @default(true)
+  created_at           DateTime @default(now())
 
   userProjects UserProject[]
   reports      Report[]

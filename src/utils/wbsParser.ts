@@ -1,5 +1,4 @@
 import XLSX from "xlsx";
-import path from "path";
 import fs from "fs";
 
 export interface ParsedWBSResult {

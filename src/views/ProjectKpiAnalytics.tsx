@@ -1,7 +1,6 @@
 // src/views/ProjectKpiAnalytics.tsx
 import { useState, useEffect } from "react";
 import {
-  Target,
   TrendingUp,
   CheckCircle2,
   XCircle,

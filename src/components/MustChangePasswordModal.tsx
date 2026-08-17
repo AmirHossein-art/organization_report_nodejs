@@ -9,6 +9,7 @@ interface MustChangePasswordModalProps {
 }
 
 export default function MustChangePasswordModal({ user, onSuccess }: MustChangePasswordModalProps) {
+  const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
@@ -23,8 +24,8 @@ export default function MustChangePasswordModal({ user, onSuccess }: MustChangeP
       return;
     }
 
-    if (newPassword.length < 6) {
-      setErrorMsg("رمز عبور جدید باید حداقل ۶ کاراکتر باشد.");
+    if (newPassword.length < 10) {
+      setErrorMsg("رمز عبور جدید باید حداقل ۱۰ کاراکتر باشد.");
       return;
     }
 
@@ -39,8 +40,8 @@ export default function MustChangePasswordModal({ user, onSuccess }: MustChangeP
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          user_id: user.id,
-          newPassword,
+          current_password: currentPassword,
+          new_password: newPassword,
         }),
       });
 
@@ -79,7 +80,7 @@ export default function MustChangePasswordModal({ user, onSuccess }: MustChangeP
         <div className="bg-amber-50 border border-amber-200/80 text-amber-900 p-3.5 rounded-2xl text-[11px] flex items-start gap-2.5">
           <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
           <span>
-            جناب آقای <strong>{user.full_name}</strong>؛ رمز عبور فعلی شما موقت است. تا زمان تعیین رمز عبور جدید، امکان استفاده از پورتال وجود ندارد.
+            همکار گرامی <strong>{user.full_name}</strong>؛ رمز عبور فعلی شما موقت است. تا زمان تعیین رمز عبور اختصاصی جدید (حداقل ۱۰ کاراکتر)، امکان استفاده از پورتال وجود ندارد.
           </span>
         </div>
 
@@ -91,6 +92,21 @@ export default function MustChangePasswordModal({ user, onSuccess }: MustChangeP
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
+            <label className="block text-slate-700 font-bold mb-1 text-xs">رمز عبور موقت فعلی:</label>
+            <div className="relative">
+              <input
+                type="password"
+                required
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                placeholder="رمز عبور فعلی"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 pl-9 text-left font-sans text-xs focus:outline-none focus:border-emerald-600"
+              />
+              <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+            </div>
+          </div>
+
+          <div>
             <label className="block text-slate-700 font-bold mb-1 text-xs">رمز عبور جدید:</label>
             <div className="relative">
               <input
@@ -98,7 +114,7 @@ export default function MustChangePasswordModal({ user, onSuccess }: MustChangeP
                 required
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="حداقل ۶ کاراکتر"
+                placeholder="حداقل ۱۰ کاراکتر"
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 pl-9 text-left font-sans text-xs focus:outline-none focus:border-emerald-600"
               />
               <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3" />

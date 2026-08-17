@@ -99,7 +99,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
           </button>
 
           <div className="pt-4 text-center border-t border-slate-100 text-xs text-slate-400">
-            راهنما: رمز عبور پیش‌فرض برای تمامی پرسنل <code className="bg-slate-100 px-1.5 py-0.5 rounded font-mono font-medium text-slate-600">123456</code> می‌باشد.
+            در صورت فراموشی یا عدم دریافت رمز عبور، با مدیر سیستم تماس بگیرید.
           </div>
         </form>
       </div>

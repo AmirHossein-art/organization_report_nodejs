@@ -14,7 +14,7 @@ export default function ManageUsers({ users = [], onRefresh }: ManageUsersProps)
   const [newFullName, setNewFullName] = useState("");
   const [newUserRole, setNewUserRole] = useState<"user" | "manager">("user");
   const [newJobTitle, setNewJobTitle] = useState("");
-  const [newTemporaryPassword, setNewTemporaryPassword] = useState("123456");
+  const [newTemporaryPassword, setNewTemporaryPassword] = useState("");
   const [newMustChangePassword, setNewMustChangePassword] = useState(true);
 
   // استیت‌های ویرایش کاربر
@@ -30,6 +30,11 @@ export default function ManageUsers({ users = [], onRefresh }: ManageUsersProps)
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
+
+    if (!newTemporaryPassword || newTemporaryPassword.length < 10) {
+      alert("رمز عبور اولیه باید حداقل ۱۰ کاراکتر باشد.");
+      return;
+    }
 
     setIsSubmitting(true);
     try {
@@ -50,7 +55,7 @@ export default function ManageUsers({ users = [], onRefresh }: ManageUsersProps)
         setNewUsername("");
         setNewFullName("");
         setNewJobTitle("");
-        setNewTemporaryPassword("123456");
+        setNewTemporaryPassword("");
         setNewMustChangePassword(true);
         if (onRefresh) onRefresh();
       } else {
@@ -80,23 +85,32 @@ export default function ManageUsers({ users = [], onRefresh }: ManageUsersProps)
 
   // بازنشانی رمز عبور
   const handleResetPassword = async (id: number) => {
-    const pval = prompt("رمز عبور جدید را وارد نمایید:", "123456");
+    const pval = prompt("رمز عبور جدید موقت را وارد نمایید (حداقل ۱۰ کاراکتر):");
     if (pval === null) return;
+    if (pval.trim().length < 10) {
+      alert("رمز عبور جدید باید حداقل ۱۰ کاراکتر باشد.");
+      return;
+    }
     try {
-      await fetch(`/api/users/${id}/reset-password`, {
+      const res = await fetch(`/api/users/${id}/reset-password`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ temporary_password: pval }),
+        body: JSON.stringify({ temporary_password: pval.trim() }),
       });
-      alert("رمز عبور با موفقیت بازنشانی شد.");
+      if (res.ok) {
+        alert("رمز عبور با موفقیت بازنشانی شد.");
+      } else {
+        const data = await res.json();
+        alert(data.error || "خطا در بازنشانی رمز عبور.");
+      }
     } catch (err) { 
       console.error(err); 
     }
   };
 
-  // حذف کاربر
+  // غیرفعال‌سازی / حذف نرم کاربر
   const handleDelete = async (id: number) => {
-    if (!confirm("آیا از حذف حساب این پرسنل اطمینان دارید؟ تمامی داده‌های تخصیص و گزارش‌های وی پاک خواهند شد.")) return;
+    if (!confirm("آیا از غیرفعال‌سازی این حساب کاربری اطمینان دارید؟ کلیه سوابق و گزارش‌های پرسنل حفظ خواهد شد.")) return;
     try {
       const res = await fetch(`/api/users/${id}`, { method: "DELETE" });
       if (res.ok && onRefresh) onRefresh();
@@ -178,9 +192,10 @@ export default function ManageUsers({ users = [], onRefresh }: ManageUsersProps)
 
             <input 
               type="password" 
+              required
               value={newTemporaryPassword} 
               onChange={(e) => setNewTemporaryPassword(e.target.value)} 
-              placeholder="رمز عبور موقت اولیه" 
+              placeholder="رمز عبور موقت اولیه (حداقل ۱۰ کاراکتر)"
               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-left text-xs" 
             />
 

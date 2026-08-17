@@ -1,5 +1,5 @@
 // src/views/ProjectKpiManagement.tsx
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import {
   Plus,
   Trash2,
