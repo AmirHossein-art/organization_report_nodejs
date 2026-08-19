@@ -2333,11 +2333,11 @@ app.delete("/api/next-actions/:id", authenticate, requireManager, async (req, re
 async function callAiWithFallback(systemPrompt: string, userPrompt: string) {
   const providers = [
     {
-      id: "sambanova",
-      name: "SambaNova (Llama 3.3 70B)",
-      baseURL: process.env.AI_BASE_URL_1 || process.env.AI_BASE_URL || "https://api.sambanova.ai/v1",
+      id: "gemini",
+      name: "Google AI Studio (gemini-3.5-flash)",
+      baseURL: process.env.AI_BASE_URL_1 || process.env.AI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai/",
       apiKey: process.env.AI_API_KEY_1 || process.env.AI_API_KEY,
-      model: process.env.AI_MODEL_1 || process.env.AI_MODEL_NAME || "Meta-Llama-3.3-70B-Instruct",
+      model: process.env.AI_MODEL_1 || process.env.AI_MODEL_NAME || "gemini-3.5-flash",
     },
     {
       id: "cerebras",
@@ -2347,11 +2347,11 @@ async function callAiWithFallback(systemPrompt: string, userPrompt: string) {
       model: process.env.AI_MODEL_2 || "llama-3.3-70b",
     },
     {
-      id: "gemini",
-      name: "Google AI Studio (gemini-1.5-flash)",
-      baseURL: process.env.AI_BASE_URL_3 || "https://generativelanguage.googleapis.com/v1beta/openai/",
+      id: "sambanova",
+      name: "SambaNova (Llama 3.3 70B)",
+      baseURL: process.env.AI_BASE_URL_3 || "https://api.sambanova.ai/v1",
       apiKey: process.env.AI_API_KEY_3,
-      model: process.env.AI_MODEL_3 || "gemini-1.5-flash",
+      model: process.env.AI_MODEL_3 || "Meta-Llama-3.3-70B-Instruct",
     },
   ].filter((p) => p.apiKey && p.apiKey.trim() !== "");
 
