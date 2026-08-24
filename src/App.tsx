@@ -22,7 +22,7 @@ import ProjectKpiAnalytics from "./views/ProjectKpiAnalytics";
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [showLogin, setShowLogin] = useState(false);
+  const [showLogin, setShowLogin] = useState(true); // برای فعال‌سازی مجدد پرتال ورودی، مقدار اولیه را false قرار دهید
   
   const [currentView, setCurrentView] = useState<string>(() => {
     return localStorage.getItem("org_report_view") || "home";
@@ -86,6 +86,7 @@ export default function App() {
     } finally {
       setUser(null);
       setCurrentView("home");
+      setShowLogin(true);
     }
   };
 
