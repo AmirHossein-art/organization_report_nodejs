@@ -30,6 +30,14 @@ export interface ReportPeriod {
   period_start: string; // YYYY-MM-DD
   period_end: string;   // YYYY-MM-DD
   is_open: boolean;
+  deadline_override_at?: string | null;
+  grace_days_override?: number | null;
+  deadline_at?: string | null;
+  grace_until?: string | null;
+  deadline_phase?: "open" | "grace" | "closed";
+  is_deadline_overridden?: boolean;
+  is_grace_overridden?: boolean;
+  effective_grace_days?: number;
   created_at: string;
 }
 
@@ -98,6 +106,7 @@ export interface DeadlineSetting {
   report_type: "weekly" | "monthly";
   deadline_day: number; // For weekly: 0=Saturday, 1=Sunday... (or day of week). For monthly: day of month (1-31)
   deadline_time: string; // HH:MM
+  grace_days: number;
 }
 
 export interface DashboardSummary {

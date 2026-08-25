@@ -8,12 +8,16 @@ interface DeadlineSettingsProps {
 }
 
 export default function DeadlineSettings({ settings, onRefresh }: DeadlineSettingsProps) {
-  const handleUpdateDeadline = async (id: number, day: number, time: string) => {
+  const handleUpdateDeadline = async (id: number, day: number, time: string, graceDays: number) => {
     try {
       const res = await fetch(`/api/deadline-settings/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deadline_day: day, deadline_time: time }),
+        body: JSON.stringify({
+          deadline_day: day,
+          deadline_time: time,
+          grace_days: graceDays,
+        }),
       });
       if (res.ok) onRefresh();
     } catch (err) { console.error(err); }

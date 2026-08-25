@@ -29,6 +29,7 @@ import ProjectBubbleNode from "../components/ProjectBubbleNode";
 import ProjectNextActionsModal, { NextActionItem } from "../components/ProjectNextActionsDrawer";
 import Projects3DExplorer from "../components/projects-3d/Projects3DExplorer";
 import ReportsPdfDocument from "../components/ReportsPdfDocument";
+import { getDeadlineState } from "../deadline";
 
 // 🌐 تابع کمکی تبدیل اعداد انگلیسی به فارسی
 export const toPersianDigits = (n: string | number | undefined | null): string => {
@@ -55,25 +56,6 @@ const formatPersianDate = (
     timeZone: "Asia/Tehran",
   }).format(date);
 };
-
-// محاسبه تاریخ ددلاین ویرایش گزارش (مطابق منطق سمت سرور در server.ts)
-function getEditDeadlineDate(periodEnd: string, deadlineDay: number, deadlineTime: string, reportType: "weekly" | "monthly"): Date {
-  const deadlineDate = new Date(periodEnd + "T00:00:00");
-  if (reportType === "weekly") {
-    deadlineDate.setDate(deadlineDate.getDate() + 1);
-    while (deadlineDate.getDay() !== deadlineDay) {
-      deadlineDate.setDate(deadlineDate.getDate() + 1);
-    }
-  } else {
-    if (deadlineDay <= deadlineDate.getDate()) {
-      deadlineDate.setMonth(deadlineDate.getMonth() + 1);
-    }
-    deadlineDate.setDate(deadlineDay);
-  }
-  const [hours, minutes] = deadlineTime.split(":").map(Number);
-  deadlineDate.setHours(hours || 0, minutes || 0, 0, 0);
-  return deadlineDate;
-}
 
 interface MyReportsProps {
   currentUser?: User;
@@ -1040,11 +1022,13 @@ function ReportEditModal({
   isOpen,
   onClose,
   onSaved,
+  isGrace = false,
 }: {
   report: any | null;
   isOpen: boolean;
   onClose: () => void;
   onSaved: () => void;
+  isGrace?: boolean;
 }) {
   const [activitiesDone, setActivitiesDone] = useState("");
   const [extraResultsNotes, setExtraResultsNotes] = useState("");
@@ -1240,6 +1224,14 @@ function ReportEditModal({
         </div>
 
         {/* پیام‌های وضعیت */}
+        {isGrace && (
+          <div className="mx-6 mt-4 bg-amber-50 text-amber-900 font-medium px-4 py-3 rounded-xl flex items-center gap-2 border border-amber-300 text-xs">
+            <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
+            <span>
+              <strong>توجه:</strong> مهلت اصلی ارسال این دوره به پایان رسیده است. ویرایش شما در <strong>مهلت اضافه</strong> انجام می‌شود و گزارش با وضعیت <strong>«ارسال با تأخیر»</strong> ذخیره خواهد شد.
+            </span>
+          </div>
+        )}
         {successMsg && (
           <div className="mx-6 mt-4 bg-green-600 text-white font-medium px-4 py-3 rounded-xl flex items-center gap-2 border border-green-700">
             <CheckCircle2 className="w-5 h-5" /> <span>{successMsg}</span>
@@ -1542,33 +1534,40 @@ function ReportEditModal({
 // =================================================================
 // 📄 کامپوننت اصلی MyReports
 // =================================================================
-export default function MyReports({ currentUser, user, reports = [], allReports = [], onRefresh }: MyReportsProps) {
+export default function MyReports({ currentUser, user, reports = [], allReports = [], periods = [], onRefresh }: MyReportsProps) {
   const [editingReport, setEditingReport] = useState<any | null>(null);
   const [viewingReport, setViewingReport] = useState<any | null>(null);
   const [deadlineSettings, setDeadlineSettings] = useState<any[]>([]);
+  const [periodsList, setPeriodsList] = useState<ReportPeriod[]>(periods);
 
   useEffect(() => {
     fetch("/api/deadline-settings")
       .then((r) => (r.ok ? r.json() : []))
       .then((data) => setDeadlineSettings(Array.isArray(data) ? data : []))
       .catch(() => setDeadlineSettings([]));
+
+    fetch("/api/report-periods")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => setPeriodsList(Array.isArray(data) ? data : []))
+      .catch(() => {});
   }, []);
 
+  const getReportDeadlineState = (rep: any) => {
+    if (!rep || !rep.period_id) return null;
+    const period = periodsList.find((p) => p.id === rep.period_id) || (periods || []).find((p) => p.id === rep.period_id);
+    if (!period) return null;
+    const setting = deadlineSettings.find((s: any) => s.report_type === period.report_type || s.report_type === rep.report_type);
+    return getDeadlineState(period, setting, new Date());
+  };
+
   const isEditableBeforeDeadline = (rep: any): boolean => {
-    if (!rep || !rep.period_end || !rep.report_type) return false;
-    const setting = deadlineSettings.find((s: any) => s.report_type === rep.report_type);
-    if (!setting) return true; // اگر تنظیماتی نباشد کماکان قابل ویرایش است
-    try {
-      const deadlineDate = getEditDeadlineDate(
-        rep.period_end,
-        setting.deadline_day,
-        setting.deadline_time,
-        rep.report_type
-      );
-      return new Date() <= deadlineDate;
-    } catch {
-      return false;
-    }
+    if (!rep || !rep.period_id) return false;
+    const period = periodsList.find((p) => p.id === rep.period_id) || (periods || []).find((p) => p.id === rep.period_id);
+    if (!period) return true;
+    if (period.is_open === false) return false;
+    const setting = deadlineSettings.find((s: any) => s.report_type === period.report_type || s.report_type === rep.report_type);
+    const state = getDeadlineState(period, setting, new Date());
+    return state.phase !== "closed";
   };
 
   const activeUser = currentUser || user;
@@ -1684,6 +1683,7 @@ export default function MyReports({ currentUser, user, reports = [], allReports 
         report={editingReport}
         isOpen={Boolean(editingReport)}
         onClose={() => setEditingReport(null)}
+        isGrace={getReportDeadlineState(editingReport)?.phase === "grace"}
         onSaved={() => {
           if (onRefresh) onRefresh();
         }}

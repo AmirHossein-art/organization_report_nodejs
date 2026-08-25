@@ -72,9 +72,8 @@ export function CustomSelect({ value, onChange, options, className = "", dir = "
                     onChange(option.value);
                     setIsOpen(false);
                   }}
-                  className={`w-full text-right px-4 py-2 text-xs transition-colors hover:bg-slate-50 cursor-pointer ${
-                    isSelected ? "bg-slate-100 text-blue-600 font-semibold" : "text-slate-800"
-                  }`}
+                  className={`w-full text-right px-4 py-2 text-xs transition-colors hover:bg-slate-50 cursor-pointer ${isSelected ? "bg-slate-100 text-blue-600 font-semibold" : "text-slate-800"
+                    }`}
                 >
                   {option.label}
                 </button>
@@ -186,7 +185,7 @@ export function ShamsiDatePicker({ value, onChange, className = "", placeholder 
           value={displayValue}
           onClick={() => setIsOpen(!isOpen)}
           placeholder={placeholder}
-          className="w-full bg-slate-50 border border-slate-300 text-slate-900 rounded-xl px-3 py-2 text-xs text-left cursor-pointer focus:outline-none focus:ring-2 focus:ring-slate-900 transition-all hover:bg-slate-100"
+          className="w-full bg-slate-50 border border-slate-300 text-slate-900 rounded-xl px-3 py-2 text-xs text-right cursor-pointer focus:outline-none focus:ring-2 focus:ring-slate-900 transition-all hover:bg-slate-100"
         />
         <div className="absolute left-3 top-2.5 text-slate-400 pointer-events-none">
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -279,13 +278,12 @@ export function ShamsiDatePicker({ value, onChange, className = "", placeholder 
                   key={`day-${day}`}
                   type="button"
                   onClick={() => handleDaySelect(day)}
-                  className={`w-8 h-8 text-xs rounded-lg flex items-center justify-center transition-colors cursor-pointer ${
-                    isSelected
-                      ? "bg-slate-900 text-white font-bold"
-                      : isDayToday
+                  className={`w-8 h-8 text-xs rounded-lg flex items-center justify-center transition-colors cursor-pointer ${isSelected
+                    ? "bg-slate-900 text-white font-bold"
+                    : isDayToday
                       ? "border border-blue-600 text-blue-600 font-bold"
                       : "hover:bg-slate-100 text-slate-800"
-                  }`}
+                    }`}
                 >
                   {toPersianDigits(String(day))}
                 </button>
@@ -304,29 +302,36 @@ interface DeadlineSetting {
   report_type: "weekly" | "monthly";
   deadline_day: number;
   deadline_time: string;
+  grace_days?: number;
 }
 
 interface DeadlineCardProps {
   dl: DeadlineSetting;
-  onUpdate: (id: number, day: number, time: string) => void;
+  onUpdate: (id: number, day: number, time: string, graceDays: number) => void;
 }
 
 export function DeadlineCard({ dl, onUpdate }: DeadlineCardProps) {
   const [day, setDay] = useState(dl.deadline_day);
   const [time, setTime] = useState(dl.deadline_time);
+  const [graceDays, setGraceDays] = useState(dl.grace_days ?? 0);
 
   const daysOfWeek = ["شنبه", "یک‌شنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه"];
 
   return (
-    <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4">
-      <h3 className="font-bold text-slate-950 border-b border-slate-100 pb-2">
-        ددلاین {dl.report_type === "weekly" ? "گزارش‌های هفتگی" : "گزارش‌های ماهانه"}
-      </h3>
+    <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4 font-sans text-right dir-rtl">
+      <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+        <h3 className="font-bold text-slate-950 text-sm">
+          ددلاین {dl.report_type === "weekly" ? "گزارش‌های هفتگی" : "گزارش‌های ماهانه"}
+        </h3>
+        <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-2.5 py-0.5 rounded-full">
+          قاعده پیش‌فرض سامانه
+        </span>
+      </div>
 
       <div className="space-y-4 text-xs">
         {dl.report_type === "weekly" ? (
           <div>
-            <label className="block text-slate-600 font-medium mb-1.5">روز ددلاین در هفته</label>
+            <label className="block text-slate-600 font-medium mb-1.5">روز ددلاین در هفته (ددلاین اصلی)</label>
             <CustomSelect
               value={day}
               onChange={(val) => setDay(Number(val))}
@@ -338,7 +343,7 @@ export function DeadlineCard({ dl, onUpdate }: DeadlineCardProps) {
           </div>
         ) : (
           <div>
-            <label className="block text-slate-600 font-medium mb-1.5">روز ددلاین در ماه</label>
+            <label className="block text-slate-600 font-medium mb-1.5">روز ددلاین در ماه (ددلاین اصلی)</label>
             <input
               type="number"
               min={1}
@@ -356,14 +361,59 @@ export function DeadlineCard({ dl, onUpdate }: DeadlineCardProps) {
             type="time"
             value={time}
             onChange={(e) => setTime(e.target.value)}
-            className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-left"
+            className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-left font-mono"
           />
+        </div>
+
+        <div>
+          <label className="block text-slate-600 font-medium mb-1.5">
+            تعداد روز مهلت اضافه (مهلت ارسال/ویرایش با تأخیر)
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              max={30}
+              value={graceDays}
+              onChange={(e) => setGraceDays(Math.max(0, parseInt(e.target.value, 10) || 0))}
+              className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-left font-mono"
+              placeholder="0"
+            />
+            <span className="text-slate-500 font-medium text-xs shrink-0">روز تقویمی</span>
+          </div>
+          <p className="text-[11px] text-slate-400 mt-1">
+            {graceDays === 0
+              ? "مهلت اضافه غیرفعال است (مسدودسازی دقیقاً در ساعت ددلاین اصلی)."
+              : `تا ${toPersianDigits(graceDays)} روز تقویمی پس از ددلاین اصلی، ارسال با برچسب تأخیر پذیرفته می‌شود.`}
+          </p>
+        </div>
+
+        {/* راهنمای فازهای ددلاین */}
+        <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3.5 space-y-2 text-[11px] text-slate-600">
+          <div className="font-bold text-slate-800 flex items-center gap-1.5 text-xs">
+            <span>ℹ️</span>
+            <span>نحوه اعمال فازهای زمانی:</span>
+          </div>
+          <div className="space-y-1.5 leading-relaxed">
+            <div className="flex items-start gap-1.5">
+              <span className="text-emerald-600 font-bold">●</span>
+              <span><strong>تا ددلاین اصلی:</strong> ارسال و ویرایش به‌موقع است.</span>
+            </div>
+            <div className="flex items-start gap-1.5">
+              <span className="text-amber-600 font-bold">●</span>
+              <span><strong>پس از ددلاین و تا پایان مهلت اضافه:</strong> ارسال و ویرایش مجاز است ولی گزارش با تأخیر ثبت می‌شود.</span>
+            </div>
+            <div className="flex items-start gap-1.5">
+              <span className="text-rose-600 font-bold">●</span>
+              <span><strong>پس از پایان مهلت اضافه:</strong> ارسال و ویرایش به طور کامل بسته می‌شود.</span>
+            </div>
+          </div>
         </div>
 
         <div className="pt-2">
           <button
-            onClick={() => onUpdate(dl.id, day, time)}
-            className="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium py-2 rounded-xl text-xs cursor-pointer text-center"
+            onClick={() => onUpdate(dl.id, day, time, graceDays)}
+            className="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium py-2.5 rounded-xl text-xs cursor-pointer text-center transition-all shadow-sm"
           >
             ذخیره تنظیمات ددلاین
           </button>

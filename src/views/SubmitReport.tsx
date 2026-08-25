@@ -41,6 +41,20 @@ const formatPersianDate = (value: string | null | undefined): string => {
   }).format(date);
 };
 
+const formatPersianDateTime = (value: string | null | undefined): string => {
+  if (!value) return "تعیین‌نشده";
+  const date = new Date(value);
+  if (isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Tehran",
+  }).format(date);
+};
+
 interface SubmitReportProps {
   projects: Project[];
   periods: ReportPeriod[];
@@ -479,10 +493,46 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
                 لطفاً جهت نمایان شدن فیلدهای گزارش‌نویسی، ابتدا یک <strong>بازه گزارش‌دهی معتبر</strong> را از منوی بالای صفحه انتخاب نمایید.
               </p>
             </div>
-          ) : (
-            <>
-              {/* فیلد فعالیت‌های انجام شده */}
-              <div className="space-y-2">
+          ) : (() => {
+            const currentPeriod = periods.find((p) => p.id === subPeriodId);
+            const isClosed = !currentPeriod?.is_open || currentPeriod?.deadline_phase === "closed";
+            const isGrace = currentPeriod?.deadline_phase === "grace";
+
+            if (isClosed) {
+              return (
+                <div className="bg-rose-50 border border-rose-200 text-rose-900 p-6 rounded-2xl flex flex-col items-center justify-center text-center gap-3 animate-fade-in">
+                  <AlertTriangle className="w-8 h-8 text-rose-600" />
+                  <h4 className="font-bold text-sm">مهلت ارسال این گزارش به پایان رسیده است</h4>
+                  <p className="text-xs leading-relaxed max-w-md font-medium text-rose-700">
+                    بازه زمانی و مهلت اضافه تعیین‌شده برای این دوره منقضی گردیده است و امکان ارسال یا ویرایش گزارش جدید وجود ندارد.
+                  </p>
+                </div>
+              );
+            }
+
+            return (
+              <>
+                {/* بنر اطلاع‌رسانی وضعیت ددلاین دوره */}
+                {isGrace ? (
+                  <div className="bg-amber-50 border border-amber-300 text-amber-900 p-3.5 rounded-2xl flex items-center gap-3 animate-fade-in">
+                    <Clock className="w-5 h-5 text-amber-600 shrink-0" />
+                    <div className="text-xs leading-relaxed">
+                      <strong>مهلت اصلی پایان یافته است.</strong> این گزارش تا{" "}
+                      <strong>{formatPersianDateTime(currentPeriod?.grace_until)}</strong> با{" "}
+                      <span className="font-bold text-amber-700 underline">تأخیر</span> قابل ارسال یا ویرایش است.
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 p-3 rounded-2xl flex items-center gap-2.5 animate-fade-in text-xs">
+                    <Clock className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>
+                      مهلت ارسال به‌موقع تا: <strong>{formatPersianDateTime(currentPeriod?.deadline_at)}</strong>
+                    </span>
+                  </div>
+                )}
+
+                {/* فیلد فعالیت‌های انجام شده */}
+                <div className="space-y-2">
                 <label className="text-sm font-semibold text-slate-700">فعالیت‌های انجام‌شده *</label>
                 <textarea
                   required
@@ -825,8 +875,9 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
                   <span>ثبت نهایی گزارش عملکرد</span>
                 </button>
               </div>
-            </>
-          )}
+              </>
+            );
+          })()}
         </form>
       )}
     </div>

@@ -17,6 +17,7 @@ import pg from "pg";
 
 import { config } from "./src/config/env";
 import { parseExcelWBS } from "./src/utils/wbsParser";
+import { getDeadlineState } from "./src/deadline";
 
 const SALT_ROUNDS = 10;
 const app = express();
@@ -488,27 +489,6 @@ function serializeReport(report: any) {
         }))
       : [],
   };
-}
-
-function getDeadlineDate(periodEnd: Date, deadlineDay: number, deadlineTime: string, reportType: "weekly" | "monthly"): Date {
-  const deadlineDate = new Date(periodEnd);
-  
-  if (reportType === "weekly") {
-    deadlineDate.setDate(deadlineDate.getDate() + 1);
-    while (deadlineDate.getDay() !== deadlineDay) {
-      deadlineDate.setDate(deadlineDate.getDate() + 1);
-    }
-  } else {
-    if (deadlineDay <= periodEnd.getDate()) {
-      deadlineDate.setMonth(deadlineDate.getMonth() + 1);
-    }
-    deadlineDate.setDate(deadlineDay);
-  }
-
-  const [hours, minutes] = deadlineTime.split(":").map(Number);
-  deadlineDate.setHours(hours || 0, minutes || 0, 0, 0);
-  
-  return deadlineDate;
 }
 
 // استراتژی بازیابی فایل WBS با پشتیبانی از داده‌های قدیمی (Legacy Safe Lookup)
@@ -1048,14 +1028,38 @@ app.get("/api/projects/:id/wbs-file", authenticate, async (req: any, res) => {
 // -----------------------------
 app.get(["/api/report-periods", "/api/periods"], authenticate, async (_req, res) => {
   try {
-    const periods = await prisma.reportPeriod.findMany({
-      orderBy: { id: "asc" }
+    const [periods, deadlineSettings] = await Promise.all([
+      prisma.reportPeriod.findMany({
+        orderBy: { id: "asc" },
+      }),
+      prisma.deadlineSetting.findMany(),
+    ]);
+
+    const settingsMap = new Map<string, any>();
+    deadlineSettings.forEach((s) => settingsMap.set(s.report_type, s));
+
+    const now = new Date();
+
+    const serialized = periods.map((p) => {
+      const setting = settingsMap.get(p.report_type);
+      const state = getDeadlineState(p, setting, now);
+
+      return {
+        ...p,
+        period_start: p.period_start.toISOString().split("T")[0],
+        period_end: p.period_end.toISOString().split("T")[0],
+        deadline_override_at: p.deadline_override_at ? p.deadline_override_at.toISOString() : null,
+        grace_days_override: p.grace_days_override,
+        deadline_at: state.deadlineAt ? state.deadlineAt.toISOString() : null,
+        grace_until: state.graceUntil ? state.graceUntil.toISOString() : null,
+        deadline_phase: state.phase,
+        is_deadline_overridden: state.isDeadlineOverridden,
+        is_grace_overridden: state.isGraceOverridden,
+        effective_grace_days: state.graceDays,
+      };
     });
-    res.json(periods.map(p => ({
-      ...p,
-      period_start: p.period_start.toISOString().split("T")[0],
-      period_end: p.period_end.toISOString().split("T")[0]
-    })));
+
+    res.json(serialized);
   } catch (error) {
     console.error("Error fetching periods:", error);
     res.status(500).json({ error: "خطا در دریافت بازه‌های گزارش‌دهی" });
@@ -1064,7 +1068,31 @@ app.get(["/api/report-periods", "/api/periods"], authenticate, async (_req, res)
 
 app.post("/api/report-periods", authenticate, requireManager, async (req, res) => {
   try {
-    const { title, report_type, period_start, period_end } = req.body;
+    const {
+      title,
+      report_type,
+      period_start,
+      period_end,
+      deadline_override_at,
+      grace_days_override,
+    } = req.body;
+
+    let parsedOverrideAt: Date | null = null;
+    if (deadline_override_at) {
+      parsedOverrideAt = new Date(deadline_override_at);
+      if (isNaN(parsedOverrideAt.getTime())) {
+        return res.status(400).json({ error: "تاریخ ددلاین اختصاصی نامعتبر است." });
+      }
+    }
+
+    let parsedGraceOverride: number | null = null;
+    if (grace_days_override !== undefined && grace_days_override !== null && grace_days_override !== "") {
+      const num = parseInt(grace_days_override, 10);
+      if (isNaN(num) || num < 0) {
+        return res.status(400).json({ error: "تعداد روز مهلت اضافه نامعتبر است (باید عدد نامنفی باشد)." });
+      }
+      parsedGraceOverride = num;
+    }
 
     const newPeriod = await prisma.reportPeriod.create({
       data: {
@@ -1072,14 +1100,29 @@ app.post("/api/report-periods", authenticate, requireManager, async (req, res) =
         report_type,
         period_start: new Date(period_start),
         period_end: new Date(period_end),
-        is_open: true
+        is_open: true,
+        deadline_override_at: parsedOverrideAt,
+        grace_days_override: parsedGraceOverride,
       }
     });
+
+    const setting = await prisma.deadlineSetting.findFirst({
+      where: { report_type: newPeriod.report_type }
+    });
+    const state = getDeadlineState(newPeriod, setting, new Date());
 
     res.status(201).json({
       ...newPeriod,
       period_start: newPeriod.period_start.toISOString().split("T")[0],
-      period_end: newPeriod.period_end.toISOString().split("T")[0]
+      period_end: newPeriod.period_end.toISOString().split("T")[0],
+      deadline_override_at: newPeriod.deadline_override_at ? newPeriod.deadline_override_at.toISOString() : null,
+      grace_days_override: newPeriod.grace_days_override,
+      deadline_at: state.deadlineAt ? state.deadlineAt.toISOString() : null,
+      grace_until: state.graceUntil ? state.graceUntil.toISOString() : null,
+      deadline_phase: state.phase,
+      is_deadline_overridden: state.isDeadlineOverridden,
+      is_grace_overridden: state.isGraceOverridden,
+      effective_grace_days: state.graceDays,
     });
   } catch (error) {
     console.error("Error creating period:", error);
@@ -1090,11 +1133,44 @@ app.post("/api/report-periods", authenticate, requireManager, async (req, res) =
 app.put("/api/report-periods/:id", authenticate, requireManager, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { is_open, title, period_start, period_end } = req.body;
+    const {
+      is_open,
+      title,
+      period_start,
+      period_end,
+      deadline_override_at,
+      grace_days_override,
+    } = req.body;
 
     const existing = await prisma.reportPeriod.findUnique({ where: { id } });
     if (!existing) {
       return res.status(404).json({ error: "بازه گزارش پیدا نشد." });
+    }
+
+    let parsedOverrideAt: Date | null | undefined = undefined;
+    if (deadline_override_at !== undefined) {
+      if (deadline_override_at === null || deadline_override_at === "") {
+        parsedOverrideAt = null;
+      } else {
+        const dt = new Date(deadline_override_at);
+        if (isNaN(dt.getTime())) {
+          return res.status(400).json({ error: "تاریخ ددلاین اختصاصی نامعتبر است." });
+        }
+        parsedOverrideAt = dt;
+      }
+    }
+
+    let parsedGraceOverride: number | null | undefined = undefined;
+    if (grace_days_override !== undefined) {
+      if (grace_days_override === null || grace_days_override === "") {
+        parsedGraceOverride = null;
+      } else {
+        const num = parseInt(grace_days_override, 10);
+        if (isNaN(num) || num < 0) {
+          return res.status(400).json({ error: "تعداد روز مهلت اضافه نامعتبر است (باید عدد نامنفی باشد)." });
+        }
+        parsedGraceOverride = num;
+      }
     }
 
     const updated = await prisma.reportPeriod.update({
@@ -1103,14 +1179,29 @@ app.put("/api/report-periods/:id", authenticate, requireManager, async (req, res
         is_open: is_open !== undefined ? Boolean(is_open) : undefined,
         title: title !== undefined ? title : undefined,
         period_start: period_start !== undefined ? new Date(period_start) : undefined,
-        period_end: period_end !== undefined ? new Date(period_end) : undefined
+        period_end: period_end !== undefined ? new Date(period_end) : undefined,
+        deadline_override_at: parsedOverrideAt,
+        grace_days_override: parsedGraceOverride,
       }
     });
+
+    const setting = await prisma.deadlineSetting.findFirst({
+      where: { report_type: updated.report_type }
+    });
+    const state = getDeadlineState(updated, setting, new Date());
 
     res.json({
       ...updated,
       period_start: updated.period_start.toISOString().split("T")[0],
-      period_end: updated.period_end.toISOString().split("T")[0]
+      period_end: updated.period_end.toISOString().split("T")[0],
+      deadline_override_at: updated.deadline_override_at ? updated.deadline_override_at.toISOString() : null,
+      grace_days_override: updated.grace_days_override,
+      deadline_at: state.deadlineAt ? state.deadlineAt.toISOString() : null,
+      grace_until: state.graceUntil ? state.graceUntil.toISOString() : null,
+      deadline_phase: state.phase,
+      is_deadline_overridden: state.isDeadlineOverridden,
+      is_grace_overridden: state.isGraceOverridden,
+      effective_grace_days: state.graceDays,
     });
   } catch (error) {
     console.error("Error updating period:", error);
@@ -1482,18 +1573,28 @@ app.get("/api/deadline-settings", authenticate, async (_req, res) => {
 app.put("/api/deadline-settings/:id", authenticate, requireManager, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { deadline_day, deadline_time } = req.body;
+    const { deadline_day, deadline_time, grace_days } = req.body;
 
     const existing = await prisma.deadlineSetting.findUnique({ where: { id } });
     if (!existing) {
       return res.status(404).json({ error: "تنظیمات ددلاین پیدا نشد." });
     }
 
+    let parsedGraceDays: number | undefined = undefined;
+    if (grace_days !== undefined) {
+      const gNum = parseInt(grace_days, 10);
+      if (isNaN(gNum) || gNum < 0 || gNum > 90) {
+        return res.status(400).json({ error: "تعداد روزهای مهلت اضافه نامعتبر است (باید بین ۰ تا ۹۰ باشد)." });
+      }
+      parsedGraceDays = gNum;
+    }
+
     const updated = await prisma.deadlineSetting.update({
       where: { id },
       data: {
-        deadline_day: deadline_day !== undefined ? parseInt(deadline_day) : undefined,
-        deadline_time: deadline_time !== undefined ? deadline_time : undefined
+        deadline_day: deadline_day !== undefined ? parseInt(deadline_day, 10) : undefined,
+        deadline_time: deadline_time !== undefined ? deadline_time : undefined,
+        grace_days: parsedGraceDays,
       }
     });
 
@@ -1629,26 +1730,24 @@ app.post("/api/reports", authenticate, upload.array("files", 10), async (req: an
       req.user.role === "manager" ? "manager" : "user"
     );
 
-    const deadline = await prisma.deadlineSetting.findFirst({
+    const deadlineSetting = await prisma.deadlineSetting.findFirst({
       where: { report_type: report_type as any }
     });
-    let status: "submitted" | "late" = "submitted";
 
-    if (deadline) {
-      try {
-        const now = new Date();
-        const deadlineDate = getDeadlineDate(
-          new Date(period.period_end),
-          deadline.deadline_day,
-          deadline.deadline_time,
-          report_type as "weekly" | "monthly"
-        );
-        if (now > deadlineDate) {
-          status = "late";
+    const deadlineState = getDeadlineState(period, deadlineSetting, new Date());
+
+    if (req.user.role !== "manager") {
+      if (deadlineState.phase === "closed") {
+        if (uploadedFiles.length > 0) {
+          uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
         }
-      } catch (err) {
-        console.error("Error calculating dynamic deadline for POST:", err);
+        return res.status(400).json({ error: "مهلت ارسال این گزارش به پایان رسیده است." });
       }
+    }
+
+    let status: "submitted" | "late" = "submitted";
+    if (deadlineState.phase === "grace") {
+      status = "late";
     }
 
     const validatedKpiValues = await validateAndBuildKpiValues(
@@ -1766,25 +1865,41 @@ app.put("/api/reports/:id", authenticate, upload.array("files", 10), async (req:
       : [];
 
     const period = await prisma.reportPeriod.findUnique({ where: { id: existingReport.period_id } });
-    if (period && req.user.role !== "manager") {
-      const deadline = await prisma.deadlineSetting.findFirst({
-        where: { report_type: existingReport.report_type as any }
-      });
-      if (deadline) {
-        const now = new Date();
-        const deadlineDate = getDeadlineDate(
-          new Date(period.period_end),
-          deadline.deadline_day,
-          deadline.deadline_time,
-          existingReport.report_type as "weekly" | "monthly"
-        );
-        if (now > deadlineDate) {
-          if (uploadedFiles.length > 0) {
-            uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
-          }
-          return res.status(400).json({ error: "مهلت ویرایش این گزارش به پایان رسیده است." });
-        }
+    if (!period) {
+      if (uploadedFiles.length > 0) {
+        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
       }
+      return res.status(400).json({ error: "بازه گزارش‌دهی یافت نشد." });
+    }
+
+    const deadlineSetting = await prisma.deadlineSetting.findFirst({
+      where: { report_type: existingReport.report_type as any }
+    });
+
+    const deadlineState = getDeadlineState(period, deadlineSetting, new Date());
+
+    if (req.user.role !== "manager") {
+      if (!period.is_open) {
+        if (uploadedFiles.length > 0) {
+          uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+        }
+        return res.status(400).json({ error: "این بازه گزارش‌دهی بسته شده است و امکان ویرایش گزارش وجود ندارد." });
+      }
+
+      if (deadlineState.phase === "closed") {
+        if (uploadedFiles.length > 0) {
+          uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+        }
+        return res.status(400).json({ error: "مهلت ویرایش این گزارش به پایان رسیده است." });
+      }
+    }
+
+    // تعیین وضعیت جدید گزارش در زمان ویرایش:
+    // ۱. در صورت ویرایش در بازه مهلت اضافه (grace)، گزارش حتماً به وضعیت "late" تبدیل می‌شود.
+    // ۲. در صورت ویرایش در بازه عادی (open)، وضعیت قبلی گزارش حفظ می‌گردد (گزارش با تأخیر قبلی به صورت خودکار به submitted برنمی‌گردد).
+    let targetStatus = existingReport.status;
+    if (deadlineState.phase === "grace") {
+      targetStatus = "late";
     }
 
     let deletedFileIds: number[] = [];
@@ -1880,6 +1995,7 @@ app.put("/api/reports/:id", authenticate, upload.array("files", 10), async (req:
       return tx.report.update({
         where: { id },
         data: {
+          status: targetStatus,
           activities_done: activities_done !== undefined ? activities_done : undefined,
           results_achieved: finalResultsAchieved !== undefined ? finalResultsAchieved : undefined,
           kpi_text: kpi_text !== undefined ? kpi_text : undefined,

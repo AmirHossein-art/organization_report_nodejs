@@ -73,10 +73,12 @@ model ReportPeriod {
   id           Int        @id @default(autoincrement())
   title        String
   report_type  ReportType
-  period_start DateTime
-  period_end   DateTime
-  is_open      Boolean    @default(true)
-  created_at   DateTime   @default(now())
+  period_start         DateTime
+  period_end           DateTime
+  is_open              Boolean   @default(true)
+  deadline_override_at DateTime? @db.Timestamptz(3)
+  grace_days_override  Int?
+  created_at           DateTime  @default(now())
 
   reports Report[]
 }
@@ -216,4 +218,5 @@ model DeadlineSetting {
   report_type   ReportType
   deadline_day  Int
   deadline_time String // ذخیره به صورت فرمت "HH:MM"
+  grace_days    Int        @default(0)
 }
