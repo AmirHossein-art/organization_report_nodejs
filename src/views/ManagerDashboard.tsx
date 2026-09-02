@@ -19,7 +19,9 @@ import {
   Table as TableIcon, 
   Users, 
   FolderKanban, 
-  Printer
+  Printer,
+  Edit3,
+  Send
 } from "lucide-react";
 import { ReportPeriod, Project, User } from "../types";
 import { CustomSelect } from "../components";
@@ -320,7 +322,6 @@ export default function ManagerDashboard({
   const [selectedPeriodId, setSelectedPeriodId] = useState<number>(0);
   const [selectedProjectId, setSelectedProjectId] = useState<number>(0);
   const [selectedDeputy, setSelectedDeputy] = useState<string>("");
-
   // استخراج لیست یکتای نام معاونت‌ها
   const deputyOptions = useMemo(() => {
     const set = new Set<string>();
@@ -343,6 +344,12 @@ export default function ManagerDashboard({
   const [aiAnalysis, setAiAnalysis] = useState<AiAnalysisResult | null>(null);
   const [aiLoading, setAiLoading] = useState<boolean>(false);
   const [aiError, setAiError] = useState<string>("");
+
+  // استیت‌های بازنگری تعاملی مدیر برای تحلیل AI
+  const [showRevisionForm, setShowRevisionForm] = useState<boolean>(false);
+  const [managerComment, setManagerComment] = useState<string>("");
+  const [revisionLoading, setRevisionLoading] = useState<boolean>(false);
+  const [revisionSuccessMsg, setRevisionSuccessMsg] = useState<string>("");
 
   // استیت‌های ممیزی
   const [auditModalOpen, setAuditModalOpen] = useState<boolean>(false);
@@ -408,6 +415,8 @@ export default function ManagerDashboard({
 
     setAiLoading(true);
     setAiError("");
+    setRevisionSuccessMsg("");
+    setShowRevisionForm(false);
 
     try {
       const res = await fetch("/api/ai/strategic-analysis", {
@@ -431,6 +440,325 @@ export default function ManagerDashboard({
     } finally {
       setAiLoading(false);
     }
+  };
+
+  // ارسال نظر و دستور اصلاحی مدیر جهت بازنویسی و بازنگری تحلیل توسط AI
+  const handleReviseAiAnalysis = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!managerComment.trim() || !summaryData) return;
+
+    const submittedReports = (summaryData.rows || [])
+      .filter((r: any) => r.report !== null)
+      .map((r: any) => r.report);
+
+    if (submittedReports.length === 0) {
+      setAiError("هیچ گزارشی برای بازنگری یافت نشد.");
+      return;
+    }
+
+    setRevisionLoading(true);
+    setAiError("");
+    setRevisionSuccessMsg("");
+
+    try {
+      const res = await fetch("/api/ai/strategic-analysis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          period_title: summaryData.period ? summaryData.period.title : "دوره جاری",
+          reports: submittedReports,
+          manager_comment: managerComment.trim(),
+          previous_analysis: aiAnalysis,
+          force_refresh: true,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setAiAnalysis(data.analysis);
+        setRevisionSuccessMsg("تحلیل با موفقیت بر اساس بازخورد و دستورات شما بازنویسی و اصلاح شد.");
+        setShowRevisionForm(false);
+        setManagerComment("");
+        setTimeout(() => setRevisionSuccessMsg(""), 5000);
+      } else {
+        const errData = await res.json();
+        setAiError(errData.error || "خطا در اعمال بازنگری هوش مصنوعی.");
+      }
+    } catch (err) {
+      setAiError("عدم برقراری ارتباط با سرور برای بازنگری AI.");
+    } finally {
+      setRevisionLoading(false);
+    }
+  };
+
+  // چاپ و صدور PDF استاندارد و شکیل از کارت‌های تحلیل استراتژیک AI
+  const handlePrintAiAnalysis = () => {
+    if (!aiAnalysis) return;
+
+    const periodTitle = summaryData?.period ? summaryData.period.title : "دوره جاری";
+    const coverDate = new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+      timeZone: "Asia/Tehran",
+    }).format(new Date());
+
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      alert("لطفاً اجازه باز شدن پنجره چاپ (Pop-up) را در مرورگر خود بدهید.");
+      return;
+    }
+
+    const html = `
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <title>ارزیابی و تحلیل استراتژیک هوش مصنوعی - ${periodTitle}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800;900&display=swap');
+    
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+
+    body {
+      font-family: 'Vazirmatn', system-ui, -apple-system, sans-serif;
+      background: #ffffff;
+      color: #1e293b;
+      padding: 15mm 12mm;
+      line-height: 1.6;
+    }
+
+    @page {
+      size: A4 portrait;
+      margin: 10mm;
+    }
+
+    .header-banner {
+      background: linear-gradient(135deg, #0f172a, #064e3b);
+      color: #ffffff;
+      padding: 20px 24px;
+      border-radius: 16px;
+      margin-bottom: 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .header-title {
+      font-size: 17px;
+      font-weight: 800;
+      color: #fbbf24;
+      margin-bottom: 4px;
+    }
+
+    .header-subtitle {
+      font-size: 12px;
+      color: #cbd5e1;
+    }
+
+    .header-date {
+      font-size: 11px;
+      background: rgba(255,255,255,0.15);
+      padding: 6px 12px;
+      border-radius: 8px;
+      color: #ffffff;
+      font-weight: 600;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 2fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    .card {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 16px;
+      padding: 18px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      page-break-inside: avoid;
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 800;
+      color: #0f172a;
+      border-bottom: 2px solid #f1f5f9;
+      padding-bottom: 8px;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .health-score-box {
+      text-align: center;
+      padding: 10px;
+    }
+
+    .health-score-number {
+      font-size: 48px;
+      font-weight: 900;
+      color: #0f172a;
+      line-height: 1;
+    }
+
+    .status-badge {
+      display: inline-block;
+      margin-top: 10px;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 700;
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .list-item {
+      font-size: 11px;
+      color: #334155;
+      background: #f8fafc;
+      padding: 8px 10px;
+      border-radius: 8px;
+      margin-bottom: 8px;
+      border-right: 3px solid #10b981;
+      line-height: 1.5;
+    }
+
+    .list-item.rec {
+      border-right-color: #f59e0b;
+      background: #fffbeb;
+    }
+
+    .risk-item {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      padding: 8px 10px;
+      border-radius: 8px;
+      margin-bottom: 8px;
+      font-size: 11px;
+    }
+
+    .risk-header {
+      display: flex;
+      justify-content: space-between;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .risk-badge {
+      font-size: 9px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 700;
+    }
+
+    .risk-high { background: #ffe4e6; color: #9f1239; }
+    .risk-med { background: #fef3c7; color: #92400e; }
+
+    .footer {
+      margin-top: 24px;
+      text-align: center;
+      font-size: 10px;
+      color: #94a3b8;
+      border-top: 1px solid #e2e8f0;
+      padding-top: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header-banner">
+    <div>
+      <div class="header-title">📊 گزارش و ارزیابی استراتژیک هوش مصنوعی</div>
+      <div class="header-subtitle">سازمان حمل‌ونقل و ترافیک شهرداری تهران — ${periodTitle}</div>
+    </div>
+    <div class="header-date">📅 تاریخ صدور: ${coverDate}</div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card health-score-box">
+      <div style="font-size: 11px; font-weight: 700; color: #64748b; margin-bottom: 8px;">شاخص سلامت کلی پروژه‌ها</div>
+      <div class="health-score-number">${toPersianDigits(aiAnalysis.health_score || 0)}</div>
+      <div style="font-size: 11px; color: #94a3b8; margin-top: 4px;">از ۱۰۰</div>
+      <div class="status-badge">وضعیت: ${aiAnalysis.overall_status || "نامشخص"}</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">📈 خلاصه مدیریتی عملکرد سازمان</div>
+      <p style="font-size: 11.5px; color: #334155; line-height: 1.8; text-align: justify; white-space: pre-line;">
+        ${aiAnalysis.executive_summary}
+      </p>
+    </div>
+  </div>
+
+  <div class="grid-3">
+    <div class="card">
+      <div class="card-title">✅ دستاوردهای کلیدی</div>
+      ${(aiAnalysis.key_achievements || [])
+        .map((ach: string) => `<div class="list-item">${ach}</div>`)
+        .join("")}
+    </div>
+
+    <div class="card">
+      <div class="card-title">⚠️ ماتریس ریسک‌ها و موانع</div>
+      ${(aiAnalysis.risks_and_delays || [])
+        .map(
+          (risk: any) => `
+        <div class="risk-item">
+          <div class="risk-header">
+            <span>${risk.project_title}</span>
+            <span class="risk-badge ${risk.risk_level === "high" ? "risk-high" : "risk-med"}">
+              ${risk.risk_level === "high" ? "ریسک بالا" : "متوسط"}
+            </span>
+          </div>
+          <div style="color: #64748b; font-size: 10px;">${risk.description}</div>
+        </div>
+      `
+        )
+        .join("")}
+    </div>
+
+    <div class="card">
+      <div class="card-title">💡 پیشنهادات و اقدام‌ها</div>
+      ${(aiAnalysis.actionable_recommendations || [])
+        .map((rec: string) => `<div class="list-item rec">${rec}</div>`)
+        .join("")}
+    </div>
+  </div>
+
+  <div class="footer">
+    سامانه پیگیری و ممیزی استراتژیک سازمانی • گزارش هوشمند مدیر ارشد • محرمانه
+  </div>
+
+  <script>
+    window.onload = function() {
+      setTimeout(function() {
+        window.print();
+      }, 400);
+    };
+  </script>
+</body>
+</html>
+    `;
+
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
   };
 
   const rows = summaryData && summaryData.rows ? summaryData.rows : [];
@@ -697,7 +1025,110 @@ export default function ManagerDashboard({
 
       {/* خروجی تحلیل کلان دوره */}
       {aiAnalysis && (
-        <div className="space-y-6 animate-fade-in">
+        <div className="space-y-5 animate-fade-in">
+          {/* نوار ابزار اقدامات تحلیل (خروجی PDF و دکمه بازنگری/ویرایش) */}
+          <div className="bg-white p-4 rounded-3xl border border-slate-200/80 shadow-2xs flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-2xl bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center shrink-0">
+                <Sparkles className="w-4 h-4" />
+              </div>
+              <div>
+                <h4 className="font-black text-xs text-slate-900">کارت‌های ارزیابی و استراتژی هوش مصنوعی</h4>
+                <p className="text-[11px] text-slate-400">تحلیل تخصصی عملکرد دوره بر اساس مستندات ثبت‌شده</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {/* دکمه چاپ و خروجی PDF کارت‌ها */}
+              <button
+                type="button"
+                onClick={handlePrintAiAnalysis}
+                className="bg-emerald-800 hover:bg-emerald-900 text-white font-bold text-xs px-3.5 py-2 rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                title="چاپ یا ذخیره کارت‌های تحلیل به صورت فایل PDF"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>خروجی PDF کارت‌ها</span>
+              </button>
+
+              {/* دکمه ویرایش و بازنگری با هوش مصنوعی */}
+              <button
+                type="button"
+                onClick={() => setShowRevisionForm(!showRevisionForm)}
+                className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs px-3.5 py-2 rounded-xl transition-all border border-slate-200 flex items-center gap-1.5 cursor-pointer"
+                title="ارسال نظر یا اصلاحیه به هوش مصنوعی برای بازنویسی تحلیل"
+              >
+                <Edit3 className="w-3.5 h-3.5 text-amber-600" />
+                <span>{showRevisionForm ? "بستن فرم ویرایش" : "ویرایش و بازنگری با AI"}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* پیام موفقیت‌آمیز بودن بازنگری */}
+          {revisionSuccessMsg && (
+            <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl text-xs flex items-center gap-2 animate-fade-in font-medium">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{revisionSuccessMsg}</span>
+            </div>
+          )}
+
+          {/* فرم بازنگری تعاملی مدیر */}
+          {showRevisionForm && (
+            <div className="bg-gradient-to-br from-amber-50/80 to-orange-50/60 p-5 rounded-3xl border border-amber-200 shadow-xs space-y-3 animate-fade-in">
+              <div className="flex items-center justify-between">
+                <span className="font-extrabold text-xs text-amber-950 flex items-center gap-1.5">
+                  <Edit3 className="w-4 h-4 text-amber-600" />
+                  دستور بازنگری یا نکات تکمیلی مدیریت به هوش مصنوعی
+                </span>
+                <span className="text-[10px] text-amber-800 bg-amber-100 px-2.5 py-0.5 rounded-md font-bold">
+                  پرامپت اصلاحی اختصاصی
+                </span>
+              </div>
+
+              <p className="text-[11px] text-amber-900 leading-relaxed">
+                اگر با بخشی از تحلیل بالا موافق نیستید یا مایلید روی موضوع، پروژه یا ریسک خاصی تأکید بیشتری شود، نکته خود را بنویسید تا هوش مصنوعی بر اساس دستور شما گزارش را مجدداً تنظیم و بازنویسی کند:
+              </p>
+
+              <textarea
+                value={managerComment}
+                onChange={(e) => setManagerComment(e.target.value)}
+                placeholder="مثال: روی پروژه‌های تأخیردار مانند شارژ خودروی برقی بیشتر تمرکز کن و راهکار اجرایی فوری‌تری برای موانع اداری ارائه بده..."
+                className="w-full bg-white border border-amber-300 focus:border-amber-600 focus:ring-1 focus:ring-amber-500 rounded-2xl p-3.5 text-xs min-h-[90px] focus:outline-none transition-all placeholder:text-slate-400 leading-relaxed"
+              />
+
+              <div className="flex items-center justify-between pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowRevisionForm(false);
+                    setManagerComment("");
+                  }}
+                  className="text-xs text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-xl cursor-pointer font-medium"
+                >
+                  انصراف
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleReviseAiAnalysis}
+                  disabled={revisionLoading || !managerComment.trim()}
+                  className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs px-5 py-2.5 rounded-xl transition-all shadow-md flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {revisionLoading ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>در حال بازنویسی و اعمال نظرات...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-3.5 h-3.5" />
+                      <span>ارسال نظر و بازتولید تحلیل هوشمند</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-12 gap-5">
             <div className="md:col-span-4 bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs flex flex-col justify-between text-center relative overflow-hidden">
               <span className="text-slate-400 text-xs font-bold block">شاخص سلامت کلی پروژه‌ها</span>

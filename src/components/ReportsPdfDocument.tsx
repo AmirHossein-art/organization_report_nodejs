@@ -52,6 +52,7 @@ interface ReportsPdfDocumentProps {
   periods?: ReportPeriod[];
   projects?: Project[];
   users?: User[];
+  currentUser?: User;
   defaultPeriodId?: number;
 }
 
@@ -77,6 +78,7 @@ export default function ReportsPdfDocument({
   periods,
   projects,
   users,
+  currentUser,
   defaultPeriodId = 0,
 }: ReportsPdfDocumentProps) {
   const [selectedPeriodId, setSelectedPeriodId] = useState<number>(defaultPeriodId);
@@ -92,14 +94,40 @@ export default function ReportsPdfDocument({
   const printAreaRef = useRef<HTMLDivElement>(null);
   const isFetchingRef = useRef<boolean>(false);
 
-  // استخراج لیست یکتای نام معاونت‌ها
+  const isManager = !currentUser || currentUser.role === "manager";
+
+  // استخراج لیست یکتای نام معاونت‌ها (برای پرسنل عادی فقط معاونت خودش)
   const deputyOptions = useMemo(() => {
+    if (!isManager) {
+      const userDeputy = currentUser?.job_title?.trim();
+      if (userDeputy) return [userDeputy];
+      const set = new Set<string>();
+      localReports.forEach((r) => {
+        const dep = r.deputy_name || r.user_job_title;
+        if (dep && dep.trim()) set.add(dep.trim());
+      });
+      return Array.from(set);
+    }
     const set = new Set<string>();
     (localUsers || []).filter((u) => u.role === "user" && u.job_title).forEach((u) => {
       if (u.job_title && u.job_title.trim()) set.add(u.job_title.trim());
     });
     return Array.from(set);
-  }, [localUsers]);
+  }, [localUsers, localReports, currentUser, isManager]);
+
+  // پروژه‌های در دسترس (برای پرسنل عادی فقط پروژه‌های مربوط به گزارش‌های خودش)
+  const availableProjects = useMemo(() => {
+    if (isManager) return localProjects;
+    const projectIdsInReports = new Set(localReports.map((r) => r.project_id));
+    return localProjects.filter((p) => projectIdsInReports.has(p.id));
+  }, [localProjects, localReports, isManager]);
+
+  // دوره‌های در دسترس (برای پرسنل عادی فقط دوره‌هایی که گزارش دارند)
+  const availablePeriods = useMemo(() => {
+    if (isManager) return localPeriods;
+    const periodIdsInReports = new Set(localReports.map((r) => r.period_id));
+    return localPeriods.filter((p) => periodIdsInReports.has(p.id));
+  }, [localPeriods, localReports, isManager]);
 
   // بارگذاری داده‌ها هنگام باز شدن مودال
   useEffect(() => {
@@ -108,7 +136,7 @@ export default function ReportsPdfDocument({
       return;
     }
 
-    if (defaultPeriodId) {
+    if (defaultPeriodId !== undefined && defaultPeriodId !== null) {
       setSelectedPeriodId(defaultPeriodId);
     }
 
@@ -137,7 +165,7 @@ export default function ReportsPdfDocument({
           if (Array.isArray(reps)) setLocalReports(reps);
           if (Array.isArray(pers)) {
             setLocalPeriods(pers);
-            if (!defaultPeriodId && pers.length > 0) {
+            if (defaultPeriodId === undefined && pers.length > 0) {
               const openPeriod = pers.find((p: any) => p.is_open) || pers[0];
               setSelectedPeriodId(openPeriod.id);
             }
@@ -674,7 +702,7 @@ export default function ReportsPdfDocument({
               onChange={(val) => setSelectedPeriodId(Number(val))}
               options={[
                 { value: 0, label: "همه بازه‌ها" },
-                ...localPeriods.map((p) => ({ value: p.id, label: toPersianDigits(p.title) })),
+                ...availablePeriods.map((p) => ({ value: p.id, label: toPersianDigits(p.title) })),
               ]}
             />
           </div>
@@ -687,23 +715,25 @@ export default function ReportsPdfDocument({
               onChange={(val) => setSelectedProjectId(Number(val))}
               options={[
                 { value: 0, label: "همه پروژه‌ها" },
-                ...localProjects.map((pr) => ({ value: pr.id, label: pr.title })),
+                ...availableProjects.map((pr) => ({ value: pr.id, label: pr.title })),
               ]}
             />
           </div>
 
-          {/* فیلتر معاونت */}
-          <div className="w-48 sm:w-56">
-            <label className="text-[10px] text-slate-400 font-bold block mb-1">معاونت سازمانی:</label>
-            <CustomSelect
-              value={selectedDeputy}
-              onChange={(val) => setSelectedDeputy(String(val))}
-              options={[
-                { value: "", label: "همه معاونت‌ها" },
-                ...deputyOptions.map((d) => ({ value: d, label: d })),
-              ]}
-            />
-          </div>
+          {/* فیلتر معاونت (فقط برای مدیران یا در صورت وجود چند معاونت نمایش داده می‌شود) */}
+          {(isManager || deputyOptions.length > 1) && (
+            <div className="w-48 sm:w-56">
+              <label className="text-[10px] text-slate-400 font-bold block mb-1">معاونت سازمانی:</label>
+              <CustomSelect
+                value={selectedDeputy}
+                onChange={(val) => setSelectedDeputy(String(val))}
+                options={[
+                  { value: "", label: "همه معاونت‌ها" },
+                  ...deputyOptions.map((d) => ({ value: d, label: d })),
+                ]}
+              />
+            </div>
+          )}
         </div>
 
         {/* بدنه پیش‌نمایش سند PDF با ابعاد استاندارد A4 */}

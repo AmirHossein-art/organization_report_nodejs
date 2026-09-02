@@ -14,6 +14,7 @@ import cookieParser from "cookie-parser";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
+import crypto from "node:crypto";
 
 import { config } from "./src/config/env";
 import { parseExcelWBS } from "./src/utils/wbsParser";
@@ -242,8 +243,8 @@ function requireManager(req: any, res: any, next: any) {
 // -----------------------------
 // Validation Helpers for KPIs & Next Actions
 // -----------------------------
-class NextActionsValidationError extends Error {}
-class KpiValidationError extends Error {}
+class NextActionsValidationError extends Error { }
+class KpiValidationError extends Error { }
 
 const KPI_INPUT_TYPES = ["direct", "percentage_change"];
 const KPI_TARGET_DIRECTIONS = ["minimum", "maximum"];
@@ -478,15 +479,15 @@ function serializeReport(report: any) {
 
     kpiValues: Array.isArray(report.kpiValues)
       ? report.kpiValues.map((v: any) => ({
-          id: v.id,
-          project_kpi_id: v.project_kpi_id,
-          current_value: v.current_value,
-          baseline_value: v.baseline_value,
-          calculated_value: v.calculated_value,
-          not_measured: v.not_measured,
-          missing_reason: v.missing_reason,
-          created_at: v.created_at ? v.created_at.toISOString() : null,
-        }))
+        id: v.id,
+        project_kpi_id: v.project_kpi_id,
+        current_value: v.current_value,
+        baseline_value: v.baseline_value,
+        calculated_value: v.calculated_value,
+        not_measured: v.not_measured,
+        missing_reason: v.missing_reason,
+        created_at: v.created_at ? v.created_at.toISOString() : null,
+      }))
       : [],
   };
 }
@@ -884,7 +885,7 @@ app.post("/api/projects", authenticate, requireManager, uploadWBS.single("wbs_fi
     res.status(201).json(newProject);
   } catch (error) {
     if (file && fs.existsSync(file.path)) {
-      try { fs.unlinkSync(file.path); } catch (_) {}
+      try { fs.unlinkSync(file.path); } catch (_) { }
     }
     console.error("Error creating project:", error);
     res.status(500).json({ error: "خطا در ساخت پروژه در دیتابیس" });
@@ -952,14 +953,14 @@ app.put("/api/projects/:id", authenticate, requireManager, uploadWBS.single("wbs
 
     // پس از موفقیت در دیتابیس، فایل قدیمی پاک می‌شود
     if (oldPhysicalPathToDelete && fs.existsSync(oldPhysicalPathToDelete)) {
-      try { fs.unlinkSync(oldPhysicalPathToDelete); } catch (_) {}
+      try { fs.unlinkSync(oldPhysicalPathToDelete); } catch (_) { }
     }
 
     res.json(updatedProject);
   } catch (error) {
     // در صورت بروز خطا در دیتابیس، فایل جدید آپلود شده پاک می‌شود
     if (file && fs.existsSync(file.path)) {
-      try { fs.unlinkSync(file.path); } catch (_) {}
+      try { fs.unlinkSync(file.path); } catch (_) { }
     }
     console.error("Error updating project:", error);
     res.status(500).json({ error: "خطا در ویرایش اطلاعات پروژه در دیتابیس" });
@@ -1655,7 +1656,7 @@ app.post("/api/reports", authenticate, upload.array("files", 10), async (req: an
 
     if (!project || !period) {
       if (uploadedFiles.length > 0) {
-        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
       }
       return res.status(400).json({ error: "اطلاعات پروژه یا بازه گزارش‌دهی نامعتبر است." });
     }
@@ -1663,7 +1664,7 @@ app.post("/api/reports", authenticate, upload.array("files", 10), async (req: an
     // اعتبارسنجی نوع گزارش با نوع بازه
     if (report_type !== period.report_type) {
       if (uploadedFiles.length > 0) {
-        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
       }
       return res.status(400).json({ error: "نوع گزارش ارسالی با نوع بازه گزارش‌دهی مطابقت ندارد." });
     }
@@ -1672,14 +1673,14 @@ app.post("/api/reports", authenticate, upload.array("files", 10), async (req: an
     if (req.user.role !== "manager") {
       if (!project.is_active) {
         if (uploadedFiles.length > 0) {
-          uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+          uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
         }
         return res.status(400).json({ error: "این پروژه غیرفعال است و امکان ثبت گزارش برای آن وجود ندارد." });
       }
 
       if (!period.is_open) {
         if (uploadedFiles.length > 0) {
-          uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+          uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
         }
         return res.status(400).json({ error: "این بازه گزارش‌دهی بسته شده است و امکان ثبت گزارش وجود ندارد." });
       }
@@ -1689,7 +1690,7 @@ app.post("/api/reports", authenticate, upload.array("files", 10), async (req: an
       });
       if (!allocation) {
         if (uploadedFiles.length > 0) {
-          uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+          uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
         }
         return res.status(403).json({ error: "شما به این پروژه تخصیص داده نشده‌اید." });
       }
@@ -1702,7 +1703,7 @@ app.post("/api/reports", authenticate, upload.array("files", 10), async (req: an
     const user = await prisma.user.findUnique({ where: { id: targetUserId } });
     if (!user) {
       if (uploadedFiles.length > 0) {
-        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
       }
       return res.status(400).json({ error: "کاربر مورد نظر یافت نشد." });
     }
@@ -1717,7 +1718,7 @@ app.post("/api/reports", authenticate, upload.array("files", 10), async (req: an
 
     if (existingReport) {
       if (uploadedFiles.length > 0) {
-        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
       }
       return res.status(400).json({ error: "شما قبلاً برای این پروژه در این دوره گزارش ثبت کرده‌اید." });
     }
@@ -1739,7 +1740,7 @@ app.post("/api/reports", authenticate, upload.array("files", 10), async (req: an
     if (req.user.role !== "manager") {
       if (deadlineState.phase === "closed") {
         if (uploadedFiles.length > 0) {
-          uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+          uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
         }
         return res.status(400).json({ error: "مهلت ارسال این گزارش به پایان رسیده است." });
       }
@@ -1793,12 +1794,12 @@ app.post("/api/reports", authenticate, upload.array("files", 10), async (req: an
           : undefined,
         files: uploadedFiles.length
           ? {
-              create: uploadedFiles.map((file: any) => ({
-                filename: file.filename,
-                original_filename: file.originalname,
-                file_size: file.size,
-              })),
-            }
+            create: uploadedFiles.map((file: any) => ({
+              filename: file.filename,
+              original_filename: file.originalname,
+              file_size: file.size,
+            })),
+          }
           : undefined,
       },
       include: { files: true, nextActions: true, achievedActions: true, kpiValues: true }
@@ -1818,7 +1819,7 @@ app.post("/api/reports", authenticate, upload.array("files", 10), async (req: an
     res.status(201).json(serializeReport(newReport));
   } catch (error) {
     if (uploadedFiles.length > 0) {
-      uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+      uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
     }
     console.error("Error creating report:", error);
     res.status(error instanceof NextActionsValidationError || error instanceof KpiValidationError ? 400 : 500).json({
@@ -1838,7 +1839,7 @@ app.put("/api/reports/:id", authenticate, upload.array("files", 10), async (req:
     const existingReport = await prisma.report.findUnique({ where: { id } });
     if (!existingReport) {
       if (uploadedFiles.length > 0) {
-        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
       }
       return res.status(404).json({ error: "گزارش پیدا نشد." });
     }
@@ -1846,7 +1847,7 @@ app.put("/api/reports/:id", authenticate, upload.array("files", 10), async (req:
     // کنترل BOLA: کاربر عادی تنها مجاز به ویرایش گزارش خودش است
     if (req.user.role !== "manager" && existingReport.user_id !== req.user.id) {
       if (uploadedFiles.length > 0) {
-        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
       }
       return res.status(403).json({ error: "شما مجاز به ویرایش این گزارش نیستید." });
     }
@@ -1857,17 +1858,17 @@ app.put("/api/reports/:id", authenticate, upload.array("files", 10), async (req:
 
     const parsedNextActions = shouldUpdateNextActions
       ? parseNextActions(
-          next_actions,
-          existingReport.project_id,
-          existingReport.user_id,
-          req.user.role === "manager" ? "manager" : "user"
-        )
+        next_actions,
+        existingReport.project_id,
+        existingReport.user_id,
+        req.user.role === "manager" ? "manager" : "user"
+      )
       : [];
 
     const period = await prisma.reportPeriod.findUnique({ where: { id: existingReport.period_id } });
     if (!period) {
       if (uploadedFiles.length > 0) {
-        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
       }
       return res.status(400).json({ error: "بازه گزارش‌دهی یافت نشد." });
     }
@@ -1881,14 +1882,14 @@ app.put("/api/reports/:id", authenticate, upload.array("files", 10), async (req:
     if (req.user.role !== "manager") {
       if (!period.is_open) {
         if (uploadedFiles.length > 0) {
-          uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+          uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
         }
         return res.status(400).json({ error: "این بازه گزارش‌دهی بسته شده است و امکان ویرایش گزارش وجود ندارد." });
       }
 
       if (deadlineState.phase === "closed") {
         if (uploadedFiles.length > 0) {
-          uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+          uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
         }
         return res.status(400).json({ error: "مهلت ویرایش این گزارش به پایان رسیده است." });
       }
@@ -1914,7 +1915,7 @@ app.put("/api/reports/:id", authenticate, upload.array("files", 10), async (req:
         physicalFilesToDeleteAfterDb = filesToDelete
           .map((rf) => safeResolvePath(uploadDir, rf.filename))
           .filter((p): p is string => p !== null);
-      } catch (_) {}
+      } catch (_) { }
     }
 
     const validatedKpiValues = kpi_values !== undefined
@@ -2007,14 +2008,14 @@ app.put("/api/reports/:id", authenticate, upload.array("files", 10), async (req:
     // حذف فایل‌های فیزیکی پس از اتمام موفقیت‌آمیز تراکنش دیتابیس
     for (const fp of physicalFilesToDeleteAfterDb) {
       if (fs.existsSync(fp)) {
-        try { fs.unlinkSync(fp); } catch (_) {}
+        try { fs.unlinkSync(fp); } catch (_) { }
       }
     }
 
     res.json(serializeReport(updated));
   } catch (error) {
     if (uploadedFiles.length > 0) {
-      uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) {} });
+      uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
     }
     console.error("Error updating report:", error);
     res.status(error instanceof NextActionsValidationError ? 400 : 500).json({
@@ -2069,19 +2070,122 @@ app.delete("/api/report-files/:id", authenticate, async (req: any, res) => {
       return res.status(403).json({ error: "شما مجاز به حذف این فایل نیستید." });
     }
 
+    // کنترل ددلاین برای کاربران عادی (همانند ویرایش گزارش)
+    if (req.user.role !== "manager") {
+      const period = await prisma.reportPeriod.findUnique({ where: { id: file.report.period_id } });
+      if (!period || !period.is_open) {
+        return res.status(400).json({ error: "این بازه گزارش‌دهی بسته شده است و امکان حذف فایل وجود ندارد." });
+      }
+
+      const deadlineSetting = await prisma.deadlineSetting.findFirst({
+        where: { report_type: file.report.report_type as any }
+      });
+      const deadlineState = getDeadlineState(period, deadlineSetting, new Date());
+      if (deadlineState.phase === "closed") {
+        return res.status(400).json({ error: "مهلت ویرایش این گزارش به پایان رسیده است و امکان حذف فایل وجود ندارد." });
+      }
+    }
+
     const filePath = safeResolvePath(uploadDir, file.filename);
 
     // حذف رکورد از دیتابیس قبل از فایل فیزیکی
     await prisma.reportFile.delete({ where: { id } });
 
     if (filePath && fs.existsSync(filePath)) {
-      try { fs.unlinkSync(filePath); } catch (_) {}
+      try { fs.unlinkSync(filePath); } catch (_) { }
     }
 
     res.json({ success: true });
   } catch (error) {
     console.error("Error deleting report file:", error);
     res.status(500).json({ error: "خطا در حذف فایل گزارش در دیتابیس" });
+  }
+});
+
+// -----------------------------
+// اندپوینت‌های خروجی PDF گزارش‌ها
+// -----------------------------
+
+// دریافت اطلاعات یک گزارش خاص جهت خروجی PDF
+app.get("/api/reports/:id/pdf-data", authenticate, async (req: any, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ error: "شناسه گزارش نامعتبر است." });
+    }
+
+    const report = await prisma.report.findUnique({
+      where: { id },
+      include: {
+        user: true,
+        project: true,
+        period: true,
+        files: true,
+        nextActions: true,
+        achievedActions: true,
+        kpiValues: true,
+      },
+    });
+
+    if (!report) {
+      return res.status(404).json({ error: "گزارش مورد نظر یافت نشد." });
+    }
+
+    // کنترل BOLA: کاربر عادی فقط می‌تواند گزارش خودش را دریافت کند
+    if (req.user.role !== "manager" && report.user_id !== req.user.id) {
+      return res.status(403).json({ error: "شما مجاز به دریافت خروجی PDF این گزارش نیستید." });
+    }
+
+    res.json(serializeReport(report));
+  } catch (error) {
+    console.error("Error fetching report PDF data:", error);
+    res.status(500).json({ error: "خطا در دریافت اطلاعات گزارش برای PDF" });
+  }
+});
+
+// دریافت تمامی گزارش‌های مجاز کاربر (یا بر اساس معاونت) جهت خروجی PDF تجمیعی
+app.get("/api/reports/pdf-data/all", authenticate, async (req: any, res) => {
+  try {
+    // برای مدیران: همه گزارش‌ها؛ برای کاربران عادی: فقط گزارش‌های خود کاربر
+    // هویت و محدوده سازمانی به طور کامل از نشست احرازهویت‌شده استخراج می‌شود
+    const where: any = req.user.role === "manager" ? {} : { user_id: req.user.id };
+
+    // فیلترهای اختیاری بر اساس دوره یا پروژه
+    if (req.query.period_id) {
+      const pId = parseInt(req.query.period_id as string);
+      if (!isNaN(pId)) where.period_id = pId;
+    }
+    if (req.query.project_id) {
+      const prId = parseInt(req.query.project_id as string);
+      if (!isNaN(prId)) where.project_id = prId;
+    }
+
+    const reports = await prisma.report.findMany({
+      where,
+      include: {
+        user: true,
+        project: true,
+        period: true,
+        files: true,
+        nextActions: true,
+        achievedActions: true,
+        kpiValues: true,
+      },
+      orderBy: [
+        { period: { period_start: "asc" } },
+        { project: { order_index: "asc" } },
+        { submitted_at: "asc" },
+      ],
+    });
+
+    if (reports.length === 0) {
+      return res.status(404).json({ error: "هیچ گزارشی برای صدور PDF یافت نشد." });
+    }
+
+    res.json(reports.map(serializeReport));
+  } catch (error) {
+    console.error("Error fetching bulk PDF data:", error);
+    res.status(500).json({ error: "خطا در دریافت اطلاعات گزارش‌ها برای PDF" });
   }
 });
 
@@ -2418,8 +2522,8 @@ app.patch("/api/next-actions/:id/toggle", authenticate, requireManager, async (r
         claimed_completed: shouldResetClaim
           ? false
           : action.claimed_report_id !== null
-          ? true
-          : false,
+            ? true
+            : false,
         claimed_report_id: shouldResetClaim ? null : action.claimed_report_id,
         claimed_at: shouldResetClaim ? null : action.claimed_at,
       },
@@ -2446,7 +2550,44 @@ app.delete("/api/next-actions/:id", authenticate, requireManager, async (req, re
 // -----------------------------
 // 12. AI Strategy & Audit Endpoints
 // -----------------------------
-async function callAiWithFallback(systemPrompt: string, userPrompt: string) {
+
+// ساختار داده کش
+interface CachedAiResponse {
+  data: { analysis: any; model_used: string };
+  expiresAt: number;
+  createdAt: string;
+}
+// حافظه موقت کش و تنظیم زمان پیش‌فرض (پیش‌فرض: ۱ هفته)
+const aiResponseCache = new Map<string, CachedAiResponse>();
+const AI_CACHE_TTL_MS = (Number(process.env.AI_CACHE_TTL_MINUTES) || 60 * 24 * 7) * 60 * 1000;
+// تابع تولید کلید یکتا بر اساس محتوای پرامپت‌ها
+function generateAiCacheKey(systemPrompt: string, userPrompt: string): string {
+  return crypto
+    .createHash("sha256")
+    .update(`${systemPrompt}:::${userPrompt}`)
+    .digest("hex");
+}
+
+async function callAiWithFallback(
+  systemPrompt: string,
+  userPrompt: string,
+  options: { forceRefresh?: boolean } = {}
+) {
+  const cacheKey = generateAiCacheKey(systemPrompt, userPrompt);
+  const now = Date.now();
+  // ۱. بررسی وجود در کش و معتبر بودن تاریخ انقضا
+  if (!options.forceRefresh && aiResponseCache.has(cacheKey)) {
+    const cached = aiResponseCache.get(cacheKey)!;
+    if (cached.expiresAt > now) {
+      return {
+        ...cached.data,
+        cached: true,
+        cached_at: cached.createdAt,
+      };
+    }
+    aiResponseCache.delete(cacheKey); // پاکسازی کش منقضی‌شده
+  }
+
   const providers = [
     {
       id: "gemini",
@@ -2520,16 +2661,25 @@ async function callAiWithFallback(systemPrompt: string, userPrompt: string) {
           { role: "user", content: userPrompt },
         ],
         temperature: 0.0,
+        seed: 42,
       });
 
       const rawContent = completion.choices[0]?.message?.content || "";
       const parsed = parseJsonFromText(rawContent);
       const analysisData = parsed.analysis ? parsed.analysis : parsed;
 
-      return {
+      const result = {
         analysis: analysisData,
         model_used: provider.name,
       };
+
+      aiResponseCache.set(cacheKey, {
+        data: result,
+        expiresAt: now + AI_CACHE_TTL_MS,
+        createdAt: new Date().toISOString(),
+      });
+
+      return result;
     } catch (err: any) {
       const persianErr = formatPersianError(err, provider.name);
       console.warn(`⚠️ ${persianErr} -> در حال سوئیچ به تامین‌کننده بعدی...`);
@@ -2575,7 +2725,7 @@ function formatKpiValuesForPrompt(kpiValues: any[] | undefined): string {
 // اندپوینت تحلیل استراتژیک کلان دوره (مدیریتی)
 app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, requireManager, aiLimiter, async (req, res) => {
   try {
-    const { period_title, reports } = req.body;
+    const { period_title, reports, force_refresh, manager_comment, previous_analysis } = req.body;
     const submittedReports = Array.isArray(reports)
       ? reports.filter((r: any) => r.activities_done && r.activities_done.trim() !== "")
       : [];
@@ -2590,12 +2740,12 @@ app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, r
           ? `شاخص‌های ساختاریافته:\n${formatKpiValuesForPrompt(r.kpiValues)}`
           : `شاخص‌ها (متن آزاد): ${r.kpi_text || "ثبت نشده"}`;
         return `--- گزارش ${index + 1} ---
-نویسنده: ${r.user_full_name}
-پروژه: ${r.project_title}
-فعالیت‌ها: ${r.activities_done}
-نتایج: ${r.results_achieved || "ثبت نشده"}
-اقدامات آتی: ${formatNextActionsForPrompt(r.nextActions)}
-${kpiSection}`;
+          نویسنده: ${r.user_full_name}
+          پروژه: ${r.project_title}
+          فعالیت‌ها: ${r.activities_done}
+          نتایج: ${r.results_achieved || "ثبت نشده"}
+          اقدامات آتی: ${formatNextActionsForPrompt(r.nextActions)}
+          ${kpiSection}`;
       })
       .join("\n\n");
 
@@ -2616,8 +2766,22 @@ ${kpiSection}`;
 }
 نکته: هیچ متن اضافی قبل و بعد از JSON ننویسید.`;
 
-    const userPrompt = `گزارش‌های عملکرد بازه "${period_title}":\n\n${reportsText}`;
-    const result = await callAiWithFallback(systemPrompt, userPrompt);
+    let userPrompt = `گزارش‌های عملکرد بازه "${period_title}":\n\n${reportsText}`;
+
+    if (manager_comment && typeof manager_comment === "string" && manager_comment.trim()) {
+      userPrompt += `\n\n========================================
+🚨 بازخورد و دستورات اصلاحی مدیر ارشد سازمان جهت بازنگری و اصلاح این تحلیل:
+«${manager_comment.trim()}»
+
+لطفاً ضمن رعایت دقیق ساختار خروجی JSON، تحلیل قبلی را متناسب با نکات، انتقادات و جهت‌گیری‌های اعلام‌شده توسط مدیر فوق بازنگری، ویرایش و تکمیل نمایید.`;
+
+      if (previous_analysis) {
+        userPrompt += `\n\nنسخه تحلیل قبلی جهت اعمال اصلاحات:\n${JSON.stringify(previous_analysis, null, 2)}`;
+      }
+    }
+
+    const shouldForceRefresh = Boolean(force_refresh || (manager_comment && manager_comment.trim()));
+    const result = await callAiWithFallback(systemPrompt, userPrompt, { forceRefresh: shouldForceRefresh });
     res.json(result);
   } catch (err: any) {
     console.error("AI Global Analysis Error:", err);
@@ -2631,7 +2795,7 @@ ${kpiSection}`;
 // اندپوینت ممیزی اختصاصی تک‌گزارش (بر اساس WBS اکسل)
 app.post("/api/reports/analyze-single", authenticate, aiLimiter, async (req: any, res) => {
   try {
-    const { report_id } = req.body;
+    const { report_id, force_refresh } = req.body;
     if (!report_id) {
       return res.status(400).json({ error: "شناسه گزارش (report_id) ارسال نشده است." });
     }
@@ -2752,7 +2916,7 @@ ${currentKpiSection}
 اقدامات آتی: ${currentReport.nextActions?.map((a: any) => `${a.action_text} (ددلاین: ${a.target_date || "ندارد"})`).join(", ") || "ثبت نشده"}
 `;
 
-    const result = await callAiWithFallback(systemPrompt, userPrompt);
+    const result = await callAiWithFallback(systemPrompt, userPrompt, { forceRefresh: Boolean(force_refresh) });
     res.json(result);
   } catch (err: any) {
     console.error("Single Report Audit Error:", err);

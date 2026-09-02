@@ -20,7 +20,11 @@ import {
   Square,
   Crown,
   FileCheck2,
-  Printer
+  Printer,
+  Paperclip,
+  Download,
+  Trash2,
+  Plus
 } from "lucide-react";
 import { User, Report, Project, ReportPeriod } from "../types";
 import { CustomSelect, ShamsiDatePicker } from "../components";
@@ -339,6 +343,48 @@ function RawReportDetailsModal({
               </div>
             </div>
           )}
+
+          {/* فایل‌های ضمیمه گزارش */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-2xs space-y-3">
+            <h4 className="font-extrabold text-slate-900 text-xs md:text-sm flex items-center gap-2 border-b border-slate-100 pb-2">
+              <Paperclip className="w-4 h-4 text-emerald-600" />
+              فایل‌های ضمیمه گزارش
+            </h4>
+            {report.files && report.files.length > 0 ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {report.files.map((file: any) => (
+                  <div
+                    key={file.id}
+                    className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200/80 text-xs"
+                  >
+                    <div className="flex items-center gap-2 min-w-0 flex-1 pl-2">
+                      <Paperclip className="w-4 h-4 text-slate-400 shrink-0" />
+                      <div className="min-w-0">
+                        <span className="font-medium text-slate-800 block truncate" title={file.original_filename}>
+                          {file.original_filename}
+                        </span>
+                        {file.file_size && (
+                          <span className="text-[10px] text-slate-400 block dir-ltr text-right">
+                            {(file.file_size / 1024).toFixed(0)} KB
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <a
+                      href={`/api/report-files/${file.id}/download`}
+                      download
+                      className="px-3 py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white font-bold rounded-lg text-[11px] transition-colors cursor-pointer flex items-center gap-1 shrink-0"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>دانلود فایل</span>
+                    </a>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-400">هیچ فایل ضمیمه‌ای برای این گزارش ثبت نشده است.</p>
+            )}
+          </div>
         </div>
 
         {/* فوتر */}
@@ -602,7 +648,7 @@ function SingleReportAuditModal({
 // 🚀 ۳. کاوشگر دیداری مدیر (Visual Explorer)
 // =================================================================
 
-function ManagerVisualBubbleExplorer() {
+function ManagerVisualBubbleExplorer({ currentUser }: { currentUser?: User } = {}) {
   const [projectClusters, setProjectClusters] = useState<any[]>([]);
   const [nextActions, setNextActions] = useState<NextActionItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -1003,6 +1049,7 @@ function ManagerVisualBubbleExplorer() {
         periods={periodsList}
         projects={projectsList}
         users={usersList}
+        currentUser={currentUser}
       />
 
     </div>
@@ -1047,6 +1094,10 @@ function ReportEditModal({
   const [successMsg, setSuccessMsg] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
 
+  const [existingFiles, setExistingFiles] = useState<any[]>([]);
+  const [deletedFileIds, setDeletedFileIds] = useState<number[]>([]);
+  const [newFiles, setNewFiles] = useState<File[]>([]);
+
   const flashSuccess = (msg: string) => { setSuccessMsg(msg); setTimeout(() => setSuccessMsg(""), 4000); };
   const flashError = (msg: string) => { setErrorMsg(msg); setTimeout(() => setErrorMsg(""), 5000); };
 
@@ -1066,6 +1117,9 @@ function ReportEditModal({
           }))
         : [{ action_text: "", target_date: "" }]
     );
+    setExistingFiles(Array.isArray(report.files) ? report.files : []);
+    setDeletedFileIds([]);
+    setNewFiles([]);
     setSuccessMsg("");
     setErrorMsg("");
 
@@ -1163,6 +1217,13 @@ function ReportEditModal({
     formData.append("results_achieved", extraResultsNotes);
     formData.append("achieved_action_ids", JSON.stringify(selectedActionIds));
     formData.append("next_actions", JSON.stringify(nextActions));
+
+    if (deletedFileIds.length > 0) {
+      formData.append("deleted_file_ids", JSON.stringify(deletedFileIds));
+    }
+    newFiles.forEach((file) => {
+      formData.append("files", file);
+    });
 
     // ساخت آرایه مقادیر شاخص
     const kpiPayload = kpis.map((k) => {
@@ -1512,6 +1573,110 @@ function ReportEditModal({
               </div>
             )}
           </div>
+
+          {/* مدیریت فایل‌های ضمیمه */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 space-y-4 shadow-2xs">
+            <div className="flex items-center justify-between border-b border-slate-200/80 pb-3">
+              <div className="flex items-center gap-2">
+                <Paperclip className="w-5 h-5 text-emerald-700" />
+                <label className="text-sm font-extrabold text-slate-850">
+                  مدیریت فایل‌های ضمیمه گزارش
+                </label>
+              </div>
+              <label className="text-xs bg-emerald-800 hover:bg-emerald-900 text-white px-3 py-1.5 rounded-xl font-medium cursor-pointer transition-colors flex items-center gap-1">
+                <Plus className="w-4 h-4" />
+                <span>+ افزودن فایل جدید</span>
+                <input
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files.length > 0) {
+                      const selected = Array.from(e.target.files);
+                      setNewFiles((prev) => [...prev, ...selected]);
+                      e.target.value = "";
+                    }
+                  }}
+                />
+              </label>
+            </div>
+
+            {/* فایل‌های موجود */}
+            {existingFiles.filter((f) => !deletedFileIds.includes(f.id)).length > 0 && (
+              <div className="space-y-2">
+                <p className="text-[11px] text-slate-500 font-bold">فایل‌های ثبت‌شده قبلی:</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {existingFiles
+                    .filter((f) => !deletedFileIds.includes(f.id))
+                    .map((file) => (
+                      <div
+                        key={file.id}
+                        className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200/80 text-xs"
+                      >
+                        <div className="flex items-center gap-2 min-w-0 flex-1 pl-2">
+                          <Paperclip className="w-4 h-4 text-slate-400 shrink-0" />
+                          <span className="font-medium text-slate-800 truncate" title={file.original_filename}>
+                            {file.original_filename}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <a
+                            href={`/api/report-files/${file.id}/download`}
+                            download
+                            className="p-1.5 text-slate-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
+                            title="دانلود"
+                          >
+                            <Download className="w-4 h-4" />
+                          </a>
+                          <button
+                            type="button"
+                            onClick={() => setDeletedFileIds((prev) => [...prev, file.id])}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                            title="حذف از این گزارش"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
+
+            {/* فایل‌های جدید در انتظار آپلود */}
+            {newFiles.length > 0 && (
+              <div className="space-y-2 pt-2 border-t border-slate-100">
+                <p className="text-[11px] text-emerald-700 font-bold">فایل‌های جدید آماده آپلود:</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {newFiles.map((file, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-center justify-between p-3 rounded-xl bg-emerald-50/60 border border-emerald-200 text-xs"
+                    >
+                      <div className="flex items-center gap-2 min-w-0 flex-1 pl-2">
+                        <Plus className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span className="font-medium text-emerald-950 truncate" title={file.name}>
+                          {file.name}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setNewFiles((prev) => prev.filter((_, i) => i !== idx))}
+                        className="p-1.5 text-emerald-700 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                        title="انصراف"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {existingFiles.filter((f) => !deletedFileIds.includes(f.id)).length === 0 && newFiles.length === 0 && (
+              <p className="text-xs text-slate-400 text-center py-2">هیچ فایلی برای این گزارش انتخاب نشده است.</p>
+            )}
+          </div>
         </form>
 
         {/* فوتر */}
@@ -1534,11 +1699,16 @@ function ReportEditModal({
 // =================================================================
 // 📄 کامپوننت اصلی MyReports
 // =================================================================
-export default function MyReports({ currentUser, user, reports = [], allReports = [], periods = [], onRefresh }: MyReportsProps) {
+export default function MyReports({ currentUser, user, reports = [], allReports = [], projects = [], periods = [], onRefresh }: MyReportsProps) {
   const [editingReport, setEditingReport] = useState<any | null>(null);
   const [viewingReport, setViewingReport] = useState<any | null>(null);
   const [deadlineSettings, setDeadlineSettings] = useState<any[]>([]);
   const [periodsList, setPeriodsList] = useState<ReportPeriod[]>(periods);
+
+  // وضعیت‌های مربوط به خروجی PDF کاربر
+  const [pdfModalOpen, setPdfModalOpen] = useState(false);
+  const [pdfSelectedReports, setPdfSelectedReports] = useState<Report[] | undefined>(undefined);
+  const [pdfDefaultPeriodId, setPdfDefaultPeriodId] = useState<number>(0);
 
   useEffect(() => {
     fetch("/api/deadline-settings")
@@ -1587,17 +1757,33 @@ export default function MyReports({ currentUser, user, reports = [], allReports 
 
   // 🟢 برای مدیران -> کاوشگر دیداری حباب‌ها همراه با سیارک‌های چرخان
   if (isManagerOrAdmin) {
-    return <ManagerVisualBubbleExplorer />;
+    return <ManagerVisualBubbleExplorer currentUser={activeUser} />;
   }
 
   // 🟡 برای پرسنل عادی -> جدول گزارش‌های شخص خودش
   return (
     <div className="space-y-6 animate-fade-in text-right dir-rtl font-sans">
-      <div className="border-b border-slate-200 pb-4">
-        <h1 className="text-xl font-bold text-slate-900">📄 گزارش‌های ثبت‌شده من</h1>
-        <p className="text-slate-500 text-xs mt-1">
-          آرشیو تمامی گزارش‌های عملکرد ثبت‌شده توسط شما در سیستم.
-        </p>
+      <div className="border-b border-slate-200 pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-slate-900">📄 گزارش‌های ثبت‌شده من</h1>
+          <p className="text-slate-500 text-xs mt-1">
+            آرشیو تمامی گزارش‌های عملکرد ثبت‌شده توسط شما در سیستم.
+          </p>
+        </div>
+        {activeReports.length > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              setPdfSelectedReports(activeReports);
+              setPdfDefaultPeriodId(0);
+              setPdfModalOpen(true);
+            }}
+            className="bg-emerald-800 hover:bg-emerald-900 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition-all shadow-md flex items-center gap-2 cursor-pointer self-start sm:self-center shrink-0"
+          >
+            <Printer className="w-4 h-4" />
+            <span>خروجی PDF همه گزارش‌ها</span>
+          </button>
+        )}
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs overflow-hidden">
@@ -1646,6 +1832,19 @@ export default function MyReports({ currentUser, user, reports = [], allReports 
                         >
                           مشاهده جزئیات
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPdfSelectedReports([rep]);
+                            setPdfDefaultPeriodId(rep.period_id || 0);
+                            setPdfModalOpen(true);
+                          }}
+                          className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl text-[11px] transition-colors cursor-pointer flex items-center gap-1"
+                          title="خروجی PDF این گزارش"
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                          <span>خروجی PDF</span>
+                        </button>
                         {canEdit ? (
                           <button
                             type="button"
@@ -1687,6 +1886,20 @@ export default function MyReports({ currentUser, user, reports = [], allReports 
         onSaved={() => {
           if (onRefresh) onRefresh();
         }}
+      />
+
+      {/* مودال خروجی PDF کاربر */}
+      <ReportsPdfDocument
+        isOpen={pdfModalOpen}
+        onClose={() => {
+          setPdfModalOpen(false);
+          setPdfSelectedReports(undefined);
+        }}
+        reports={pdfSelectedReports}
+        periods={periodsList}
+        projects={projects}
+        currentUser={activeUser}
+        defaultPeriodId={pdfDefaultPeriodId}
       />
     </div>
   );
