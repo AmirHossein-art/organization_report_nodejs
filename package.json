@@ -11,7 +11,9 @@
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
     "legacy:import": "tsx scripts/import-legacy-reports.ts",
-    "legacy:cleanup-seed": "tsx scripts/remove-demo-seed-data.ts"
+    "legacy:cleanup-seed": "tsx scripts/remove-demo-seed-data.ts",
+    "db:backup": "tsx scripts/db-backup.ts",
+    "db:restore-local": "tsx scripts/db-restore-local.ts"
   },
   "dependencies": {
     "@google/genai": "*",

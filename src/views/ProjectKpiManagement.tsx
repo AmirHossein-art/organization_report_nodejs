@@ -51,6 +51,7 @@ interface Kpi {
   description: string | null;
   unit: string;
   input_type: "direct" | "percentage_change";
+  baseline_value?: number | null;
   target_value: number;
   target_direction: "minimum" | "maximum";
   report_type: "weekly" | "monthly" | null;
@@ -73,6 +74,7 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
   const [description, setDescription] = useState("");
   const [unit, setUnit] = useState("");
   const [inputType, setInputType] = useState<"direct" | "percentage_change">("direct");
+  const [baselineValue, setBaselineValue] = useState<string>("");
   const [targetDirection, setTargetDirection] = useState<"minimum" | "maximum">("maximum");
   const [targetValue, setTargetValue] = useState<string>("");
   const [reportType, setReportType] = useState<"weekly" | "monthly" | "both">("both");
@@ -86,6 +88,7 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
   const [editDescription, setEditDescription] = useState("");
   const [editUnit, setEditUnit] = useState("");
   const [editInputType, setEditInputType] = useState<"direct" | "percentage_change">("direct");
+  const [editBaselineValue, setEditBaselineValue] = useState<string>("");
   const [editTargetDirection, setEditTargetDirection] = useState<"minimum" | "maximum">("maximum");
   const [editTargetValue, setEditTargetValue] = useState<string>("");
   const [editReportType, setEditReportType] = useState<"weekly" | "monthly" | "both">("both");
@@ -137,6 +140,7 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
     setDescription("");
     setUnit("");
     setInputType("direct");
+    setBaselineValue("");
     setTargetDirection("maximum");
     setTargetValue("");
     setReportType("both");
@@ -160,6 +164,10 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
       flashError("مقدار هدف باید عددی معتبر باشد.");
       return;
     }
+    if (baselineValue !== "" && isNaN(Number(baselineValue))) {
+      flashError("مقدار مبنا باید عددی معتبر باشد.");
+      return;
+    }
 
     setIsSubmitting(true);
     try {
@@ -169,6 +177,7 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
         description: description.trim() || null,
         unit: unit.trim(),
         input_type: inputType,
+        baseline_value: baselineValue === "" ? null : Number(baselineValue),
         target_value: Number(targetValue),
         target_direction: targetDirection,
         is_active: isActive,
@@ -280,6 +289,7 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
     setEditDescription(kpi.description || "");
     setEditUnit(kpi.unit);
     setEditInputType(kpi.input_type);
+    setEditBaselineValue(kpi.baseline_value !== null && kpi.baseline_value !== undefined ? String(kpi.baseline_value) : "");
     setEditTargetDirection(kpi.target_direction);
     setEditTargetValue(String(kpi.target_value));
     setEditReportType(kpi.report_type || "both");
@@ -303,6 +313,10 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
       flashError("مقدار هدف باید عددی معتبر باشد.");
       return;
     }
+    if (editBaselineValue !== "" && isNaN(Number(editBaselineValue))) {
+      flashError("مقدار مبنا باید عددی معتبر باشد.");
+      return;
+    }
 
     setIsSubmitting(true);
     try {
@@ -311,6 +325,7 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
         description: editDescription.trim() || null,
         unit: editUnit.trim(),
         input_type: editInputType,
+        baseline_value: editBaselineValue === "" ? null : Number(editBaselineValue),
         target_value: Number(editTargetValue),
         target_direction: editTargetDirection,
         is_active: editIsActive,
@@ -485,7 +500,21 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-slate-600 font-bold mb-1">مقدار مبنای اولیه (پایه)</label>
+                <input
+                  type="number"
+                  step="any"
+                  value={baselineValue}
+                  onChange={(e) => setBaselineValue(e.target.value)}
+                  placeholder="اختیاری (مثال: 5)"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-right dir-rtl font-sans text-xs focus:outline-none focus:border-emerald-600"
+                />
+                <span className="text-[10px] text-slate-400 block mt-0.5">
+                  نقطه شروع سنجش رشد
+                </span>
+              </div>
               <div>
                 <label className="block text-slate-600 font-bold mb-1">دوره گزارش‌دهی *</label>
                 <CustomSelect
@@ -576,6 +605,14 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
                       <p className="text-slate-500 text-[11px] leading-relaxed">{kpi.description}</p>
                     )}
                     <p className="text-[11px] text-slate-600">
+                      {kpi.baseline_value !== null && kpi.baseline_value !== undefined && (
+                        <>
+                          <span className="font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded-md border border-amber-200 ml-2">
+                            مبنا: {toPersianDigits(kpi.baseline_value)} {kpi.unit}
+                          </span>
+                          {" • "}
+                        </>
+                      )}
                       هدف: {TARGET_DIRECTION_LABELS[kpi.target_direction]} {toPersianDigits(kpi.target_value)} {kpi.unit}
                       {" • "}ترتیب: {toPersianDigits(kpi.sort_order)}
                     </p>
@@ -710,7 +747,21 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-slate-600 font-bold mb-1">مقدار مبنای اولیه (پایه)</label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={editBaselineValue}
+                    onChange={(e) => setEditBaselineValue(e.target.value)}
+                    placeholder="اختیاری (مثال: 5)"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-right dir-rtl font-sans text-xs focus:outline-none focus:border-emerald-600"
+                  />
+                  <span className="text-[10px] text-slate-400 block mt-0.5">
+                    نقطه شروع سنجش رشد
+                  </span>
+                </div>
                 <div>
                   <label className="block text-slate-600 font-bold mb-1">دوره گزارش‌دهی *</label>
                   <CustomSelect

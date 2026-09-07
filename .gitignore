@@ -195,3 +195,5 @@ exports/
 /src/generated/prisma
 /wbs_files
 /backup
+backups/
+*.sql

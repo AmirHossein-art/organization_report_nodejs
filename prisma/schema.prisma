@@ -181,6 +181,7 @@ model ProjectKpi {
   description      String?            @db.Text
   unit             String
   input_type       KpiInputType       @default(direct)
+  baseline_value   Float?
   target_value     Float
   target_direction KpiTargetDirection
   report_type      ReportType?
