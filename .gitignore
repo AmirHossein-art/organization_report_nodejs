@@ -197,3 +197,6 @@ exports/
 /backup
 backups/
 *.sql
+
+# Ignore legacy data directory
+prisma/legacy-data/
