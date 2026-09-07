@@ -200,3 +200,6 @@ backups/
 
 # Ignore legacy data directory
 prisma/legacy-data/
+
+# Ignore the claude files
+.claude/
