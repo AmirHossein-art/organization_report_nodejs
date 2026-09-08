@@ -195,3 +195,11 @@ exports/
 /src/generated/prisma
 /wbs_files
 /backup
+backups/
+*.sql
+
+# Ignore legacy data directory
+prisma/legacy-data/
+
+# Ignore the claude files
+.claude/

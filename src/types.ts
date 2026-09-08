@@ -99,6 +99,39 @@ export interface Report {
   nextActions?: NextAction[];
   next_actions?: any;
   achievedActions?: NextAction[];
+  kpiValues?: ReportKpiValue[];
+}
+
+export interface ProjectKpi {
+  id: number;
+  project_id: number;
+  name: string;
+  description: string | null;
+  unit: string;
+  input_type: "direct" | "percentage_change";
+  baseline_value?: number | null;
+  target_value: number;
+  target_direction: "minimum" | "maximum";
+  report_type: "weekly" | "monthly" | null;
+  is_active: boolean;
+  sort_order: number;
+  created_at?: string;
+  project?: { id: number; title: string };
+}
+
+export interface ReportKpiValue {
+  id?: number;
+  report_id?: number;
+  project_kpi_id: number;
+  current_value: number | null;
+  baseline_value: number | null;
+  calculated_value: number | null;
+  not_measured: boolean;
+  missing_reason: string | null;
+  period_end?: string | null;
+  period_title?: string | null;
+  report_type?: string | null;
+  user_full_name?: string | null;
 }
 
 export interface DeadlineSetting {

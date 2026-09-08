@@ -4,7 +4,7 @@ import { User, Project, ReportPeriod, Report, DeadlineSetting } from "./types";
 import Sidebar from "./components/sidebar";
 import Login from "./views/Login";
 import GatewayPortal from "./views/GatewayPortal";
-import MustChangePasswordModal from "./components/MustChangePasswordModal"; 
+import MustChangePasswordModal from "./components/MustChangePasswordModal";
 
 // وارد کردن تمام ویوهای ماژولار
 import HomeDashboard from "./views/HomeDashboard";
@@ -22,8 +22,8 @@ import ProjectKpiAnalytics from "./views/ProjectKpiAnalytics";
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [showLogin, setShowLogin] = useState(true); // برای فعال‌سازی مجدد پرتال ورودی، مقدار اولیه را false قرار دهید
-  
+  const [showLogin, setShowLogin] = useState(false); // برای فعال‌سازی مجدد پرتال ورودی، مقدار اولیه را false قرار دهید
+
   const [currentView, setCurrentView] = useState<string>(() => {
     return localStorage.getItem("org_report_view") || "home";
   });
@@ -107,13 +107,13 @@ export default function App() {
     if (!showLogin) {
       return <GatewayPortal onSelectTraffic={() => setShowLogin(true)} />;
     }
-    
+
     return (
-      <Login 
+      <Login
         onLoginSuccess={(loggedInUser) => {
           setUser(loggedInUser);
           setCurrentView("home");
-        }} 
+        }}
       />
     );
   }
@@ -136,33 +136,33 @@ export default function App() {
       {/* بخش نمایش داینامیک ویوها براساس انتخاب کاربر */}
       <main className="flex-1 p-6 md:p-8 max-w-7xl mx-auto w-full">
         {currentView === "home" && (
-          <HomeDashboard 
-            user={user} 
-            users={users} 
-            projects={projects} 
-            periods={periods} 
-            allReports={allReports} 
+          <HomeDashboard
+            user={user}
+            users={users}
+            projects={projects}
+            periods={periods}
+            allReports={allReports}
           />
         )}
-        
+
         {currentView === "submit_report" && (
-          <SubmitReport 
-            projects={projects} 
-            periods={periods} 
-            user={user} 
-            allReports={allReports} 
+          <SubmitReport
+            projects={projects}
+            periods={periods}
+            user={user}
+            allReports={allReports}
             onRefresh={fetchData}
             onNavigate={(view) => setCurrentView(view)} // 🟢 اصلاح‌شده به setCurrentView
           />
         )}
 
         {currentView === "my_reports" && (
-          <MyReports 
-            currentUser={user} 
-            reports={allReports} 
-            projects={projects} 
-            periods={periods} 
-            onRefresh={fetchData} 
+          <MyReports
+            currentUser={user}
+            reports={allReports}
+            projects={projects}
+            periods={periods}
+            onRefresh={fetchData}
           />
         )}
 

@@ -342,16 +342,20 @@ async function validateAndBuildKpiValues(
       if (current === null) {
         throw new KpiValidationError(`مقدار این دوره شاخص «${kpi.name}» باید عددی معتبر باشد.`);
       }
+      const baseline = (kpi.baseline_value !== undefined && kpi.baseline_value !== null)
+        ? kpi.baseline_value
+        : toNumberOrNull(v.baseline_value);
+
       built.push({
         project_kpi_id: kpiId,
         current_value: current,
-        baseline_value: null,
+        baseline_value: baseline,
         calculated_value: current,
         not_measured: false,
         missing_reason: null,
       });
     } else {
-      const baseline = toNumberOrNull(v.baseline_value);
+      const baseline = toNumberOrNull(v.baseline_value) ?? (kpi.baseline_value !== undefined && kpi.baseline_value !== null ? kpi.baseline_value : null);
       const current = toNumberOrNull(v.current_value);
       if (baseline === null) {
         throw new KpiValidationError(`مقدار مبنای شاخص «${kpi.name}» باید عددی معتبر باشد.`);
@@ -1294,7 +1298,7 @@ app.get("/api/projects/:projectId/kpis", authenticate, async (req: any, res) => 
 app.post("/api/project-kpis", authenticate, requireManager, async (req, res) => {
   try {
     const {
-      project_id, name, description, unit, input_type,
+      project_id, name, description, unit, input_type, baseline_value,
       target_value, target_direction, report_type, is_active, sort_order,
     } = req.body;
 
@@ -1315,6 +1319,15 @@ app.post("/api/project-kpis", authenticate, requireManager, async (req, res) => 
 
     if (!KPI_INPUT_TYPES.includes(input_type)) {
       return res.status(400).json({ error: "نوع محاسبه شاخص نامعتبر است." });
+    }
+
+    let baselineVal: number | null = null;
+    if (baseline_value !== undefined && baseline_value !== null && baseline_value !== "") {
+      const parsedBaseline = Number(baseline_value);
+      if (isNaN(parsedBaseline)) {
+        return res.status(400).json({ error: "مقدار مبنای شاخص باید عدد معتبر باشد." });
+      }
+      baselineVal = parsedBaseline;
     }
 
     if (target_value === undefined || target_value === null || target_value === "" || isNaN(Number(target_value))) {
@@ -1351,6 +1364,7 @@ app.post("/api/project-kpis", authenticate, requireManager, async (req, res) => 
         description: description ? String(description).trim() || null : null,
         unit: kpiUnit,
         input_type,
+        baseline_value: baselineVal,
         target_value: Number(target_value),
         target_direction,
         report_type: reportTypeVal,
@@ -1370,7 +1384,7 @@ app.patch("/api/project-kpis/:id", authenticate, requireManager, async (req, res
   try {
     const id = parseInt(req.params.id);
     const {
-      name, description, unit, input_type,
+      name, description, unit, input_type, baseline_value,
       target_value, target_direction, report_type, is_active, sort_order,
     } = req.body;
 
@@ -1398,6 +1412,17 @@ app.patch("/api/project-kpis/:id", authenticate, requireManager, async (req, res
         return res.status(400).json({ error: "نوع محاسبه شاخص نامعتبر است." });
       }
       data.input_type = input_type;
+    }
+    if (baseline_value !== undefined) {
+      if (baseline_value === null || baseline_value === "") {
+        data.baseline_value = null;
+      } else {
+        const parsedBaseline = Number(baseline_value);
+        if (isNaN(parsedBaseline)) {
+          return res.status(400).json({ error: "مقدار مبنای شاخص باید عدد معتبر باشد." });
+        }
+        data.baseline_value = parsedBaseline;
+      }
     }
     if (target_value !== undefined) {
       if (target_value === null || target_value === "" || isNaN(Number(target_value))) {
@@ -1708,19 +1733,24 @@ app.post("/api/reports", authenticate, upload.array("files", 10), async (req: an
       return res.status(400).json({ error: "کاربر مورد نظر یافت نشد." });
     }
 
-    const existingReport = await prisma.report.findFirst({
+    const existingReport = await prisma.report.findUnique({
       where: {
-        user_id: user.id,
-        project_id: project.id,
-        period_id: period.id
-      }
+        one_report_per_project_period: {
+          project_id: project.id,
+          period_id: period.id,
+        },
+      },
     });
 
     if (existingReport) {
       if (uploadedFiles.length > 0) {
         uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
       }
-      return res.status(400).json({ error: "شما قبلاً برای این پروژه در این دوره گزارش ثبت کرده‌اید." });
+      const isSelf = existingReport.user_id === user.id;
+      const errorMsg = isSelf
+        ? "شما قبلاً برای این پروژه در این دوره گزارش ثبت کرده‌اید."
+        : `گزارش این پروژه در این دوره قبلاً توسط ${existingReport.user_full_name || existingReport.user_username} ثبت شده است.`;
+      return res.status(400).json({ error: errorMsg });
     }
 
     const parsedAchievedActionIds = parseAchievedActionIds(achieved_action_ids);
@@ -1817,11 +1847,16 @@ app.post("/api/reports", authenticate, upload.array("files", 10), async (req: an
     }
 
     res.status(201).json(serializeReport(newReport));
-  } catch (error) {
+  } catch (error: any) {
     if (uploadedFiles.length > 0) {
       uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
     }
     console.error("Error creating report:", error);
+    if (error?.code === "P2002") {
+      return res.status(400).json({
+        error: "گزارش این پروژه در این دوره قبلاً ثبت شده است و امکان ثبت مجدد وجود ندارد.",
+      });
+    }
     res.status(error instanceof NextActionsValidationError || error instanceof KpiValidationError ? 400 : 500).json({
       error: error instanceof NextActionsValidationError || error instanceof KpiValidationError
         ? error.message
@@ -2714,7 +2749,10 @@ function formatKpiValuesForPrompt(kpiValues: any[] | undefined): string {
         return `${idx + 1}. ${kv.name || "شاخص"} — اندازه‌گیری نشده (${kv.missing_reason || "دلیل مشخص نشده"})`;
       }
       if (kv.input_type === "direct") {
-        return `${idx + 1}. ${kv.name || "شاخص"} (${inputTypeLabel}) — ${kv.unit || ""}: ${kv.current_value} (هدف: ${directionLabel} ${kv.target_value})`;
+        const baselinePart = kv.baseline_value !== null && kv.baseline_value !== undefined
+          ? ` (مبنا: ${kv.baseline_value}، تغییر: ${kv.current_value - kv.baseline_value > 0 ? "+" : ""}${(kv.current_value - kv.baseline_value).toFixed(2)})`
+          : "";
+        return `${idx + 1}. ${kv.name || "شاخص"} (${inputTypeLabel}) — ${kv.unit || ""}: ${kv.current_value}${baselinePart} (هدف: ${directionLabel} ${kv.target_value})`;
       } else {
         return `${idx + 1}. ${kv.name || "شاخص"} (${inputTypeLabel}) — مبنا: ${kv.baseline_value}، جاری: ${kv.current_value}، محاسبه‌شده: ${kv.calculated_value}٪ (هدف: ${directionLabel} ${kv.target_value}٪)`;
       }

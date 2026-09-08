@@ -127,9 +127,10 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
     }
   }, [user, projects]);
 
-  const hasAlreadySubmitted = allReports.some(
-    (r) => r.user_id === user?.id && r.project_id === subProjectId && r.period_id === subPeriodId
+  const existingReportForSelection = allReports.find(
+    (r) => r.project_id === subProjectId && r.period_id === subPeriodId
   );
+  const hasAlreadySubmitted = Boolean(existingReportForSelection);
 
   // 🟢 واکشی اقدامات جاری/ابلاغیه‌های در انتظار برای پرسنل در پروژه انتخابی
   useEffect(() => {
@@ -164,7 +165,12 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
         // مقداردهی اولیه ورودی‌ها
         const initial: Record<number, any> = {};
         (Array.isArray(data) ? data : []).forEach((k) => {
-          initial[k.id] = { current_value: "", baseline_value: "", not_measured: false, missing_reason: "" };
+          initial[k.id] = {
+            current_value: "",
+            baseline_value: k.baseline_value !== null && k.baseline_value !== undefined ? String(k.baseline_value) : "",
+            not_measured: false,
+            missing_reason: "",
+          };
         });
         setKpiValues(initial);
       })
@@ -197,8 +203,9 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
     if (k.input_type === "direct") {
       return v.current_value === "" || v.current_value === null || isNaN(Number(v.current_value));
     }
+    const baselineToUse = v.baseline_value !== "" && v.baseline_value !== null ? v.baseline_value : k.baseline_value;
     return (
-      v.baseline_value === "" || v.baseline_value === null || isNaN(Number(v.baseline_value)) ||
+      baselineToUse === "" || baselineToUse === null || baselineToUse === undefined || isNaN(Number(baselineToUse)) ||
       v.current_value === "" || v.current_value === null || isNaN(Number(v.current_value))
     );
   });
@@ -229,7 +236,11 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
     }
 
     if (hasAlreadySubmitted) {
-      flashError("شما قبلاً برای این پروژه در این دوره گزارش ثبت کرده‌اید.");
+      flashError(
+        existingReportForSelection?.user_id === user?.id
+          ? "شما قبلاً برای این پروژه در این دوره گزارش ثبت کرده‌اید."
+          : `گزارش این پروژه در این دوره قبلاً توسط ${existingReportForSelection?.user_full_name || "کاربر دیگر"} ثبت شده است.`
+      );
       return;
     }
 
@@ -269,8 +280,10 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
       }
       return {
         project_kpi_id: k.id,
-        current_value: k.input_type === "direct" ? Number(v.current_value) : Number(v.current_value),
-        baseline_value: k.input_type === "percentage_change" ? Number(v.baseline_value) : null,
+        current_value: Number(v.current_value),
+        baseline_value: k.input_type === "percentage_change"
+          ? (v.baseline_value !== "" && !isNaN(Number(v.baseline_value)) ? Number(v.baseline_value) : (k.baseline_value ?? null))
+          : (k.baseline_value !== null && k.baseline_value !== undefined ? Number(k.baseline_value) : null),
         not_measured: false,
         missing_reason: null,
       };
@@ -472,9 +485,11 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
               <AlertTriangle className="w-8 h-8 text-amber-600 animate-bounce" />
               <h4 className="font-bold text-sm">گزارش عملکرد این پروژه در این بازه قبلاً ثبت شده است</h4>
               <p className="text-xs leading-relaxed max-w-md font-medium text-slate-700">
-                شما این گزارش را وارد کرده‌اید. لطفاً برای مشاهده و ویرایش آن به صفحه <strong>گزارش‌های من</strong> بروید.
+                {existingReportForSelection?.user_id === user?.id
+                  ? "شما این گزارش را قبلاً ثبت کرده‌اید. لطفاً برای مشاهده و ویرایش آن به صفحه گزارش‌های من بروید."
+                  : `این گزارش قبلاً توسط ${existingReportForSelection?.user_full_name || existingReportForSelection?.user_username || "کاربر دیگر"} برای این پروژه ثبت شده است.`}
               </p>
-              {onNavigate && (
+              {existingReportForSelection?.user_id === user?.id && onNavigate && (
                 <button
                   type="button"
                   onClick={() => onNavigate("my_reports")}
@@ -773,11 +788,25 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
                         const pct = ((Number(v.current_value) - Number(v.baseline_value)) / Number(v.baseline_value)) * 100;
                         preview = `${toPersianDigits(pct.toFixed(1))}٪`;
                       }
+                      let directDiffPreview: string | null = null;
+                      if (k.input_type === "direct" && !disabled && k.baseline_value !== null && k.baseline_value !== undefined &&
+                          v.current_value && !isNaN(Number(v.current_value))) {
+                        const diff = Number(v.current_value) - Number(k.baseline_value);
+                        const sign = diff > 0 ? "+" : "";
+                        directDiffPreview = `${sign}${toPersianDigits(diff.toFixed(2))} ${k.unit}`;
+                      }
                       return (
                         <div key={k.id} className="bg-slate-50/50 p-4 rounded-2xl border border-slate-200/70 space-y-3">
                           <div className="flex items-start justify-between gap-2">
                             <div>
-                              <h5 className="text-sm font-bold text-slate-800">{k.name}</h5>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h5 className="text-sm font-bold text-slate-800">{k.name}</h5>
+                                {k.baseline_value !== null && k.baseline_value !== undefined && (
+                                  <span className="font-semibold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-200 text-[10px]">
+                                    مبنا: {toPersianDigits(k.baseline_value)} {k.unit}
+                                  </span>
+                                )}
+                              </div>
                               {k.description && (
                                 <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">{k.description}</p>
                               )}
@@ -840,6 +869,11 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
                               {k.input_type === "percentage_change" && preview !== null && (
                                 <div className="sm:col-span-2 text-[11px] text-slate-500">
                                   درصد تغییر (پیش‌نمایش): <span className="font-bold text-emerald-700">{preview}</span>
+                                </div>
+                              )}
+                              {k.input_type === "direct" && directDiffPreview !== null && (
+                                <div className="text-[11px] text-slate-500">
+                                  رشد نسبت به مبنا (پیش‌نمایش): <span className={`font-bold ${Number(v.current_value) >= Number(k.baseline_value) ? "text-emerald-700" : "text-rose-600"}`}>{directDiffPreview}</span>
                                 </div>
                               )}
                             </div>

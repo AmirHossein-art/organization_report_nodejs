@@ -298,8 +298,20 @@ function RawReportDetailsModal({
                           {" → "}درصد تغییر: <strong className="text-emerald-700">{toPersianDigits(Number(kv.calculated_value).toFixed(1))}٪</strong>
                         </p>
                       ) : (
-                        <p className="text-slate-600">
-                          مقدار این دوره: <strong className="text-emerald-700">{toPersianDigits(Number(kv.current_value).toFixed(2))} {kpiMeta?.unit || ""}</strong>
+                        <p className="text-slate-600 flex items-center gap-2 flex-wrap">
+                          <span>
+                            مقدار این دوره: <strong className="text-emerald-700">{toPersianDigits(Number(kv.current_value).toFixed(2))} {kpiMeta?.unit || ""}</strong>
+                          </span>
+                          {(kv.baseline_value !== null && kv.baseline_value !== undefined) && (
+                            <span className="text-[11px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-lg text-slate-700">
+                              مبنا: {toPersianDigits(Number(kv.baseline_value).toFixed(2))}
+                              {" ← "}
+                              رشد: <strong className={Number(kv.current_value) >= Number(kv.baseline_value) ? "text-emerald-700" : "text-rose-600"}>
+                                {Number(kv.current_value) - Number(kv.baseline_value) > 0 ? "+" : ""}
+                                {toPersianDigits((Number(kv.current_value) - Number(kv.baseline_value)).toFixed(2))} {kpiMeta?.unit || ""}
+                              </strong>
+                            </span>
+                          )}
                         </p>
                       )}
                     </div>
@@ -1155,12 +1167,17 @@ function ReportEditModal({
           if (existing) {
             initial[k.id] = {
               current_value: existing.not_measured ? "" : (existing.current_value ?? ""),
-              baseline_value: existing.not_measured ? "" : (existing.baseline_value ?? ""),
+              baseline_value: existing.not_measured ? "" : (existing.baseline_value ?? (k.baseline_value ?? "")),
               not_measured: existing.not_measured || false,
               missing_reason: existing.missing_reason || "",
             };
           } else {
-            initial[k.id] = { current_value: "", baseline_value: "", not_measured: false, missing_reason: "" };
+            initial[k.id] = {
+              current_value: "",
+              baseline_value: k.baseline_value !== null && k.baseline_value !== undefined ? String(k.baseline_value) : "",
+              not_measured: false,
+              missing_reason: "",
+            };
           }
         });
         setKpiValues(initial);
@@ -1187,8 +1204,9 @@ function ReportEditModal({
     if (!v) return true;
     if (v.not_measured) return !v.missing_reason || !v.missing_reason.trim();
     if (k.input_type === "direct") return v.current_value === "" || v.current_value === null || isNaN(Number(v.current_value));
+    const baselineToUse = v.baseline_value !== "" && v.baseline_value !== null ? v.baseline_value : k.baseline_value;
     return (
-      v.baseline_value === "" || v.baseline_value === null || isNaN(Number(v.baseline_value)) ||
+      baselineToUse === "" || baselineToUse === null || baselineToUse === undefined || isNaN(Number(baselineToUse)) ||
       v.current_value === "" || v.current_value === null || isNaN(Number(v.current_value))
     );
   });
@@ -1234,7 +1252,9 @@ function ReportEditModal({
       return {
         project_kpi_id: k.id,
         current_value: Number(v.current_value),
-        baseline_value: k.input_type === "percentage_change" ? Number(v.baseline_value) : null,
+        baseline_value: k.input_type === "percentage_change"
+          ? (v.baseline_value !== "" && !isNaN(Number(v.baseline_value)) ? Number(v.baseline_value) : (k.baseline_value ?? null))
+          : (k.baseline_value !== null && k.baseline_value !== undefined ? Number(k.baseline_value) : (v.baseline_value !== "" && !isNaN(Number(v.baseline_value)) ? Number(v.baseline_value) : null)),
         not_measured: false,
         missing_reason: null,
       };
@@ -1521,11 +1541,25 @@ function ReportEditModal({
                     const pct = ((Number(v.current_value) - Number(v.baseline_value)) / Number(v.baseline_value)) * 100;
                     preview = `${toPersianDigits(pct.toFixed(1))}٪`;
                   }
+                  let directDiffPreview: string | null = null;
+                  const baselineNum = (k.baseline_value !== null && k.baseline_value !== undefined) ? Number(k.baseline_value) : (v.baseline_value !== "" ? Number(v.baseline_value) : null);
+                  if (k.input_type === "direct" && !disabled && baselineNum !== null && v.current_value && !isNaN(Number(v.current_value))) {
+                    const diff = Number(v.current_value) - baselineNum;
+                    const sign = diff > 0 ? "+" : "";
+                    directDiffPreview = `${sign}${toPersianDigits(diff.toFixed(2))} ${k.unit}`;
+                  }
                   return (
                     <div key={k.id} className="bg-white p-4 rounded-2xl border border-slate-200/70 space-y-3">
                       <div className="flex items-start justify-between gap-2">
                         <div>
-                          <h5 className="text-sm font-bold text-slate-800">{k.name}</h5>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h5 className="text-sm font-bold text-slate-800">{k.name}</h5>
+                            {k.baseline_value !== null && k.baseline_value !== undefined && (
+                              <span className="font-semibold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-200 text-[10px]">
+                                مبنا: {toPersianDigits(k.baseline_value)} {k.unit}
+                              </span>
+                            )}
+                          </div>
                           {k.description && <p className="text-[11px] text-slate-500 mt-0.5">{k.description}</p>}
                           <p className="text-[11px] text-slate-600 mt-1">
                             هدف: {k.target_direction === "minimum" ? "حداقل" : "حداکثر"} {toPersianDigits(k.target_value)} {k.unit}
@@ -1563,6 +1597,11 @@ function ReportEditModal({
                           {k.input_type === "percentage_change" && preview !== null && (
                             <div className="sm:col-span-2 text-[11px] text-slate-500">
                               درصد تغییر (پیش‌نمایش): <span className="font-bold text-emerald-700">{preview}</span>
+                            </div>
+                          )}
+                          {k.input_type === "direct" && directDiffPreview !== null && (
+                            <div className="text-[11px] text-slate-500">
+                              رشد نسبت به مبنا (پیش‌نمایش): <span className={`font-bold ${Number(v.current_value) >= (baselineNum ?? 0) ? "text-emerald-700" : "text-rose-600"}`}>{directDiffPreview}</span>
                             </div>
                           )}
                         </div>

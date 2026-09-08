@@ -58,6 +58,7 @@ interface Kpi {
   description: string | null;
   unit: string;
   input_type: "direct" | "percentage_change";
+  baseline_value?: number | null;
   target_value: number;
   target_direction: "minimum" | "maximum";
   report_type: "weekly" | "monthly" | null;
@@ -171,6 +172,25 @@ export default function ProjectKpiAnalytics({ projects = [] }: ProjectKpiAnalyti
 
   const latestStatus = computeAchieved(latest ? Number(latest.calculated_value) : null);
 
+  // محاسبه مبنا و رشد نسبت به مبنا برای آخرین دوره اندازه‌گیری‌شده
+  const baselineValue = kpiMeta?.baseline_value ?? (latest?.baseline_value ?? null);
+  let growthLabel: string | null = null;
+  let growthPositive: boolean | null = null;
+  if (latest && baselineValue !== null && baselineValue !== undefined) {
+    if (kpiMeta?.input_type === "direct") {
+      const current = Number(latest.current_value ?? latest.calculated_value);
+      const diff = current - Number(baselineValue);
+      const sign = diff > 0 ? "+" : "";
+      growthLabel = `${sign}${toPersianDigits(diff.toFixed(2))} ${kpiMeta?.unit || ""}`;
+      growthPositive = diff >= 0;
+    } else {
+      const calc = Number(latest.calculated_value);
+      const sign = calc > 0 ? "+" : "";
+      growthLabel = `${sign}${toPersianDigits(calc.toFixed(1))}٪`;
+      growthPositive = calc >= 0;
+    }
+  }
+
   if (projects.length === 0) {
     return (
       <div className="space-y-6 animate-fade-in text-xs font-sans dir-rtl text-right">
@@ -257,7 +277,22 @@ export default function ProjectKpiAnalytics({ projects = [] }: ProjectKpiAnalyti
       ) : (
         <>
           {/* کارت‌های خلاصه */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {/* کارت‌های خلاصه */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* کارت ۱: مقدار مبنای اولیه */}
+            <div className="bg-white border border-amber-200/80 rounded-2xl p-4 shadow-2xs">
+              <span className="text-amber-700 text-xs font-semibold block">مقدار مبنا (پایه)</span>
+              <span className="text-2xl font-black text-amber-900 mt-1 block">
+                {baselineValue !== null && baselineValue !== undefined
+                  ? `${toPersianDigits(baselineValue)} ${kpiMeta?.unit || ""}`
+                  : "تعریف نشده"}
+              </span>
+              <span className="text-[11px] text-slate-400 block mt-1">
+                نقطه شروع سنجش پیشرفت
+              </span>
+            </div>
+
+            {/* کارت ۲: آخرین مقدار */}
             <div className="bg-white border border-slate-200/80 rounded-2xl p-4 shadow-2xs">
               <span className="text-slate-400 text-xs font-semibold block">آخرین مقدار اندازه‌گیری‌شده</span>
               <span className="text-2xl font-black text-slate-900 mt-1 block">
@@ -267,31 +302,46 @@ export default function ProjectKpiAnalytics({ projects = [] }: ProjectKpiAnalyti
                     : `${toPersianDigits(Number(latest.calculated_value).toFixed(2))} ${kpiMeta?.unit || ""}`
                 ) : "—"}
               </span>
+              <span className="text-[11px] text-slate-400 block mt-1">
+                {latest?.period_title ? `دوره: ${latest.period_title}` : "ثبت در آخرین گزارش"}
+              </span>
             </div>
-            <div className="bg-white border border-indigo-100 rounded-2xl p-4 shadow-2xs">
-              <span className="text-indigo-700 text-xs font-semibold block">مقدار هدف</span>
+
+            {/* کارت ۳: رشد نسبت به مبنا */}
+            <div className="bg-white border border-emerald-100 rounded-2xl p-4 shadow-2xs">
+              <span className="text-emerald-700 text-xs font-semibold block">رشد نسبت به مبنا</span>
+              <span className={`text-2xl font-black mt-1 block ${
+                growthPositive === null ? "text-slate-400" : growthPositive ? "text-emerald-700" : "text-rose-600"
+              }`}>
+                {growthLabel || "—"}
+              </span>
+              <span className="text-[11px] text-slate-400 block mt-1">
+                {kpiMeta?.input_type === "direct" ? "افزایش مطلق نسبت به مبنا" : "رشد درصدی نسبت به مبنا"}
+              </span>
+            </div>
+
+            {/* کارت ۴: مقدار هدف و تحقق */}
+            <div className={`bg-white border rounded-2xl p-4 shadow-2xs ${
+              latestStatus === "achieved" ? "border-emerald-200" : "border-indigo-100"
+            }`}>
+              <div className="flex items-center justify-between">
+                <span className="text-indigo-700 text-xs font-semibold">مقدار هدف ({kpiMeta?.target_direction === "minimum" ? "حداقل" : "حداکثر"})</span>
+                {latestStatus === "achieved" ? (
+                  <span className="text-[11px] font-bold text-emerald-700 flex items-center gap-1 bg-emerald-50 px-1.5 py-0.5 rounded-md border border-emerald-200">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> محقق شده
+                  </span>
+                ) : latestStatus === "not_achieved" ? (
+                  <span className="text-[11px] font-bold text-rose-600 flex items-center gap-1 bg-rose-50 px-1.5 py-0.5 rounded-md border border-rose-200">
+                    <XCircle className="w-3.5 h-3.5" /> محقق نشده
+                  </span>
+                ) : null}
+              </div>
               <span className="text-2xl font-black text-indigo-700 mt-1 block">
                 {kpiMeta ? `${toPersianDigits(kpiMeta.target_value)} ${kpiMeta.unit}` : "—"}
               </span>
               <span className="text-[11px] text-slate-400 block mt-1">
-                جهت: {kpiMeta?.target_direction === "minimum" ? "حداقل" : "حداکثر"}
+                {latestStatus === null ? "اندازه‌گیری نشده" : latestStatus === "achieved" ? "هدف دوره پوشش داده شد" : "نیاز به تلاش تا دستیابی به هدف"}
               </span>
-            </div>
-            <div className={`bg-white border rounded-2xl p-4 shadow-2xs ${
-              latestStatus === "achieved" ? "border-emerald-100" : "border-rose-100"
-            }`}>
-              <span className="text-xs font-semibold block text-slate-400">وضعیت تحقق هدف</span>
-              {latestStatus === null ? (
-                <span className="text-2xl font-black text-slate-400 mt-1 block">اندازه‌گیری نشده</span>
-              ) : latestStatus === "achieved" ? (
-                <span className="text-lg font-black text-emerald-700 mt-2 flex items-center gap-2">
-                  <CheckCircle2 className="w-5 h-5" /> محقق شده
-                </span>
-              ) : (
-                <span className="text-lg font-black text-rose-600 mt-2 flex items-center gap-2">
-                  <XCircle className="w-5 h-5" /> محقق نشده
-                </span>
-              )}
             </div>
           </div>
 
@@ -330,6 +380,19 @@ export default function ProjectKpiAnalytics({ projects = [] }: ProjectKpiAnalyti
                       labelFormatter={(label) => `پایان دوره: ${formatPersianDate(label)}`}
                     />
                     <Legend />
+                    {baselineValue !== null && baselineValue !== undefined && (
+                      <ReferenceLine
+                        y={Number(baselineValue)}
+                        stroke="#f59e0b"
+                        strokeDasharray="4 4"
+                        label={{
+                          value: `مبنا: ${toPersianDigits(baselineValue)}`,
+                          position: "insideBottomRight",
+                          fontSize: 11,
+                          fill: "#d97706",
+                        }}
+                      />
+                    )}
                     <ReferenceLine
                       y={kpiMeta?.target_value}
                       stroke="#6366f1"
@@ -349,9 +412,14 @@ export default function ProjectKpiAnalytics({ projects = [] }: ProjectKpiAnalyti
                 </ResponsiveContainer>
               </div>
             )}
-            <p className="text-[11px] text-slate-400 mt-2">
-              نوع محاسبه: {kpiMeta ? INPUT_TYPE_LABELS[kpiMeta.input_type] : ""}
-              {kpiMeta?.input_type === "percentage_change" ? " (مقدار محاسبه‌شده = درصد تغییر)" : ""}
+            <p className="text-[11px] text-slate-400 mt-2 flex items-center gap-2 flex-wrap">
+              <span>نوع محاسبه: {kpiMeta ? INPUT_TYPE_LABELS[kpiMeta.input_type] : ""}</span>
+              {kpiMeta?.input_type === "percentage_change" && <span>(مقدار محاسبه‌شده = درصد تغییر)</span>}
+              {baselineValue !== null && baselineValue !== undefined && (
+                <span className="text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200 font-semibold">
+                  مبنای پایه: {toPersianDigits(baselineValue)} {kpiMeta?.unit || ""}
+                </span>
+              )}
             </p>
           </div>
 
