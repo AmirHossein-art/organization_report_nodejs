@@ -48,6 +48,7 @@ model User {
   userProjects UserProject[]
   reports      Report[]
   nextActions  NextAction[]
+  wbsSubmissions WbsSubmission[]
 }
 
 // ۲. جدول پروژه‌ها
@@ -66,6 +67,7 @@ model Project {
   reports      Report[]
   kpis         ProjectKpi[]
   nextActions  NextAction[]
+  wbsSubmissions WbsSubmission[]
 }
 
 // ۳. جدول دوره‌های گزارش‌دهی
@@ -220,4 +222,19 @@ model DeadlineSetting {
   deadline_day  Int
   deadline_time String // ذخیره به صورت فرمت "HH:MM"
   grace_days    Int        @default(0)
+}
+
+// ۸. جدول ساختار شکست کار (WBS) ارسالی معاون‌ها
+model WbsSubmission {
+  id               Int      @id @default(autoincrement())
+  project_id       Int
+  uploaded_by      Int
+  file_name        String
+  storage_filename String
+  created_at       DateTime @default(now())
+
+  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [uploaded_by], references: [id], onDelete: Cascade)
+
+  @@index([project_id])
 }
