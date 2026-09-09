@@ -18,6 +18,7 @@ import ReportPeriods from "./views/ReportPeriods";
 import ProjectAllocations from "./views/ProjectAllocations";
 import ProjectKpiManagement from "./views/ProjectKpiManagement";
 import ProjectKpiAnalytics from "./views/ProjectKpiAnalytics";
+import WbsUpload from "./views/WbsUpload";
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -165,7 +166,9 @@ export default function App() {
             onRefresh={fetchData}
           />
         )}
-
+        {currentView === "wbs_upload" && (
+          <WbsUpload projects={projects} />
+        )}
         {/* روت‌های مدیریتی */}
         {user.role === "manager" && (
           <>
