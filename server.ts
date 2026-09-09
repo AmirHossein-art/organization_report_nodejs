@@ -1029,6 +1029,125 @@ app.get("/api/projects/:id/wbs-file", authenticate, async (req: any, res) => {
 });
 
 // -----------------------------
+// 4.5 WBS Submissions (آپلود ساختار شکست توسط معاون / مشاهده و دانلود توسط مدیر)
+// -----------------------------
+
+// ثبت ساختار شکست برای یک پروژه
+app.post("/api/projects/:id/wbs-submissions", authenticate, uploadWBS.single("wbs_file"), async (req: any, res) => {
+  try {
+    const projectId = parseInt(req.params.id);
+    const file = req.file;
+
+    if (!file) {
+      return res.status(400).json({ error: "فایلی ارسال نشده است." });
+    }
+
+    const project = await prisma.project.findUnique({ where: { id: projectId } });
+    if (!project) {
+      return res.status(404).json({ error: "پروژه یافت نشد." });
+    }
+
+    if (req.user.role !== "manager") {
+      const assignment = await prisma.userProject.findFirst({
+        where: { user_id: req.user.id, project_id: projectId },
+      });
+      if (!assignment) {
+        return res.status(403).json({ error: "شما به این پروژه تخصیص ندارید." });
+      }
+    }
+
+    const submission = await prisma.wbsSubmission.create({
+      data: {
+        project_id: projectId,
+        uploaded_by: req.user.id,
+        file_name: file.originalname,
+        storage_filename: file.filename,
+      },
+    });
+
+    res.status(201).json(submission);
+  } catch (error) {
+    console.error("Error uploading WBS submission:", error);
+    res.status(500).json({ error: "خطا در ثبت ساختار شکست." });
+  }
+});
+
+// لیست ساختارهای شکست یک پروژه (معاونِ همان پروژه یا مدیر)
+app.get("/api/projects/:id/wbs-submissions", authenticate, async (req: any, res) => {
+  try {
+    const projectId = parseInt(req.params.id);
+    const project = await prisma.project.findUnique({ where: { id: projectId } });
+    if (!project) return res.status(404).json({ error: "پروژه یافت نشد." });
+
+    if (req.user.role !== "manager") {
+      const assignment = await prisma.userProject.findFirst({
+        where: { user_id: req.user.id, project_id: projectId },
+      });
+      if (!assignment) {
+        return res.status(403).json({ error: "شما به این پروژه تخصیص ندارید." });
+      }
+    }
+
+    const submissions = await prisma.wbsSubmission.findMany({
+      where: { project_id: projectId },
+      orderBy: { created_at: "desc" },
+      include: { user: { select: { full_name: true, username: true } } },
+    });
+
+    res.json(submissions);
+  } catch (error) {
+    console.error("Error fetching WBS submissions:", error);
+    res.status(500).json({ error: "خطا در دریافت لیست ساختار شکست." });
+  }
+});
+
+// لیست همه ساختارهای شکست (فقط مدیر)
+app.get("/api/wbs-submissions", authenticate, requireManager, async (_req, res) => {
+  try {
+    const submissions = await prisma.wbsSubmission.findMany({
+      orderBy: { created_at: "desc" },
+      include: {
+        user: { select: { full_name: true, username: true } },
+        project: { select: { title: true, code: true } },
+      },
+    });
+    res.json(submissions);
+  } catch (error) {
+    console.error("Error listing WBS submissions:", error);
+    res.status(500).json({ error: "خطا در دریافت ساختارهای شکست." });
+  }
+});
+
+// دانلود فایل ساختار شکست
+app.get("/api/wbs-submissions/:id/download", authenticate, async (req: any, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const submission = await prisma.wbsSubmission.findUnique({ where: { id } });
+    if (!submission) {
+      return res.status(404).json({ error: "ساختار شکست یافت نشد." });
+    }
+
+    if (req.user.role !== "manager") {
+      const assignment = await prisma.userProject.findFirst({
+        where: { user_id: req.user.id, project_id: submission.project_id },
+      });
+      if (!assignment) {
+        return res.status(403).json({ error: "شما مجاز به دانلود این فایل نیستید." });
+      }
+    }
+
+    const filePath = safeResolvePath(wbsDir, submission.storage_filename);
+    if (!filePath || !fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "فایل فیزیکی در سرور یافت نشد." });
+    }
+
+    res.download(filePath, submission.file_name || "wbs_file.xlsx");
+  } catch (error) {
+    console.error("Error downloading WBS submission:", error);
+    res.status(500).json({ error: "خطا در دریافت فایل ساختار شکست." });
+  }
+});
+// -----------------------------
 // 5. Report Period Management
 // -----------------------------
 app.get(["/api/report-periods", "/api/periods"], authenticate, async (_req, res) => {
