@@ -66,7 +66,6 @@ interface WbsData extends WbsProjectRow {
 }
 
 // ---------- اتریبیوت‌های مستطیل (۷ عدد) ----------
-// top: درصد موقعیت عمودی تگ نسبت به ارتفاع کارت (وسط‌ترِ هر سه با فاصله مساوی از لبه بالا/پایین)
 interface AttrSpec {
   key: keyof WbsTask;
   label: string;
@@ -114,8 +113,13 @@ export default function WbsViewer() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // ---------- انیمیشن باز شدن تگ ----------
-  const [openAttr, setOpenAttr] = useState<string | null>(null);
+  // ---------- تگ‌های باز (چندتا همزمان؛ ترتیب = تازگی باز شدن) ----------
+  const [openAttrs, setOpenAttrs] = useState<string[]>([]);
+
+  const toggleAttr = (id: string) => {
+    setOpenAttrs((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+  const closeAll = () => setOpenAttrs([]);
 
   // ---------- بارگذاری لیست پروژه‌های دارای WBS ----------
   useEffect(() => {
@@ -158,12 +162,12 @@ export default function WbsViewer() {
   };
 
   const goTree = () => {
-    setOpenAttr(null);
+    closeAll();
     setStage("tree");
   };
 
   const back = () => {
-    setOpenAttr(null);
+    closeAll();
     if (stage === "tree") setStage("detail");
     else if (stage === "detail") {
       setStage("pick");
@@ -271,7 +275,7 @@ export default function WbsViewer() {
       <div className="flex gap-2">
         <button
           onClick={() => {
-            setOpenAttr(null);
+            closeAll();
             setStage("detail");
           }}
           className={`flex items-center gap-2 text-sm rounded-xl px-4 py-2 transition-colors cursor-pointer ${
@@ -418,7 +422,7 @@ export default function WbsViewer() {
                 <p className="text-sm text-slate-400">در این فایل، ردیف فعالیتی (WBS) یافت نشد.</p>
               </div>
             ) : (
-              /* پنجره ثابت با اسکرول داخلی — ابعاد صفحه تغییر نمی‌کند و سایدبار ثابت می‌ماند */
+              /* پنجره ثابت با اسکرول داخلی */
               <div className="wbs-scroll h-[calc(100vh-260px)] min-h-[420px] overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50/60 shadow-inner">
                 <div className="flex flex-col items-center py-14">
                   {data.tasks.map((task, i) => {
@@ -429,8 +433,8 @@ export default function WbsViewer() {
                         task={task}
                         index={i}
                         code={code}
-                        openAttr={openAttr}
-                        setOpenAttr={setOpenAttr}
+                        openAttrs={openAttrs}
+                        toggleAttr={toggleAttr}
                       />
                     );
                   })}
@@ -446,28 +450,25 @@ export default function WbsViewer() {
 
 // ============================================================
 //  کارت تعاملی هر فعالیت
-//  - همه کارت‌ها هم‌اندازه (دیگر تورفتگی سطح ندارند؛ همه وسط‌چین)
-//  - اگر نام فعالیت خیلی بلند باشد فقط همان کارت بلندتر می‌شود
-//  - ۶ تگ جانبی (۳ راست، ۳ چپ) + ۱ تگ زیرین چسبیده به لبه پایین کارتِ خودش
+//  - چند تگ می‌توانند همزمان باز باشند؛ بازشدهٔ جدیدتر روی قبلی‌ها
+//    (هالهٔ سفید + z-index بالاتر بر اساس تازگی) قرار می‌گیرد
+//  - مقدار کوتاه → نوار افقی تک‌خطی؛ مقدار بلند → کارت عمودی
 // ============================================================
+const SHORT_VALUE_LIMIT = 42; // کاراکتر — بیش از این = حالت کارت عمودی
+
 function WbsTaskCard({
   task,
   index,
   code,
-  openAttr,
-  setOpenAttr,
+  openAttrs,
+  toggleAttr,
 }: {
   task: WbsTask;
   index: number;
   code: string;
-  openAttr: string | null;
-  setOpenAttr: (v: string | null) => void;
+  openAttrs: string[];
+  toggleAttr: (id: string) => void;
 }) {
-  const toggle = (spec: AttrSpec, zone: "side" | "bottom") => {
-    const id = `${code}:${zone}:${spec.key}`;
-    setOpenAttr(openAttr === id ? null : id);
-  };
-
   const hasRealValue = (v: string) => v.trim() !== "" && v !== "-" && v !== "---";
 
   // ---------- تگ‌های سمت راست و چپ ----------
@@ -475,15 +476,15 @@ function WbsTaskCard({
     const id = `${code}:side:${spec.key}`;
     const value = (task[spec.key] as string) || "";
     const hasValue = hasRealValue(value);
-    const isOpen = openAttr === id;
+    const isOpen = openAttrs.includes(id);
     const isRight = spec.side === "right";
+    const recency = openAttrs.indexOf(id); // -1 اگر بسته
+    const popoverZ = 40 + Math.max(recency, 0);
 
-    // موقعیت: چسبیده به لبه کارت (بدون زدگی داخل کارت)
     const posStyle: React.CSSProperties = isRight
       ? { top: `${spec.top}%`, left: "100%", transform: "translateY(-50%)" }
       : { top: `${spec.top}%`, right: "100%", transform: "translateY(-50%)" };
 
-    // گوشه‌ها: سمتِ چسبیده به کارت تیز، سمتِ بیرونی گرد
     const radius = isRight ? "rounded-r-xl" : "rounded-l-xl";
 
     // تگ خالی: قرمز، غیرقابل کلیک
@@ -501,24 +502,23 @@ function WbsTaskCard({
       );
     }
 
-    // تگ دارای مقدار: سبزِ هماهنگ با تم — کلیک = باز شدن نوار مقدار
+    // تگ دارای مقدار: سبزِ تم — کلیک برای باز/بستن (مستقل از بقیه تگ‌ها)
     return (
-      <div key={spec.key} className="absolute z-10" style={posStyle}>
+      <div key={spec.key} className="absolute" style={posStyle}>
         <motion.button
-          onClick={() => toggle(spec, "side")}
+          onClick={() => toggleAttr(id)}
           whileHover={{ x: isRight ? 2 : -2 }}
           whileTap={{ scale: 0.95 }}
-          className={`flex items-center gap-1.5 whitespace-nowrap border px-2.5 py-1 text-[11px] font-semibold cursor-pointer transition-colors shadow-sm ${radius} ${
+          className={`relative flex items-center gap-1.5 whitespace-nowrap border px-2.5 py-1 text-[11px] font-semibold cursor-pointer transition-colors shadow-sm ${radius} ${
             isOpen
-              ? "bg-emerald-600 text-white border-emerald-600"
-              : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+              ? "bg-emerald-600 text-white border-emerald-600 z-20"
+              : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 z-10"
           }`}
         >
           <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isOpen ? "bg-white" : "bg-emerald-500"}`} />
           {spec.label}
         </motion.button>
 
-        {/* نوار مقدار: به بیرون (فاصله‌گرفته از ستون تگ‌ها) باز می‌شود و متن کامل را نشان می‌دهد */}
         <AnimatePresence>
           {isOpen && (
             <motion.div
@@ -526,12 +526,22 @@ function WbsTaskCard({
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: isRight ? -6 : 6 }}
               transition={{ duration: 0.18 }}
-              className={`absolute z-30 -top-1 ${isRight ? "left-[calc(100%+10px)]" : "right-[calc(100%+10px)]"}`}
+              className={`absolute z-40 -top-1 ${isRight ? "left-[calc(100%+10px)]" : "right-[calc(100%+10px)]"}`}
+              style={{ zIndex: popoverZ }}
             >
-              <div className="w-64 max-w-[70vw] rounded-xl bg-slate-900 text-white px-4 py-3 shadow-xl border border-slate-700">
-                <span className="text-amber-300 text-[10px] font-bold block mb-1">{spec.label}</span>
-                <p className="text-[12px] leading-6 break-words whitespace-pre-wrap">{value}</p>
-              </div>
+              {value.length <= SHORT_VALUE_LIMIT && !value.includes("\n") ? (
+                /* مقدار کوتاه: نوار افقی تک‌خطی روبروی تگ */
+                <div className="flex items-center gap-2 whitespace-nowrap rounded-lg bg-slate-900 text-white text-[12px] px-3.5 py-2 border border-slate-700 shadow-xl ring-2 ring-white/90">
+                  <span className="text-amber-300 text-[10px] font-bold flex-shrink-0">{spec.label}:</span>
+                  <span>{value}</span>
+                </div>
+              ) : (
+                /* مقدار بلند: کارت عمودی که به پایین رشد می‌کند و متن کامل را نشان می‌دهد */
+                <div className="w-64 max-w-[70vw] rounded-xl bg-slate-900 text-white px-4 py-3 border border-slate-700 shadow-2xl ring-2 ring-white/90">
+                  <span className="text-amber-300 text-[10px] font-bold block mb-1">{spec.label}</span>
+                  <p className="text-[12px] leading-6 break-words whitespace-pre-wrap">{value}</p>
+                </div>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
@@ -539,13 +549,15 @@ function WbsTaskCard({
     );
   };
 
-  // ---------- تگ زیرین: نتایج بسته‌های کاری (چسبیده به لبه پایین کارتِ خودش) ----------
+  // ---------- تگ زیرین: نتایج بسته‌های کاری ----------
   const renderBottomTag = () => {
     const spec = BOTTOM_ATTR;
     const id = `${code}:bottom:deliverables`;
     const value = task.deliverables || "";
     const hasValue = hasRealValue(value);
-    const isOpen = openAttr === id;
+    const isOpen = openAttrs.includes(id);
+    const recency = openAttrs.indexOf(id);
+    const popoverZ = 40 + Math.max(recency, 0);
 
     if (!hasValue) {
       return (
@@ -561,12 +573,12 @@ function WbsTaskCard({
     return (
       <div className="absolute top-full left-1/2 -translate-x-1/2 z-10">
         <motion.button
-          onClick={() => toggle(spec, "bottom")}
+          onClick={() => toggleAttr(id)}
           whileTap={{ scale: 0.95 }}
           className={`flex items-center gap-1.5 whitespace-nowrap border px-2.5 py-1 text-[11px] font-semibold cursor-pointer transition-colors shadow-sm rounded-b-xl ${
             isOpen
-              ? "bg-emerald-600 text-white border-emerald-600"
-              : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+              ? "bg-emerald-600 text-white border-emerald-600 z-20"
+              : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 z-10"
           }`}
         >
           <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isOpen ? "bg-white" : "bg-emerald-500"}`} />
@@ -580,12 +592,20 @@ function WbsTaskCard({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -6 }}
               transition={{ duration: 0.18 }}
-              className="absolute z-30 top-full left-1/2 -translate-x-1/2 mt-1"
+              className="absolute z-40 top-full left-1/2 -translate-x-1/2 mt-1"
+              style={{ zIndex: popoverZ }}
             >
-              <div className="w-72 max-w-[80vw] rounded-xl bg-slate-900 text-white px-4 py-3 shadow-xl border border-slate-700">
-                <span className="text-amber-300 text-[10px] font-bold block mb-1">{spec.label}</span>
-                <p className="text-[12px] leading-6 break-words whitespace-pre-wrap">{value}</p>
-              </div>
+              {value.length <= SHORT_VALUE_LIMIT && !value.includes("\n") ? (
+                <div className="flex items-center gap-2 whitespace-nowrap rounded-lg bg-slate-900 text-white text-[12px] px-3.5 py-2 border border-slate-700 shadow-xl ring-2 ring-white/90">
+                  <span className="text-amber-300 text-[10px] font-bold flex-shrink-0">{spec.label}:</span>
+                  <span>{value}</span>
+                </div>
+              ) : (
+                <div className="w-72 max-w-[80vw] rounded-xl bg-slate-900 text-white px-4 py-3 border border-slate-700 shadow-2xl ring-2 ring-white/90">
+                  <span className="text-amber-300 text-[10px] font-bold block mb-1">{spec.label}</span>
+                  <p className="text-[12px] leading-6 break-words whitespace-pre-wrap">{value}</p>
+                </div>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
@@ -593,31 +613,29 @@ function WbsTaskCard({
     );
   };
 
+  const anyOpen = openAttrs.some((id) => id.startsWith(`${code}:`));
+
   return (
     <div className="relative" style={{ marginTop: 16, marginBottom: 32 }}>
-      {/* تگ‌های جانبی */}
       {SIDE_ATTRS.map(renderSideTag)}
-      {/* تگ زیرین */}
       {renderBottomTag()}
 
-      {/* مستطیل اصلی: هم‌اندازه برای همه (min-height ثابت) — متن بلند فقط همین کارت را بلندتر می‌کند */}
+      {/* مستطیل اصلی */}
       <motion.div
         initial={{ opacity: 0, y: 14 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: Math.min(index * 0.05, 0.6), duration: 0.3 }}
         className={`relative w-[26rem] max-w-full bg-white rounded-2xl border-2 flex flex-col items-center justify-center text-center px-6 py-6 transition-shadow ${
-          openAttr && openAttr.startsWith(`${code}:`)
-            ? "border-amber-400 shadow-lg"
-            : "border-slate-200 hover:border-slate-300 hover:shadow-md"
+          anyOpen ? "border-amber-400 shadow-lg" : "border-slate-200 hover:border-slate-300 hover:shadow-md"
         }`}
         style={{ minHeight: 118 }}
       >
-        {/* نوار کد WBS — وسط‌چین بالای کارت */}
+        {/* نوار کد WBS */}
         <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-[11px] font-bold rounded-lg px-3 py-1 shadow-md tracking-wider whitespace-nowrap">
           {code}
         </div>
 
-        {/* نام فعالیت — قهرمان اصلی صفحه (وسط‌چین، بدون بیرون‌زدگی عمودی) */}
+        {/* نام فعالیت */}
         <p className="text-base sm:text-lg font-bold text-slate-900 leading-7 break-words">{task.name}</p>
       </motion.div>
     </div>
