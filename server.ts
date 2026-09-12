@@ -18,6 +18,7 @@ import crypto from "node:crypto";
 
 import { config } from "./src/config/env";
 import { parseExcelWBS } from "./src/utils/wbsParser";
+import { parseWbsWorkbook } from "./src/utils/wbsDataParser";
 import { getDeadlineState } from "./src/deadline";
 
 const SALT_ROUNDS = 10;
@@ -1025,6 +1026,84 @@ app.get("/api/projects/:id/wbs-file", authenticate, async (req: any, res) => {
   } catch (error) {
     console.error("Error downloading WBS file:", error);
     res.status(500).json({ error: "خطا در دریافت فایل WBS." });
+  }
+});
+
+// -----------------------------
+// 4.4 WBS Data View (خواندن اکسل WBS برای نمایش در UI — انتخاب پروژه، جزئیات، ساختار شکست)
+// -----------------------------
+
+// لیست پروژه‌هایی که ساختار شکست ارسالی دارند (برای مدیر)
+app.get("/api/wbs-data/projects", authenticate, requireManager, async (_req, res) => {
+  try {
+    const rows = await prisma.wbsSubmission.findMany({
+      orderBy: { created_at: "desc" },
+      include: {
+        project: { select: { title: true, code: true } },
+        user: { select: { full_name: true, username: true } },
+      },
+    });
+
+    // آخرین ارسال هر پروژه ملاک است (ارسال‌های قدیمی‌تر تاریخچه می‌مانند)
+    const latestByProject = new Map<number, any>();
+    for (const r of rows) {
+      if (!latestByProject.has(r.project_id)) {
+        latestByProject.set(r.project_id, r);
+      }
+    }
+
+    const projects = Array.from(latestByProject.values()).map((r) => ({
+      submission_id: r.id,
+      project_id: r.project_id,
+      project_title: r.project?.title || `پروژه #${r.project_id}`,
+      project_code: r.project?.code || "",
+      uploaded_by: r.user?.full_name || r.user?.username || "نامشخص",
+      file_name: r.file_name,
+      uploaded_at: r.created_at,
+    }));
+
+    res.json(projects);
+  } catch (error) {
+    console.error("Error listing WBS projects:", error);
+    res.status(500).json({ error: "خطا در دریافت فهرست پروژه‌های دارای ساختار شکست." });
+  }
+});
+
+// داده کامل اکسل WBS یک ارسال (شناسنامه + ساختار شکست + شاخص‌ها)
+app.get("/api/wbs-data/:submissionId", authenticate, async (req: any, res) => {
+  try {
+    const submissionId = parseInt(req.params.submissionId);
+    const submission = await prisma.wbsSubmission.findUnique({ where: { id: submissionId } });
+    if (!submission) {
+      return res.status(404).json({ error: "ساختار شکست یافت نشد." });
+    }
+
+    // دسترسی: مدیر، یا معاونِ همان پروژه
+    if (req.user.role !== "manager") {
+      const assignment = await prisma.userProject.findFirst({
+        where: { user_id: req.user.id, project_id: submission.project_id },
+      });
+      if (!assignment) {
+        return res.status(403).json({ error: "شما مجاز به مشاهده این ساختار شکست نیستید." });
+      }
+    }
+
+    const filePath = safeResolvePath(wbsDir, submission.storage_filename);
+    if (!filePath || !fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "فایل فیزیکی اکسل در سرور یافت نشد." });
+    }
+
+    const data = parseWbsWorkbook(filePath);
+    res.json({
+      submission_id: submission.id,
+      project_id: submission.project_id,
+      file_name: submission.file_name,
+      uploaded_at: submission.created_at,
+      ...data,
+    });
+  } catch (error) {
+    console.error("Error parsing WBS data:", error);
+    res.status(500).json({ error: "خطا در خواندن فایل اکسل ساختار شکست." });
   }
 });
 
