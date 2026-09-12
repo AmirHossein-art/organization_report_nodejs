@@ -840,12 +840,18 @@ export default function ManagerDashboard({
       statusLabel = "دارای گزارش تأخیری";
     }
 
+    // نسبت گزارش‌های تحویل‌شده به کل پروژه‌ها (برای رنگ‌بندی نسبتی حباب)
+    const totalProjects = person.projects.length;
+    const completionRatio =
+      totalProjects > 0 ? submittedCount / totalProjects : 0;
+
     return {
       ...person,
       submitted_count: submittedCount,
       late_count: lateCount,
       missing_count: missingCount,
-      total_projects: person.projects.length,
+      total_projects: totalProjects,
+      completion_ratio: completionRatio,
       status_key: statusKey,
       status_label: statusLabel,
     };
@@ -1359,28 +1365,55 @@ export default function ManagerDashboard({
                 {/* لایه اول: حباب‌های پرسنل */}
                 <div className="flex flex-wrap items-center justify-center gap-8 md:gap-12 pt-10">
                   {filteredUserRows.map((person: any, idx: number) => {
-                    const isSubmitted =
-                      person.status_key === "submitted";
-
                     const isLate =
                       person.status_key === "late";
 
                     const isExpanded =
                       expandedUserKey === person.user_key;
 
-                    const bubbleColor = isSubmitted
-                      ? "from-emerald-500 to-teal-600 shadow-emerald-500/40 border-emerald-400/50"
-                      : isLate
-                      ? "from-amber-500 to-yellow-600 shadow-amber-500/40 border-amber-400/50"
-                      : "from-rose-600 to-red-700 shadow-rose-600/40 border-rose-400/50";
+                    const completionRatio =
+                      typeof person.completion_ratio === "number"
+                        ? person.completion_ratio
+                        : 0;
 
-                    const icon = isSubmitted ? (
-                      <CheckCircle2 className="w-5 h-5 text-white" />
-                    ) : isLate ? (
-                      <AlertTriangle className="w-5 h-5 text-white" />
-                    ) : (
-                      <ShieldAlert className="w-5 h-5 text-white" />
+                    // قاچ‌بندی حباب: هر قاچ = یک پروژه، رنگ قاچ از وضعیت همان پروژه
+                    const sliceSegments = (person.projects || []).map(
+                      (p: any) => p.status_key
                     );
+                    const totalSlices = sliceSegments.length || 1;
+                    const sliceAngle = 360 / totalSlices;
+                    let sliceAcc = 0;
+                    const conicStops = sliceSegments.map((sk: string) => {
+                      const from = sliceAcc;
+                      sliceAcc += sliceAngle;
+                      const c =
+                        sk === "submitted"
+                          ? "#10b981" // سبز: تحویل‌شده
+                          : sk === "late"
+                          ? "#f59e0b" // کهربایی: تأخیری
+                          : "#e11d48"; // قرمز: فاقد گزارش
+                      return `${c} ${from}deg ${from + sliceAngle}deg`;
+                    });
+                    const conicBackground = conicStops.length
+                      ? `conic-gradient(${conicStops.join(", ")})`
+                      : "#e11d48";
+
+                    // کادر و هاله: بدترین وضعیت بین پروژه‌های این شخص
+                    const worstColor =
+                      person.status_key === "submitted"
+                        ? "#34d399" // سبز
+                        : person.status_key === "late"
+                        ? "#fbbf24" // کهربایی
+                        : "#fb7185"; // قرمز
+
+                    const icon =
+                      completionRatio >= 1 ? (
+                        <CheckCircle2 className="w-5 h-5 text-white" />
+                      ) : isLate ? (
+                        <AlertTriangle className="w-5 h-5 text-white" />
+                      ) : (
+                        <ShieldAlert className="w-5 h-5 text-white" />
+                      );
 
                     return (
                       <div
@@ -1401,13 +1434,14 @@ export default function ManagerDashboard({
                             animationDuration: `${
                               3.5 + (idx % 3) * 0.5
                             }s`,
+                            background: conicBackground,
+                            boxShadow: `0 20px 40px -10px ${worstColor}80`,
+                            borderColor: `${worstColor}b3`,
                           }}
                           className={`
                             bubble-floating
                             w-36 h-36 md:w-40 md:h-40
                             rounded-full
-                            bg-gradient-to-br
-                            ${bubbleColor}
                             border-2 shadow-2xl
                             flex flex-col items-center justify-center
                             text-center p-3 text-white
