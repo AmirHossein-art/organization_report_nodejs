@@ -20,6 +20,7 @@ import ProjectKpiManagement from "./views/ProjectKpiManagement";
 import ProjectKpiAnalytics from "./views/ProjectKpiAnalytics";
 import WbsUpload from "./views/WbsUpload";
 import WbsViewer from "./views/WbsViewer";
+import WbsTree from "./views/WbsTree";
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -182,6 +183,7 @@ export default function App() {
             {currentView === "project_kpi_management" && <ProjectKpiManagement projects={projects} onRefresh={fetchData} />}
             {currentView === "project_kpi_analytics" && <ProjectKpiAnalytics projects={projects} />}
             {currentView === "wbs_viewer" && <WbsViewer />}
+            {currentView === "wbs_tree" && <WbsTree />}
           </>
         )}
       </main>

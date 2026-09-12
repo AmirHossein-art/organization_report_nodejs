@@ -15,6 +15,7 @@ import {
   TrendingUp,
   Upload,
   ListTree,
+  Network,
 } from "lucide-react";
 import { User } from "../types";
 
@@ -155,6 +156,18 @@ export default function Sidebar({ user, currentView, setCurrentView, onLogout }:
               >
                 <ListTree className="w-4 h-4" />
                 <span> مشاهده ساختار شکست پروژه‌ها</span>
+              </button>
+              <button
+                onClick={() => {
+                  setCurrentView("wbs_tree");
+                  setMobileMenuOpen(false);
+                }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
+                  currentView === "wbs_tree" ? "bg-white/10 text-amber-400 font-semibold" : "hover:bg-white/5 hover:text-white"
+                }`}
+              >
+                <Network className="w-4 h-4" />
+                <span> ساختار درختی پروژه‌ها</span>
               </button>
               <button
                 onClick={() => {
