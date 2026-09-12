@@ -64,11 +64,15 @@ interface PageSection {
   }>;
 }
 
-interface ReportPageData {
+interface PageBlock {
   reportId: number;
   projectTitle: string;
   isContinuation: boolean;
   sections: PageSection[];
+}
+
+interface ReportPageData {
+  blocks: PageBlock[];
 }
 
 export default function ReportsPdfDocument({
@@ -216,7 +220,7 @@ export default function ReportsPdfDocument({
       .filter((l) => l.length > 0);
   };
 
-  // الگوریتم صفحه‌بندی هوشمند پروژه‌های طولانی بر اساس ظرفیت واقعی برگه A4
+  // الگوریتم صفحه‌بندی هوشمند: چند گزارش کوتاه در یک صفحه، گزارش‌های بلند به چند صفحه
   const paginatedReportPages = useMemo(() => {
     const pages: ReportPageData[] = [];
     const MAX_PAGE_LINES = 68; // گنجایش واقعی تعداد خطوط در یک صفحه A4
@@ -230,7 +234,8 @@ export default function ReportsPdfDocument({
       return Math.max(1, Math.ceil(len / 85)) + 0.1;
     };
 
-    orderedReports.forEach((report) => {
+    // هزینه هر گزارش به خطوط معادل صفحه‌ای
+    const measureReport = (report: Report) => {
       const activitiesList = parseBulletPoints(report.activities_done);
       const resultsList =
         report.achievedActions && report.achievedActions.length > 0
@@ -274,17 +279,6 @@ export default function ReportsPdfDocument({
         });
       }
 
-      if (rawSections.length === 0) {
-        pages.push({
-          reportId: report.id,
-          projectTitle: report.project_title,
-          isContinuation: false,
-          sections: [],
-        });
-        return;
-      }
-
-      // محاسبه کل خطوط گزارش
       let totalLinesInReport = 0;
       rawSections.forEach((sec) => {
         totalLinesInReport += 1.3; // عنوان بخش
@@ -293,18 +287,15 @@ export default function ReportsPdfDocument({
         });
       });
 
-      // اگر کل گزارش در یک صفحه A4 جا می‌شود، تماماً در یک صفحه قرار گیرد
-      if (totalLinesInReport <= MAX_PAGE_LINES) {
-        pages.push({
-          reportId: report.id,
-          projectTitle: report.project_title,
-          isContinuation: false,
-          sections: rawSections,
-        });
-        return;
-      }
+      return { rawSections, totalLinesInReport };
+    };
 
-      // تقسیم‌بندی روی صفحات A4 در صورت بسیار طولانی بودن
+    // ساخت بلوک‌های صفحات یک گزارش طولانی (به همان روش قبلی)
+    const splitLongReport = (
+      report: Report,
+      rawSections: Array<{ heading: string; items: Array<{ text: string; date?: string | null }> }>
+    ): PageBlock[] => {
+      const blocks: PageBlock[] = [];
       let currentPageSections: PageSection[] = [];
       let currentLines = 0;
       let isContinuation = false;
@@ -318,7 +309,7 @@ export default function ReportsPdfDocument({
           currentLines + headingLines + estimateItemLines(section.items[0].text) > MAX_PAGE_LINES &&
           currentPageSections.length > 0
         ) {
-          pages.push({
+          blocks.push({
             reportId: report.id,
             projectTitle: report.project_title,
             isContinuation,
@@ -346,7 +337,7 @@ export default function ReportsPdfDocument({
               currentPageSections.push(currentSection);
             }
 
-            pages.push({
+            blocks.push({
               reportId: report.id,
               projectTitle: report.project_title,
               isContinuation,
@@ -372,14 +363,86 @@ export default function ReportsPdfDocument({
       });
 
       if (currentPageSections.length > 0) {
-        pages.push({
+        blocks.push({
           reportId: report.id,
           projectTitle: report.project_title,
           isContinuation,
           sections: currentPageSections,
         });
       }
+
+      return blocks;
+    };
+
+    // هزینه اضافی هر بلوک پروژه روی صفحه (عنوان + قاب + فاصله‌ها)
+    const BLOCK_OVERHEAD_LINES = 6.5;
+    // فاصله بین دو گزارش در یک صفحه مشترک
+    const BLOCK_GAP_LINES = 2;
+
+    let currentPage: ReportPageData = { blocks: [] };
+    let currentPageLines = 0;
+
+    const flushPage = () => {
+      if (currentPage.blocks.length > 0) {
+        pages.push(currentPage);
+      }
+      currentPage = { blocks: [] };
+      currentPageLines = 0;
+    };
+
+    orderedReports.forEach((report) => {
+      const { rawSections, totalLinesInReport } = measureReport(report);
+
+      if (rawSections.length === 0) {
+        // گزارش خالی: بلوک ساده (کادر «موردی ثبت نشده») در صفحه جاری
+        const emptyBlockCost = BLOCK_OVERHEAD_LINES + 2;
+        if (currentPageLines + emptyBlockCost > MAX_PAGE_LINES) {
+          flushPage();
+        }
+        currentPage.blocks.push({
+          reportId: report.id,
+          projectTitle: report.project_title,
+          isContinuation: false,
+          sections: [],
+        });
+        currentPageLines += emptyBlockCost + (currentPage.blocks.length > 1 ? BLOCK_GAP_LINES : 0);
+        return;
+      }
+
+      // گزارشی که کلش در یک صفحه جا می‌شود: در صورت امکان به صفحه جاری اضافه شود
+      if (totalLinesInReport <= MAX_PAGE_LINES) {
+        const blockCost =
+          BLOCK_OVERHEAD_LINES + totalLinesInReport + (currentPage.blocks.length > 0 ? BLOCK_GAP_LINES : 0);
+
+        if (currentPageLines + blockCost <= MAX_PAGE_LINES) {
+          currentPage.blocks.push({
+            reportId: report.id,
+            projectTitle: report.project_title,
+            isContinuation: false,
+            sections: rawSections,
+          });
+          currentPageLines += blockCost;
+        } else {
+          flushPage();
+          currentPage.blocks.push({
+            reportId: report.id,
+            projectTitle: report.project_title,
+            isContinuation: false,
+            sections: rawSections,
+          });
+          currentPageLines += BLOCK_OVERHEAD_LINES + totalLinesInReport;
+        }
+        return;
+      }
+
+      // گزارش بسیار طولانی: صفحه جاری بسته شود و گزارش روی صفحات جدید شکسته شود
+      flushPage();
+      splitLongReport(report, rawSections).forEach((block) => {
+        pages.push({ blocks: [block] });
+      });
     });
+
+    flushPage();
 
     return pages;
   }, [orderedReports]);
@@ -794,59 +857,64 @@ export default function ReportsPdfDocument({
                 paginatedReportPages.map((pageData, pageIdx) => {
                   return (
                     <div
-                      key={`${pageData.reportId}-p${pageIdx}`}
+                      key={`page-${pageIdx}`}
                       className="pdf-page-container w-[210mm] h-[297mm] min-h-[297mm] max-h-[297mm] bg-white p-[12mm_14mm_10mm_14mm] rounded-2xl shadow-xl border border-slate-300 flex flex-col justify-between overflow-hidden box-border"
                     >
                       {/* محتوای بالا و اصلی صفحه */}
-                      <div className="w-full">
+                      <div className="w-full space-y-4">
                         {/* نوار هدر سبز سراسری */}
                         <div className="page-header-banner bg-[#4a8b38] text-white font-extrabold text-xs sm:text-sm text-center py-2 px-4 rounded mb-2.5 shadow-2xs shrink-0">
                           گزارش پروژه‌های استراتژیک سازمان حمل‌و‌نقل وترافیک شهرداری تهران
                         </div>
 
-                        {/* عنوان پروژه */}
-                        <h2 className="page-project-title text-sm sm:text-base font-black text-slate-900 mb-2 text-right shrink-0">
-                          {pageData.projectTitle}
-                          {pageData.isContinuation && (
-                            <span className="text-xs font-bold text-slate-500 mr-2">
-                              (ادامه)
-                            </span>
-                          )}
-                        </h2>
+                        {/* چند گزارش می‌توانند در یک صفحه باشند */}
+                        {pageData.blocks.map((block, bIdx) => (
+                          <div key={`p${pageIdx}-b${bIdx}`}>
+                            {/* عنوان پروژه */}
+                            <h2 className="page-project-title text-sm sm:text-base font-black text-slate-900 mb-2 text-right shrink-0">
+                              {block.projectTitle}
+                              {block.isContinuation && (
+                                <span className="text-xs font-bold text-slate-500 mr-2">
+                                  (ادامه)
+                                </span>
+                              )}
+                            </h2>
 
-                        {/* کادر احاطه‌کننده محتوای پروژه متناسب با حجم متن */}
-                        <div className="project-main-card border-[1.5px] border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3 bg-white">
-                          {pageData.sections.length === 0 ? (
-                            <p className="text-[11px] text-slate-400 italic">
-                              موردی برای این پروژه ثبت نشده است.
-                            </p>
-                          ) : (
-                            pageData.sections.map((sec, sIdx) => (
-                              <div key={sIdx} className="section-block space-y-1">
-                                <div className="section-heading text-xs font-black text-slate-900">
-                                  {sec.heading}
-                                </div>
+                            {/* کادر احاطه‌کننده محتوای پروژه متناسب با حجم متن */}
+                            <div className="project-main-card border-[1.5px] border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3 bg-white">
+                              {block.sections.length === 0 ? (
+                                <p className="text-[11px] text-slate-400 italic">
+                                  موردی برای این پروژه ثبت نشده است.
+                                </p>
+                              ) : (
+                                block.sections.map((sec, sIdx) => (
+                                  <div key={sIdx} className="section-block space-y-1">
+                                    <div className="section-heading text-xs font-black text-slate-900">
+                                      {sec.heading}
+                                    </div>
 
-                                <ul className="bullet-list space-y-1 pr-1">
-                                  {sec.items.map((it, itIdx) => (
-                                    <li
-                                      key={itIdx}
-                                      className="bullet-item text-[10.8px] leading-relaxed text-slate-800 text-justify relative pr-3.5"
-                                    >
-                                      <span className="absolute right-0 top-0 font-bold">•</span>
-                                      <span>{it.text}</span>
-                                      {it.date && (
-                                        <span className="target-date-tag text-slate-700 font-bold mr-1">
-                                          ({toPersianDigits(it.date)})
-                                        </span>
-                                      )}
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-                            ))
-                          )}
-                        </div>
+                                    <ul className="bullet-list space-y-1 pr-1">
+                                      {sec.items.map((it, itIdx) => (
+                                        <li
+                                          key={itIdx}
+                                          className="bullet-item text-[10.8px] leading-relaxed text-slate-800 text-justify relative pr-3.5"
+                                        >
+                                          <span className="absolute right-0 top-0 font-bold">•</span>
+                                          <span>{it.text}</span>
+                                          {it.date && (
+                                            <span className="target-date-tag text-slate-700 font-bold mr-1">
+                                              ({toPersianDigits(it.date)})
+                                            </span>
+                                          )}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                        ))}
                       </div>
 
                       {/* ۳. شماره صفحه به اعداد فارسی در وسط و پایین صفحه */}
