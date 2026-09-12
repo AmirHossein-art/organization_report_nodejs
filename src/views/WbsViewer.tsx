@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import {
   Folder,
   ArrowRight,
-  FileSpreadsheet,
   Download,
   Loader2,
   User,
@@ -67,8 +66,7 @@ interface WbsData extends WbsProjectRow {
 }
 
 // ---------- اتریبیوت‌های مستطیل (۷ عدد) ----------
-// top: موقعیت عمودی تگ نسبت به مستطیل (۰ تا ۱۰۰ درصد ارتفاع مستطیل)
-// side: تگ سمت راست یا چپ مستطیل قرار می‌گیرد
+// top: درصد موقعیت عمودی تگ نسبت به ارتفاع کارت (وسط‌ترِ هر سه با فاصله مساوی از لبه بالا/پایین)
 interface AttrSpec {
   key: keyof WbsTask;
   label: string;
@@ -76,16 +74,13 @@ interface AttrSpec {
   top: number; // درصد
 }
 
-const RIGHT_ATTRS: AttrSpec[] = [
-  { key: "level", label: "سطح", side: "right", top: 22 },
+const SIDE_ATTRS: AttrSpec[] = [
+  { key: "level", label: "سطح", side: "right", top: 24 },
   { key: "owner", label: "مسئول", side: "right", top: 50 },
-  { key: "prerequisite", label: "پیش‌نیاز", side: "right", top: 78 },
-];
-
-const LEFT_ATTRS: AttrSpec[] = [
-  { key: "start_date", label: "تاریخ شروع", side: "left", top: 22 },
+  { key: "prerequisite", label: "پیش‌نیاز", side: "right", top: 76 },
+  { key: "start_date", label: "تاریخ شروع", side: "left", top: 24 },
   { key: "duration", label: "مدت (روز کاری)", side: "left", top: 50 },
-  { key: "note", label: "توضیح", side: "left", top: 78 },
+  { key: "note", label: "توضیح", side: "left", top: 76 },
 ];
 
 const BOTTOM_ATTR: AttrSpec = {
@@ -120,7 +115,7 @@ export default function WbsViewer() {
   const [error, setError] = useState("");
 
   // ---------- انیمیشن باز شدن تگ ----------
-  const [openAttr, setOpenAttr] = useState<string | null>(null); // مثال: "1.1:right:owner"
+  const [openAttr, setOpenAttr] = useState<string | null>(null);
 
   // ---------- بارگذاری لیست پروژه‌های دارای WBS ----------
   useEffect(() => {
@@ -273,46 +268,36 @@ export default function WbsViewer() {
       </div>
 
       {/* ناوبری داخلی دو صفحه */}
-      {stage === "detail" && (
-        <div className="flex gap-2">
-          <button
-            onClick={() => setStage("detail")}
-            className="flex items-center gap-2 text-sm font-semibold text-amber-600 bg-amber-50 rounded-xl px-4 py-2 cursor-pointer"
-          >
-            <BarChart3 className="w-4 h-4" />
-            جزئیات پروژه
-          </button>
-          <button
-            onClick={goTree}
-            className="flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-amber-600 hover:bg-amber-50 rounded-xl px-4 py-2 transition-colors cursor-pointer"
-          >
-            <ListTree className="w-4 h-4" />
-            ساختار شکست پروژه
-            <ChevronDown className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
-      {stage === "tree" && (
-        <div className="flex gap-2">
-          <button
-            onClick={() => setStage("detail")}
-            className="flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-amber-600 hover:bg-amber-50 rounded-xl px-4 py-2 transition-colors cursor-pointer"
-          >
-            <BarChart3 className="w-4 h-4" />
-            جزئیات پروژه
-          </button>
-          <button
-            onClick={() => setStage("tree")}
-            className="flex items-center gap-2 text-sm font-semibold text-amber-600 bg-amber-50 rounded-xl px-4 py-2 cursor-pointer"
-          >
-            <ListTree className="w-4 h-4" />
-            ساختار شکست پروژه
-          </button>
-        </div>
-      )}
+      <div className="flex gap-2">
+        <button
+          onClick={() => {
+            setOpenAttr(null);
+            setStage("detail");
+          }}
+          className={`flex items-center gap-2 text-sm rounded-xl px-4 py-2 transition-colors cursor-pointer ${
+            stage === "detail"
+              ? "font-semibold text-amber-600 bg-amber-50"
+              : "font-medium text-slate-600 hover:text-amber-600 hover:bg-amber-50"
+          }`}
+        >
+          <BarChart3 className="w-4 h-4" />
+          جزئیات پروژه
+        </button>
+        <button
+          onClick={goTree}
+          className={`flex items-center gap-2 text-sm rounded-xl px-4 py-2 transition-colors cursor-pointer ${
+            stage === "tree"
+              ? "font-semibold text-amber-600 bg-amber-50"
+              : "font-medium text-slate-600 hover:text-amber-600 hover:bg-amber-50"
+          }`}
+        >
+          <ListTree className="w-4 h-4" />
+          ساختار شکست پروژه
+        </button>
+      </div>
 
-      {/* ------------------ مرحله ۲: شناسنامه پروژه ------------------ */}
       <AnimatePresence mode="wait">
+        {/* ------------------ مرحله ۲: شناسنامه پروژه ------------------ */}
         {stage === "detail" && (
           <motion.div
             key="detail"
@@ -426,7 +411,6 @@ export default function WbsViewer() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.25 }}
-            className="space-y-4"
           >
             {data.tasks.length === 0 ? (
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-12 text-center">
@@ -434,29 +418,23 @@ export default function WbsViewer() {
                 <p className="text-sm text-slate-400">در این فایل، ردیف فعالیتی (WBS) یافت نشد.</p>
               </div>
             ) : (
-              <div className="relative flex flex-col items-center gap-3">
-                {data.tasks.map((task, i) => {
-                  const code = task.wbs_code || `#${i + 1}`;
-                  const levelNum = parseInt(task.level) || code.split(".").length;
-                  // عمق بصری: هر سطح با حاشیه و عرض متفاوت تا سلسله‌مراتب مشخص باشد
-                  const indent = Math.min(levelNum - 1, 3) * 28;
-
-                  return (
-                    <div
-                      key={`${code}-${i}`}
-                      className="relative flex justify-center w-full"
-                      style={{ marginRight: indent }}
-                    >
+              /* پنجره ثابت با اسکرول داخلی — ابعاد صفحه تغییر نمی‌کند و سایدبار ثابت می‌ماند */
+              <div className="wbs-scroll h-[calc(100vh-260px)] min-h-[420px] overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50/60 shadow-inner">
+                <div className="flex flex-col items-center py-14">
+                  {data.tasks.map((task, i) => {
+                    const code = task.wbs_code || `#${i + 1}`;
+                    return (
                       <WbsTaskCard
+                        key={`${code}-${i}`}
                         task={task}
                         index={i}
                         code={code}
                         openAttr={openAttr}
                         setOpenAttr={setOpenAttr}
                       />
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
             )}
           </motion.div>
@@ -467,7 +445,10 @@ export default function WbsViewer() {
 }
 
 // ============================================================
-//  کارت تعاملی هر فعالیت: مستطیل مرکزی + ۶ تگ جانبی + ۱ تگ زیرین
+//  کارت تعاملی هر فعالیت
+//  - همه کارت‌ها هم‌اندازه (دیگر تورفتگی سطح ندارند؛ همه وسط‌چین)
+//  - اگر نام فعالیت خیلی بلند باشد فقط همان کارت بلندتر می‌شود
+//  - ۶ تگ جانبی (۳ راست، ۳ چپ) + ۱ تگ زیرین چسبیده به لبه پایین کارتِ خودش
 // ============================================================
 function WbsTaskCard({
   task,
@@ -482,84 +463,128 @@ function WbsTaskCard({
   openAttr: string | null;
   setOpenAttr: (v: string | null) => void;
 }) {
-  const toggle = (spec: AttrSpec) => {
-    const id = `${code}:${spec.side}:${spec.key}`;
+  const toggle = (spec: AttrSpec, zone: "side" | "bottom") => {
+    const id = `${code}:${zone}:${spec.key}`;
     setOpenAttr(openAttr === id ? null : id);
   };
 
-  const renderTag = (spec: AttrSpec) => {
-    const id = `${code}:${spec.side}:${spec.key}`;
-    const value = (task[spec.key] as string) || "";
-    const hasValue = value.trim() !== "" && value !== "-" && value !== "---";
-    const isOpen = openAttr === id;
+  const hasRealValue = (v: string) => v.trim() !== "" && v !== "-" && v !== "---";
 
-    // تگ‌های خالی: قرمز، غیرقابل کلیک، بدون باز شدن
+  // ---------- تگ‌های سمت راست و چپ ----------
+  const renderSideTag = (spec: AttrSpec) => {
+    const id = `${code}:side:${spec.key}`;
+    const value = (task[spec.key] as string) || "";
+    const hasValue = hasRealValue(value);
+    const isOpen = openAttr === id;
+    const isRight = spec.side === "right";
+
+    // موقعیت: چسبیده به لبه کارت (بدون زدگی داخل کارت)
+    const posStyle: React.CSSProperties = isRight
+      ? { top: `${spec.top}%`, left: "100%", transform: "translateY(-50%)" }
+      : { top: `${spec.top}%`, right: "100%", transform: "translateY(-50%)" };
+
+    // گوشه‌ها: سمتِ چسبیده به کارت تیز، سمتِ بیرونی گرد
+    const radius = isRight ? "rounded-r-xl" : "rounded-l-xl";
+
+    // تگ خالی: قرمز، غیرقابل کلیک
     if (!hasValue) {
       return (
-        <div
-          key={spec.key}
-          className="absolute z-10 select-none"
-          style={
-            spec.side === "right"
-              ? { top: `${spec.top}%`, left: "100%", transform: "translateY(-50%) translateX(-6px)" }
-              : { top: `${spec.top}%`, right: "100%", transform: "translateY(-50%) translateX(6px)" }
-          }
-        >
+        <div key={spec.key} className="absolute z-10 select-none" style={posStyle}>
           <div
-            className={`flex items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1 text-[11px] font-medium cursor-not-allowed ${
-              spec.side === "right" ? "flex-row-reverse" : ""
-            } bg-red-50 text-red-400 border-red-200 opacity-80`}
+            className={`flex items-center gap-1.5 whitespace-nowrap border bg-red-50 text-red-400 border-red-200 px-2.5 py-1 text-[11px] font-medium cursor-not-allowed opacity-90 ${radius}`}
             title="این مورد ثبت نشده است"
           >
-            <span className="w-1.5 h-1.5 rounded-full bg-red-300" />
+            <span className="w-1.5 h-1.5 rounded-full bg-red-300 flex-shrink-0" />
             {spec.label}
           </div>
         </div>
       );
     }
 
-    // تگ‌های دارای مقدار: سبزِ هماهنگ با تم، قابل باز شدن با انیمیشن
+    // تگ دارای مقدار: سبزِ هماهنگ با تم — کلیک = باز شدن نوار مقدار
     return (
-      <div
-        key={spec.key}
-        className="absolute z-10"
-        style={
-          spec.side === "right"
-            ? { top: `${spec.top}%`, left: "100%", transform: "translateY(-50%)" }
-            : { top: `${spec.top}%`, right: "100%", transform: "translateY(-50%)" }
-        }
-      >
+      <div key={spec.key} className="absolute z-10" style={posStyle}>
         <motion.button
-          onClick={() => toggle(spec)}
-          whileHover={{ x: spec.side === "right" ? 2 : -2 }}
+          onClick={() => toggle(spec, "side")}
+          whileHover={{ x: isRight ? 2 : -2 }}
           whileTap={{ scale: 0.95 }}
-          className={`flex items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1 text-[11px] font-semibold cursor-pointer transition-colors shadow-sm ${
-            spec.side === "right" ? "flex-row-reverse" : ""
-          } ${
+          className={`flex items-center gap-1.5 whitespace-nowrap border px-2.5 py-1 text-[11px] font-semibold cursor-pointer transition-colors shadow-sm ${radius} ${
             isOpen
               ? "bg-emerald-600 text-white border-emerald-600"
               : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
           }`}
         >
-          <span className={`w-1.5 h-1.5 rounded-full ${isOpen ? "bg-white" : "bg-emerald-500"}`} />
+          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isOpen ? "bg-white" : "bg-emerald-500"}`} />
           {spec.label}
         </motion.button>
 
-        {/* نوار مقدار: از پشت تگ بیرون می‌آید */}
+        {/* نوار مقدار: به بیرون (فاصله‌گرفته از ستون تگ‌ها) باز می‌شود و متن کامل را نشان می‌دهد */}
         <AnimatePresence>
           {isOpen && (
             <motion.div
-              initial={{ opacity: 0, x: spec.side === "right" ? -8 : 8, width: 0 }}
-              animate={{ opacity: 1, x: 0, width: "auto" }}
-              exit={{ opacity: 0, x: spec.side === "right" ? -8 : 8, width: 0 }}
-              transition={{ duration: 0.22, ease: "easeOut" }}
-              className={`absolute top-1/2 -translate-y-1/2 overflow-hidden ${
-                spec.side === "right" ? "left-full ml-1" : "right-full mr-1"
-              }`}
+              initial={{ opacity: 0, x: isRight ? -6 : 6 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: isRight ? -6 : 6 }}
+              transition={{ duration: 0.18 }}
+              className={`absolute z-30 -top-1 ${isRight ? "left-[calc(100%+10px)]" : "right-[calc(100%+10px)]"}`}
             >
-              <div className="whitespace-nowrap max-w-xs rounded-lg bg-slate-900 text-white text-[12px] leading-5 px-3.5 py-2 shadow-lg border border-slate-700 flex items-center gap-2">
-                <span className="text-amber-300 text-[10px] font-bold flex-shrink-0">{spec.label}:</span>
-                <span className="break-words">{value}</span>
+              <div className="w-64 max-w-[70vw] rounded-xl bg-slate-900 text-white px-4 py-3 shadow-xl border border-slate-700">
+                <span className="text-amber-300 text-[10px] font-bold block mb-1">{spec.label}</span>
+                <p className="text-[12px] leading-6 break-words whitespace-pre-wrap">{value}</p>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    );
+  };
+
+  // ---------- تگ زیرین: نتایج بسته‌های کاری (چسبیده به لبه پایین کارتِ خودش) ----------
+  const renderBottomTag = () => {
+    const spec = BOTTOM_ATTR;
+    const id = `${code}:bottom:deliverables`;
+    const value = task.deliverables || "";
+    const hasValue = hasRealValue(value);
+    const isOpen = openAttr === id;
+
+    if (!hasValue) {
+      return (
+        <div className="absolute top-full left-1/2 -translate-x-1/2 z-10 select-none cursor-not-allowed" title="این مورد ثبت نشده است">
+          <div className="flex items-center gap-1.5 whitespace-nowrap border bg-red-50 text-red-400 border-red-200 px-2.5 py-1 text-[11px] font-medium opacity-90 rounded-b-xl">
+            <span className="w-1.5 h-1.5 rounded-full bg-red-300 flex-shrink-0" />
+            {spec.label}
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="absolute top-full left-1/2 -translate-x-1/2 z-10">
+        <motion.button
+          onClick={() => toggle(spec, "bottom")}
+          whileTap={{ scale: 0.95 }}
+          className={`flex items-center gap-1.5 whitespace-nowrap border px-2.5 py-1 text-[11px] font-semibold cursor-pointer transition-colors shadow-sm rounded-b-xl ${
+            isOpen
+              ? "bg-emerald-600 text-white border-emerald-600"
+              : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+          }`}
+        >
+          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isOpen ? "bg-white" : "bg-emerald-500"}`} />
+          {spec.label}
+        </motion.button>
+
+        <AnimatePresence>
+          {isOpen && (
+            <motion.div
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.18 }}
+              className="absolute z-30 top-full left-1/2 -translate-x-1/2 mt-1"
+            >
+              <div className="w-72 max-w-[80vw] rounded-xl bg-slate-900 text-white px-4 py-3 shadow-xl border border-slate-700">
+                <span className="text-amber-300 text-[10px] font-bold block mb-1">{spec.label}</span>
+                <p className="text-[12px] leading-6 break-words whitespace-pre-wrap">{value}</p>
               </div>
             </motion.div>
           )}
@@ -569,89 +594,31 @@ function WbsTaskCard({
   };
 
   return (
-    <div className="relative" style={{ minHeight: 110 }}>
-      {/* تگ‌های سمت راست */}
-      {RIGHT_ATTRS.map(renderTag)}
-      {/* تگ‌های سمت چپ */}
-      {LEFT_ATTRS.map(renderTag)}
+    <div className="relative" style={{ marginTop: 16, marginBottom: 32 }}>
+      {/* تگ‌های جانبی */}
+      {SIDE_ATTRS.map(renderSideTag)}
+      {/* تگ زیرین */}
+      {renderBottomTag()}
 
-      {/* تگ زیرین: نتایج بسته‌های کاری */}
-      {(() => {
-        const spec = BOTTOM_ATTR;
-        const id = `${code}:bottom:deliverables`;
-        const value = task.deliverables || "";
-        const hasValue = value.trim() !== "";
-        const isOpen = openAttr === id;
-
-        if (!hasValue) {
-          return (
-            <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 z-10 cursor-not-allowed">
-              <div className="flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-red-50 text-red-400 border border-red-200 px-2.5 py-1 text-[11px] font-medium opacity-80" title="این مورد ثبت نشده است">
-                <span className="w-1.5 h-1.5 rounded-full bg-red-300" />
-                {spec.label}
-              </div>
-            </div>
-          );
-        }
-
-        return (
-          <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 z-10">
-            <motion.button
-              onClick={() => setOpenAttr(isOpen ? null : id)}
-              whileTap={{ scale: 0.95 }}
-              className={`flex items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1 text-[11px] font-semibold cursor-pointer transition-colors shadow-sm ${
-                isOpen
-                  ? "bg-emerald-600 text-white border-emerald-600"
-                  : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
-              }`}
-            >
-              <span className={`w-1.5 h-1.5 rounded-full ${isOpen ? "bg-white" : "bg-emerald-500"}`} />
-              {spec.label}
-            </motion.button>
-            <AnimatePresence>
-              {isOpen && (
-                <motion.div
-                  initial={{ opacity: 0, y: -6, width: 0 }}
-                  animate={{ opacity: 1, y: 0, width: "auto" }}
-                  exit={{ opacity: 0, y: -6, width: 0 }}
-                  transition={{ duration: 0.22 }}
-                  className="absolute top-full left-1/2 -translate-x-1/2 mt-1 overflow-hidden"
-                >
-                  <div className="whitespace-nowrap max-w-md rounded-lg bg-slate-900 text-white text-[12px] leading-5 px-3.5 py-2 shadow-lg border border-slate-700">
-                    <span className="text-amber-300 text-[10px] font-bold">{spec.label}: </span>
-                    <span className="break-words">{value}</span>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        );
-      })()}
-
-      {/* مستطیل اصلی: کد WBS + نام فعالیت */}
+      {/* مستطیل اصلی: هم‌اندازه برای همه (min-height ثابت) — متن بلند فقط همین کارت را بلندتر می‌کند */}
       <motion.div
         initial={{ opacity: 0, y: 14 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: Math.min(index * 0.05, 0.6), duration: 0.3 }}
-        className={`relative w-80 sm:w-96 bg-white rounded-2xl border-2 px-6 pt-5 pb-9 text-center shadow-sm transition-shadow ${
+        className={`relative w-[26rem] max-w-full bg-white rounded-2xl border-2 flex flex-col items-center justify-center text-center px-6 py-6 transition-shadow ${
           openAttr && openAttr.startsWith(`${code}:`)
             ? "border-amber-400 shadow-lg"
             : "border-slate-200 hover:border-slate-300 hover:shadow-md"
         }`}
-        style={{ marginTop: 14, marginBottom: 26 }}
+        style={{ minHeight: 118 }}
       >
         {/* نوار کد WBS — وسط‌چین بالای کارت */}
-        <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-[11px] font-bold rounded-lg px-3 py-1 shadow-md tracking-wider">
+        <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-[11px] font-bold rounded-lg px-3 py-1 shadow-md tracking-wider whitespace-nowrap">
           {code}
         </div>
 
-        {/* سطح فعالیت (نشان کوچک گوشه) */}
-        <div className="absolute top-3 right-3 text-[10px] font-semibold text-slate-300">
-          سطح {task.level || "-"}
-        </div>
-
-        {/* نام فعالیت — قهرمان اصلی صفحه */}
-        <p className="text-base sm:text-lg font-bold text-slate-900 leading-7 mt-2 px-2">{task.name}</p>
+        {/* نام فعالیت — قهرمان اصلی صفحه (وسط‌چین، بدون بیرون‌زدگی عمودی) */}
+        <p className="text-base sm:text-lg font-bold text-slate-900 leading-7 break-words">{task.name}</p>
       </motion.div>
     </div>
   );

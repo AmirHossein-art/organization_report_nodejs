@@ -137,7 +137,7 @@ export default function App() {
       <Sidebar user={user} currentView={currentView} setCurrentView={setCurrentView} onLogout={handleLogout} />
 
       {/* بخش نمایش داینامیک ویوها براساس انتخاب کاربر */}
-      <main className="flex-1 p-6 md:p-8 max-w-7xl mx-auto w-full">
+      <main className="flex-1 p-6 md:p-8 max-w-7xl mx-auto w-full overflow-y-auto h-screen">
         {currentView === "home" && (
           <HomeDashboard
             user={user}
