@@ -2626,10 +2626,10 @@ async function callAiWithFallback(
   const providers = [
     {
       id: "gemini",
-      name: "Google AI Studio (gemini-3.7-flash)",
+      name: "Google AI Studio (gemini-3.8-flash)",
       baseURL: process.env.AI_BASE_URL_1 || process.env.AI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai/",
       apiKey: process.env.AI_API_KEY_1 || process.env.AI_API_KEY,
-      model: process.env.AI_MODEL_1 || process.env.AI_MODEL_NAME || "gemini-3.7-flash",
+      model: process.env.AI_MODEL_1 || process.env.AI_MODEL_NAME || "gemini-3.8-flash",
     },
     {
       id: "cerebras",
@@ -2696,7 +2696,6 @@ async function callAiWithFallback(
           { role: "user", content: userPrompt },
         ],
         temperature: 0.0,
-        seed: 42,
       });
 
       const rawContent = completion.choices[0]?.message?.content || "";
