@@ -1,6 +1,6 @@
 // src/views/WbsViewer.tsx
 // مشاهده ساختار شکست پروژه (WBS) — سه مرحله: انتخاب پروژه → جزئیات پروژه → ساختار شکست
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Folder,
   ArrowRight,
@@ -15,10 +15,11 @@ import {
   Rocket,
   ListTree,
   BarChart3,
-  ChevronDown,
   ChevronLeft,
+  Network,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import WbsTreePane from "./WbsTree";
 
 interface WbsProjectRow {
   submission_id: number;
@@ -104,7 +105,7 @@ function infoIcon(key: string) {
 
 export default function WbsViewer() {
   // ---------- ناوبری داخلی ----------
-  const [stage, setStage] = useState<"pick" | "detail" | "tree">("pick");
+  const [stage, setStage] = useState<"pick" | "detail" | "tree" | "tree2">("pick");
   const [selected, setSelected] = useState<WbsProjectRow | null>(null);
 
   // ---------- داده ----------
@@ -120,6 +121,41 @@ export default function WbsViewer() {
     setOpenAttrs((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   };
   const closeAll = () => setOpenAttrs([]);
+
+  // ---------- فوکوس روی آیتم خاص (رسیدن از نمای درخت) ----------
+  const [focusCode, setFocusCode] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { submissionId: number; code: string } | undefined;
+      if (!detail) return;
+      // اگر همین پروژه باز است فقط به جزئیاتِ همان آیتم برو؛ وگرنه اول پروژه را باز کن
+      const goFocus = () => {
+        closeAll();
+        setFocusCode(detail.code);
+        setStage("detail");
+        window.setTimeout(() => {
+          const el = document.querySelector<HTMLElement>(`[data-code="${detail.code}"]`);
+          el?.scrollIntoView({ behavior: "smooth", block: "center" });
+          window.setTimeout(() => setFocusCode(null), 2600);
+        }, 420);
+      };
+      if (selected && selected.submission_id === detail.submissionId) {
+        goFocus();
+      } else {
+        // پروژه را از روی شناسه پیدا و باز کن، بعد به آیتم برو
+        fetch("/api/wbs-data/projects")
+          .then((r) => (r.ok ? r.json() : []))
+          .then((rows: WbsProjectRow[]) => {
+            const row = rows.find((x) => x.submission_id === detail.submissionId);
+            if (row) return openProjectRef.current(row).then(goFocus);
+          })
+          .catch(() => {});
+      }
+    };
+    window.addEventListener("wbs:navigate", handler);
+    return () => window.removeEventListener("wbs:navigate", handler);
+  }, [selected]);
 
   // ---------- بارگذاری لیست پروژه‌های دارای WBS ----------
   useEffect(() => {
@@ -166,9 +202,14 @@ export default function WbsViewer() {
     setStage("tree");
   };
 
+  // رفرنس پایدار برای استفاده داخل listener رویداد درخت
+  const openProjectRef = useRef(openProject);
+  openProjectRef.current = openProject;
+
   const back = () => {
     closeAll();
-    if (stage === "tree") setStage("detail");
+    if (stage === "tree2") setStage("tree");
+    else if (stage === "tree") setStage("detail");
     else if (stage === "detail") {
       setStage("pick");
       setSelected(null);
@@ -258,7 +299,7 @@ export default function WbsViewer() {
           className="flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-amber-600 transition-colors cursor-pointer"
         >
           <ChevronLeft className="w-4 h-4" />
-          {stage === "tree" ? "بازگشت به جزئیات پروژه" : "بازگشت به انتخاب پروژه"}
+          {stage === "tree" || stage === "tree2" ? "بازگشت به جزئیات پروژه" : "بازگشت به انتخاب پروژه"}
         </button>
         <div className="h-6 w-px bg-slate-200 mx-1 hidden sm:block" />
         <h2 className="text-lg font-bold text-slate-900 flex-1 min-w-0 truncate">{data.projectTitle}</h2>
@@ -297,6 +338,20 @@ export default function WbsViewer() {
         >
           <ListTree className="w-4 h-4" />
           ساختار شکست پروژه
+        </button>
+        <button
+          onClick={() => {
+            closeAll();
+            setStage("tree2");
+          }}
+          className={`flex items-center gap-2 text-sm rounded-xl px-4 py-2 transition-colors cursor-pointer ${
+            stage === "tree2"
+              ? "font-semibold text-amber-600 bg-amber-50"
+              : "font-medium text-slate-600 hover:text-amber-600 hover:bg-amber-50"
+          }`}
+        >
+          <Network className="w-4 h-4" />
+          ساختار درختی
         </button>
       </div>
 
@@ -393,15 +448,24 @@ export default function WbsViewer() {
               </div>
             )}
 
-            {/* دکمه رفتن به ساختار شکست */}
-            <div className="flex justify-center">
+            {/* دکمه‌های رفتن به ساختار شکست (لیست / درخت) */}
+            <div className="flex flex-wrap justify-center gap-3">
               <button
                 onClick={goTree}
                 className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-sm font-semibold rounded-xl px-6 py-3 transition-colors cursor-pointer"
               >
                 <ListTree className="w-4 h-4" />
                 مشاهده ساختار شکست پروژه
-                <ChevronDown className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => {
+                  closeAll();
+                  setStage("tree2");
+                }}
+                className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-600 text-white text-sm font-semibold rounded-xl px-6 py-3 transition-colors cursor-pointer"
+              >
+                <Network className="w-4 h-4" />
+                مشاهده ساختار درختی
               </button>
             </div>
           </motion.div>
@@ -435,11 +499,44 @@ export default function WbsViewer() {
                         code={code}
                         openAttrs={openAttrs}
                         toggleAttr={toggleAttr}
+                        highlighted={focusCode === code}
                       />
                     );
                   })}
                 </div>
               </div>
+            )}
+          </motion.div>
+        )}
+
+        {/* ------------------ مرحله ۴: ساختار درختی ------------------ */}
+        {stage === "tree2" && (
+          <motion.div
+            key="tree2"
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.25 }}
+          >
+            {data.tasks.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-12 text-center">
+                <Network className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+                <p className="text-sm text-slate-400">در این فایل، ردیف فعالیتی (WBS) یافت نشد.</p>
+              </div>
+            ) : (
+              <WbsTreePane
+                data={{ projectTitle: data.projectTitle, tasks: data.tasks }}
+                onOpenDetails={(code) => {
+                  closeAll();
+                  setFocusCode(code);
+                  setStage("tree");
+                  window.setTimeout(() => {
+                    const el = document.querySelector<HTMLElement>(`[data-code="${code}"]`);
+                    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+                    window.setTimeout(() => setFocusCode(null), 2600);
+                  }, 420);
+                }}
+              />
             )}
           </motion.div>
         )}
@@ -462,12 +559,14 @@ function WbsTaskCard({
   code,
   openAttrs,
   toggleAttr,
+  highlighted,
 }: {
   task: WbsTask;
   index: number;
   code: string;
   openAttrs: string[];
   toggleAttr: (id: string) => void;
+  highlighted?: boolean;
 }) {
   const hasRealValue = (v: string) => v.trim() !== "" && v !== "-" && v !== "---";
 
@@ -616,7 +715,7 @@ function WbsTaskCard({
   const anyOpen = openAttrs.some((id) => id.startsWith(`${code}:`));
 
   return (
-    <div className="relative" style={{ marginTop: 16, marginBottom: 32 }}>
+    <div data-code={code} className="relative" style={{ marginTop: 16, marginBottom: 32 }}>
       {SIDE_ATTRS.map(renderSideTag)}
       {renderBottomTag()}
 
@@ -626,7 +725,11 @@ function WbsTaskCard({
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: Math.min(index * 0.05, 0.6), duration: 0.3 }}
         className={`relative w-[26rem] max-w-full bg-white rounded-2xl border-2 flex flex-col items-center justify-center text-center px-6 py-6 transition-shadow ${
-          anyOpen ? "border-amber-400 shadow-lg" : "border-slate-200 hover:border-slate-300 hover:shadow-md"
+          highlighted
+            ? "border-amber-500 shadow-xl ring-4 ring-amber-200"
+            : anyOpen
+              ? "border-amber-400 shadow-lg"
+              : "border-slate-200 hover:border-slate-300 hover:shadow-md"
         }`}
         style={{ minHeight: 118 }}
       >
