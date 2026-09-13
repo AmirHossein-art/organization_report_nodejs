@@ -3,7 +3,7 @@ export interface User {
   username: string;
   full_name: string;
   role: "user" | "manager";
-  job_title?: string | null ;
+  job_title?: string | null;
   is_active: boolean;
   must_change_password: boolean;
   password_changed_at: string | null;
@@ -15,12 +15,12 @@ export interface Project {
   id: number;
   title: string;
   description: string;
-  wbs_file_name?: string | null; 
+  wbs_file_name?: string | null;
   code: string;
   order_index?: number;
   is_active: boolean;
   created_at: string;
-  updatedAt?: string;  
+  updatedAt?: string;
 }
 
 export interface ReportPeriod {
