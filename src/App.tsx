@@ -18,6 +18,8 @@ import ReportPeriods from "./views/ReportPeriods";
 import ProjectAllocations from "./views/ProjectAllocations";
 import ProjectKpiManagement from "./views/ProjectKpiManagement";
 import ProjectKpiAnalytics from "./views/ProjectKpiAnalytics";
+import WbsUpload from "./views/WbsUpload";
+import WbsViewer from "./views/WbsViewer";
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -134,7 +136,7 @@ export default function App() {
       <Sidebar user={user} currentView={currentView} setCurrentView={setCurrentView} onLogout={handleLogout} />
 
       {/* بخش نمایش داینامیک ویوها براساس انتخاب کاربر */}
-      <main className="flex-1 p-6 md:p-8 max-w-7xl mx-auto w-full">
+      <main className="flex-1 p-6 md:p-8 max-w-7xl mx-auto w-full overflow-y-auto h-screen">
         {currentView === "home" && (
           <HomeDashboard
             user={user}
@@ -165,7 +167,9 @@ export default function App() {
             onRefresh={fetchData}
           />
         )}
-
+        {currentView === "wbs_upload" && (
+          <WbsUpload projects={projects} />
+        )}
         {/* روت‌های مدیریتی */}
         {user.role === "manager" && (
           <>
@@ -177,6 +181,7 @@ export default function App() {
             {currentView === "project_allocations" && <ProjectAllocations users={users} projects={projects} />}
             {currentView === "project_kpi_management" && <ProjectKpiManagement projects={projects} onRefresh={fetchData} />}
             {currentView === "project_kpi_analytics" && <ProjectKpiAnalytics projects={projects} />}
+            {currentView === "wbs_viewer" && <WbsViewer />}
           </>
         )}
       </main>

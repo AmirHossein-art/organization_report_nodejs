@@ -13,6 +13,8 @@ import {
   Menu,
   Target,
   TrendingUp,
+  Upload,
+  ListTree,
 } from "lucide-react";
 import { User } from "../types";
 
@@ -98,7 +100,18 @@ export default function Sidebar({ user, currentView, setCurrentView, onLogout }:
             <ClipboardList className="w-4 h-4" />
             <span> ثبت گزارش عملکرد</span>
           </button>
-
+                    <button
+            onClick={() => {
+              setCurrentView("wbs_upload");
+              setMobileMenuOpen(false);
+            }}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
+              currentView === "wbs_upload" ? "bg-white/10 text-amber-400 font-semibold" : "hover:bg-white/5 hover:text-white"
+            }`}
+          >
+            <Upload className="w-4 h-4" />
+            <span> بارگذاری ساختار شکست</span>
+          </button>
           <button
             onClick={() => {
               setCurrentView("my_reports");
@@ -131,7 +144,18 @@ export default function Sidebar({ user, currentView, setCurrentView, onLogout }:
                 <BarChart3 className="w-4 h-4" />
                 <span> داشبورد نظارتی مدیر</span>
               </button>
-
+              <button
+                onClick={() => {
+                  setCurrentView("wbs_viewer");
+                  setMobileMenuOpen(false);
+                }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
+                  currentView === "wbs_viewer" ? "bg-white/10 text-amber-400 font-semibold" : "hover:bg-white/5 hover:text-white"
+                }`}
+              >
+                <ListTree className="w-4 h-4" />
+                <span> مشاهده ساختار شکست پروژه‌ها</span>
+              </button>
               <button
                 onClick={() => {
                   setCurrentView("manage_projects");
