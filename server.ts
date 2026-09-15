@@ -2648,9 +2648,13 @@ function generateAiCacheKey(systemPrompt: string, userPrompt: string): string {
     .digest("hex");
 }
 
-// کش نام مدل هر تامین‌کننده (کشف خودکار؛ برای جلوگیری از فراخوانی مکرر لیست مدل‌ها)
-const aiModelDiscoveryCache = new Map<string, { model: string; discoveredAt: number }>();
+// کشف مدل‌های کاندید هر تامین‌کننده (کش ۲۴ ساعته برای جلوگیری از فراخوانی مکرر لیست مدل‌ها)
+const aiModelDiscoveryCache = new Map<string, { models: string[]; discoveredAt: number }>();
 const AI_MODEL_DISCOVERY_TTL_MS = 24 * 60 * 60 * 1000;
+
+// سقف تلاش روی هر دورهٔ تحلیل: حداکثر ۳ مدل جمینای + ۲ مدل غیرجمینای که کلید به آن‌ها دسترسی دارد
+const MAX_GEMINI_CANDIDATES = 3;
+const MAX_OTHER_CANDIDATES = 2;
 
 // فقط مدل‌های متنی (حذف TTS، embedding، تصویر، صوت و...)
 const isChatCapableModel = (id: string): boolean =>
@@ -2661,11 +2665,32 @@ const modelVersionOf = (id: string): number => {
   return m ? parseFloat(m[1]) : 0;
 };
 
-// پرس‌وجوی لیست مدل‌ها از خود تامین‌کننده و انتخاب جدیدترین مدل متنی
-async function discoverDefaultModel(provider: { id: string; label: string; baseURL: string; apiKey: string }): Promise<string | null> {
+// مرتب‌سازی مدل‌های جمینای: نسخه‌های پایدار جدیدتر اول، previewها در انتها
+const rankGeminiModels = (ids: string[]): string[] =>
+  ids.slice().sort((a, b) => {
+    const previewPenalty = (x: string) => (/preview/i.test(x) ? 1 : 0);
+    if (previewPenalty(a) !== previewPenalty(b)) return previewPenalty(a) - previewPenalty(b);
+    return modelVersionOf(b) - modelVersionOf(a);
+  });
+
+// اولویت مدل‌های غیرجمینای: claude، سپس gpt، سپس لاما‌ی 70B، سپس سایر لاماها، سپس بقیه
+const rankOtherModels = (ids: string[]): string[] =>
+  ids.slice().sort((a, b) => {
+    const tier = (x: string) =>
+      /claude/i.test(x) ? 0
+      : /gpt/i.test(x) ? 1
+      : /llama/i.test(x) && /70b/i.test(x) ? 2
+      : /llama/i.test(x) ? 3
+      : 4;
+    if (tier(a) !== tier(b)) return tier(a) - tier(b);
+    return modelVersionOf(b) - modelVersionOf(a);
+  });
+
+// پرس‌وجوی لیست مدل‌ها از خود تامین‌کننده و ساخت لیست کاندیدها (۳ جمینای + ۲ غیرجمینای)
+async function discoverCandidateModels(provider: { id: string; label: string; baseURL: string; apiKey: string }): Promise<string[]> {
   const cached = aiModelDiscoveryCache.get(provider.id);
   if (cached && Date.now() - cached.discoveredAt < AI_MODEL_DISCOVERY_TTL_MS) {
-    return cached.model;
+    return cached.models;
   }
 
   try {
@@ -2676,35 +2701,21 @@ async function discoverDefaultModel(provider: { id: string; label: string; baseU
       .map((id: string) => id.replace(/^models\//, ""))
       .filter((id: string) => id && isChatCapableModel(id));
 
-    if (ids.length === 0) return cached?.model || null;
+    if (ids.length === 0) return cached?.models || [];
 
-    let chosen: string | undefined;
+    const models = [
+      ...rankGeminiModels(ids.filter((id) => /gemini/i.test(id))).slice(0, MAX_GEMINI_CANDIDATES),
+      ...rankOtherModels(ids.filter((id) => !/gemini/i.test(id))).slice(0, MAX_OTHER_CANDIDATES),
+    ];
 
-    if (provider.id === "gemini") {
-      // اولویت: جدیدترین نسخهٔ پایدار فمیلی gemini-flash، سپس هر gemini، سپس هر مدل متنی
-      const flash = ids.filter((id) => /gemini/i.test(id) && /flash/i.test(id));
-      const gemini = ids.filter((id) => /gemini/i.test(id));
-      const pool = flash.length > 0 ? flash : gemini.length > 0 ? gemini : ids;
-      chosen = pool
-        .slice()
-        .sort((a, b) => {
-          const previewPenalty = (x: string) => (/preview/i.test(x) ? 1 : 0);
-          if (previewPenalty(a) !== previewPenalty(b)) return previewPenalty(a) - previewPenalty(b);
-          return modelVersionOf(b) - modelVersionOf(a);
-        })[0];
-    } else {
-      // برای بقیه تامین‌کننده‌ها: مدل 70B لاما در اولویت، سپس هر لاما، سپس اولین مدل
-      chosen = ids.find((id) => /70b/i.test(id)) || ids.find((id) => /llama/i.test(id)) || ids[0];
+    if (models.length > 0) {
+      aiModelDiscoveryCache.set(provider.id, { models, discoveredAt: Date.now() });
+      console.log(`🤖 مدل‌های کاندید «${provider.label}» کشف شدند: ${models.join(", ")}`);
     }
-
-    if (chosen) {
-      aiModelDiscoveryCache.set(provider.id, { model: chosen, discoveredAt: Date.now() });
-      console.log(`🤖 مدل «${provider.label}» به‌صورت خودکار کشف شد: ${chosen}`);
-    }
-    return chosen || cached?.model || null;
+    return models.length > 0 ? models : (cached?.models || []);
   } catch (err: any) {
     console.warn(`⚠️ کشف خودکار نام مدل برای «${provider.label}» ناموفق بود: ${String(err?.message || err).substring(0, 100)}`);
-    return cached?.model || null;
+    return cached?.models || [];
   }
 }
 
@@ -2736,7 +2747,7 @@ async function callAiWithFallback(
       baseURL: process.env.AI_BASE_URL_1 || process.env.AI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai/",
       apiKey: process.env.AI_API_KEY_1 || process.env.AI_API_KEY,
       model: (process.env.AI_MODEL_1 || process.env.AI_MODEL_NAME || "").trim(),
-      fallbackModel: "gemini-3.5-flash",
+      fallbackModels: ["gemini-3.5-flash", "gemini-2.5-flash"],
     },
     {
       id: "cerebras",
@@ -2744,7 +2755,7 @@ async function callAiWithFallback(
       baseURL: process.env.AI_BASE_URL_2 || "https://api.cerebras.ai/v1",
       apiKey: process.env.AI_API_KEY_2,
       model: (process.env.AI_MODEL_2 || "").trim(),
-      fallbackModel: "llama-3.3-70b",
+      fallbackModels: ["llama-3.3-70b"],
     },
     {
       id: "sambanova",
@@ -2752,27 +2763,33 @@ async function callAiWithFallback(
       baseURL: process.env.AI_BASE_URL_3 || "https://api.sambanova.ai/v1",
       apiKey: process.env.AI_API_KEY_3,
       model: (process.env.AI_MODEL_3 || "").trim(),
-      fallbackModel: "Meta-Llama-3.3-70B-Instruct",
+      fallbackModels: ["Meta-Llama-3.3-70B-Instruct"],
     },
   ];
 
-  const providers = await Promise.all(
+  // ساخت صف تلاش: هر تامین‌کننده می‌تواند چند مدل کاندید داشته باشد (۳ جمینای + ۲ غیرجمینای)
+  const providerQueues = await Promise.all(
     providerConfigs
       .filter((p) => p.apiKey && p.apiKey.trim() !== "")
       .map(async (p) => {
         const wantsAuto = !p.model || p.model.toLowerCase() === "auto";
-        const model = wantsAuto
-          ? (await discoverDefaultModel({ id: p.id, label: p.label, baseURL: p.baseURL, apiKey: p.apiKey! })) || p.fallbackModel
-          : p.model;
-        return {
+        const discovered = wantsAuto
+          ? await discoverCandidateModels({ id: p.id, label: p.label, baseURL: p.baseURL, apiKey: p.apiKey! })
+          : [];
+        const queue = wantsAuto
+          ? [...discovered, ...p.fallbackModels.filter((m) => !discovered.includes(m))]
+          : [p.model];
+        return queue.map((model) => ({
           id: p.id,
           name: `${p.label} (${model})`,
           baseURL: p.baseURL,
           apiKey: p.apiKey!,
           model,
-        };
+        }));
       })
   );
+
+  const providers = providerQueues.flat();
 
   if (providers.length === 0) {
     throw new Error("هیچ کلید API فعال برای هوش مصنوعی در فایل .env یافت نشد. لطفاً تنظیمات .env را بررسی کنید.");
