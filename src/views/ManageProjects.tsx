@@ -15,6 +15,7 @@ import {
   PowerOff
 } from "lucide-react";
 import { Project } from "../types";
+import { CustomSelect } from "../components";
 import ReportsPdfDocument from "../components/ReportsPdfDocument";
 
 // 🌐 تابع کمکی تبدیل اعداد به فارسی
@@ -34,6 +35,7 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
   const [code, setCode] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [projectType, setProjectType] = useState<"weekly" | "monthly">("weekly");
   const [wbsFile, setWbsFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -43,6 +45,7 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
   const [editTitle, setEditTitle] = useState("");
   const [editCode, setEditCode] = useState("");
   const [editDescription, setEditDescription] = useState("");
+  const [editProjectType, setEditProjectType] = useState<"weekly" | "monthly">("weekly");
   const [editIsActive, setEditIsActive] = useState(true);
   const [editWbsFile, setEditWbsFile] = useState<File | null>(null);
   const [removeEditWbsFile, setRemoveEditWbsFile] = useState(false);
@@ -135,6 +138,7 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
       formData.append("code", code);
       formData.append("title", title);
       formData.append("description", description);
+      formData.append("project_type", projectType);
       if (wbsFile) formData.append("wbs_file", wbsFile);
 
       const res = await fetch("/api/projects", {
@@ -146,6 +150,7 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
         setCode("");
         setTitle("");
         setDescription("");
+        setProjectType("weekly");
         handleRemoveFile();
         if (onRefresh) onRefresh();
       } else {
@@ -204,6 +209,7 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
     setEditTitle(proj.title);
     setEditCode(proj.code);
     setEditDescription(proj.description || "");
+    setEditProjectType(proj.project_type === "monthly" ? "monthly" : "weekly");
     setEditIsActive(proj.is_active !== false);
     setEditWbsFile(null);
     setRemoveEditWbsFile(false);
@@ -231,6 +237,7 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
       formData.append("code", editCode);
       formData.append("title", editTitle);
       formData.append("description", editDescription);
+      formData.append("project_type", editProjectType);
       formData.append("is_active", String(editIsActive));
 
       if (editWbsFile) {
@@ -314,6 +321,18 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="مثلاً: توسعه خطوط بی‌آرتی"
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-emerald-600"
+              />
+            </div>
+
+            <div>
+              <label className="block text-slate-600 font-bold mb-1">نوع پروژه (نوع گزارش‌دهی):</label>
+              <CustomSelect
+                value={projectType}
+                onChange={(val) => setProjectType(val as "weekly" | "monthly")}
+                options={[
+                  { value: "weekly", label: "هفتگی" },
+                  { value: "monthly", label: "ماهانه" },
+                ]}
               />
             </div>
 
@@ -409,6 +428,16 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
                       </h4>
                       <span className="font-mono text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md border border-slate-200 font-bold">
                         {toPersianDigits(proj.code)}
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                          proj.project_type === "monthly"
+                            ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+                            : "bg-sky-50 text-sky-700 border-sky-200"
+                        }`}
+                        title="نوع گزارش‌دهی این پروژه"
+                      >
+                        {proj.project_type === "monthly" ? "ماهانه" : "هفتگی"}
                       </span>
                       {proj.is_active ? (
                         <span className="text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full">
@@ -557,6 +586,18 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
                   value={editTitle}
                   onChange={(e) => setEditTitle(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-600 font-bold mb-1">نوع پروژه (نوع گزارش‌دهی):</label>
+                <CustomSelect
+                  value={editProjectType}
+                  onChange={(val) => setEditProjectType(val as "weekly" | "monthly")}
+                  options={[
+                    { value: "weekly", label: "هفتگی" },
+                    { value: "monthly", label: "ماهانه" },
+                  ]}
                 />
               </div>
 

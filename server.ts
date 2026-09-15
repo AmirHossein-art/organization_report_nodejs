@@ -861,11 +861,16 @@ app.patch("/api/projects/:id/order", authenticate, requireManager, async (req, r
 app.post("/api/projects", authenticate, requireManager, uploadWBS.single("wbs_file"), async (req, res) => {
   const file = req.file;
   try {
-    const { title, description, code } = req.body;
+    const { title, description, code, project_type } = req.body;
 
     if (!code || !title) {
       if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
       return res.status(400).json({ error: "کد و عنوان پروژه الزامی هستند." });
+    }
+
+    if (project_type && project_type !== "weekly" && project_type !== "monthly") {
+      if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
+      return res.status(400).json({ error: "نوع پروژه باید هفتگی یا ماهانه باشد." });
     }
 
     const existingCode = await prisma.project.findUnique({
@@ -881,6 +886,7 @@ app.post("/api/projects", authenticate, requireManager, uploadWBS.single("wbs_fi
         code: code.trim(),
         title: title.trim(),
         description: description ? description.trim() : null,
+        project_type: project_type === "monthly" ? "monthly" : "weekly",
         wbs_file_name: file ? file.originalname : null,
         wbs_storage_filename: file ? file.filename : null,
       },
@@ -900,7 +906,12 @@ app.put("/api/projects/:id", authenticate, requireManager, uploadWBS.single("wbs
   const file = req.file;
   try {
     const id = parseInt(req.params.id);
-    const { title, code, description, remove_wbs_file, is_active } = req.body;
+    const { title, code, description, remove_wbs_file, is_active, project_type } = req.body;
+
+    if (project_type && project_type !== "weekly" && project_type !== "monthly") {
+      if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
+      return res.status(400).json({ error: "نوع پروژه باید هفتگی یا ماهانه باشد." });
+    }
 
     const existingProject = await prisma.project.findUnique({
       where: { id },
@@ -949,6 +960,8 @@ app.put("/api/projects/:id", authenticate, requireManager, uploadWBS.single("wbs
         title: title !== undefined ? title.trim() : undefined,
         code: code !== undefined ? code.trim() : undefined,
         description: description !== undefined ? description.trim() : undefined,
+        project_type:
+          project_type === "monthly" ? "monthly" : project_type === "weekly" ? "weekly" : undefined,
         is_active: parsedIsActive !== undefined ? parsedIsActive : undefined,
         wbs_file_name: updatedWbsFileName,
         wbs_storage_filename: updatedWbsStorageFilename,
@@ -1694,6 +1707,21 @@ app.post("/api/reports", authenticate, upload.array("files", 10), async (req: an
       return res.status(400).json({ error: "نوع گزارش ارسالی با نوع بازه گزارش‌دهی مطابقت ندارد." });
     }
 
+    // اعتبارسنجی نوع گزارش با نوع پروژه (پروژه هفتگی فقط گزارش هفتگی و پروژه ماهانه فقط گزارش ماهانه)
+    const projectTypeMatch =
+      (report_type === "monthly" && project.project_type === "monthly") ||
+      (report_type === "weekly" && (project.project_type || "weekly") === "weekly");
+    if (!projectTypeMatch) {
+      if (uploadedFiles.length > 0) {
+        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
+      }
+      return res.status(400).json({
+        error: report_type === "monthly"
+          ? "این پروژه هفتگی است و امکان ثبت گزارش ماهانه برای آن وجود ندارد."
+          : "این پروژه ماهانه است و امکان ثبت گزارش هفتگی برای آن وجود ندارد.",
+      });
+    }
+
     // اعتبارسنجی برای پرسنل عادی
     if (req.user.role !== "manager") {
       if (!project.is_active) {
@@ -2244,6 +2272,16 @@ app.get("/api/dashboard/summary", authenticate, requireManager, async (req, res)
     });
     const staffIds = activeStaff.map((s) => s.id);
 
+    // آخرین بازه هفتگیِ باز (هفته جاری): تنها در این هفته پروژه‌های ماهانه هم در انتظار گزارش محسوب می‌شوند
+    let isLatestOpenWeekly = false;
+    if (period.report_type === "weekly" && period.is_open) {
+      const latestOpenWeekly = await prisma.reportPeriod.findFirst({
+        where: { report_type: "weekly", is_open: true },
+        orderBy: { period_start: "desc" },
+      });
+      isLatestOpenWeekly = latestOpenWeekly ? latestOpenWeekly.id === period.id : false;
+    }
+
     const userProjects = await prisma.userProject.findMany({
       where: {
         user_id: { in: staffIds },
@@ -2260,6 +2298,12 @@ app.get("/api/dashboard/summary", authenticate, requireManager, async (req, res)
       if (projectId && up.project_id !== projectId) continue;
       if (user_id && up.user_id !== user_id) continue;
       if (deputyName && up.user.job_title?.trim() !== deputyName) continue;
+
+      // تفکیک بر اساس نوع پروژه: بازه ماهانه فقط پروژه‌های ماهانه،
+      // بازه هفتگی فقط پروژه‌های هفتگی (به‌جز آخرین هفته باز که ماهانه‌ها هم اضافه می‌شوند)
+      const pType = (up.project as any).project_type || "weekly";
+      if (period.report_type === "monthly" && pType !== "monthly") continue;
+      if (period.report_type === "weekly" && pType === "monthly" && !isLatestOpenWeekly) continue;
 
       expectedPairs.push({
         user: sanitizeUser(up.user),
@@ -2293,6 +2337,7 @@ app.get("/api/dashboard/summary", authenticate, requireManager, async (req, res)
         deputy_name: pair.user.job_title || pair.user.full_name,
         project_id: pair.project.id,
         project_title: pair.project.title,
+        project_type: (pair.project as any).project_type || "weekly",
         status_key,
         status_label,
         report: matchingReport ? {

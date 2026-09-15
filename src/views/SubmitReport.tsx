@@ -106,6 +106,8 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
     } else {
       setSubPeriodId(0);
     }
+    // با تغییر نوع گزارش، پروژه انتخابی قبلی ممکن است نامعتبر شود؛ انتخاب پاک می‌شود
+    setSubProjectId(0);
   }, [subReportType, periods]);
 
   // واکشی پروژه‌های تخصیص‌یافته به کاربر
@@ -471,10 +473,12 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
               <CustomSelect
                 value={subProjectId}
                 onChange={(val) => setSubProjectId(Number(val))}
-                options={userAssignedProjects.map((p) => ({
-                  value: p.id,
-                  label: p.title
-                }))}
+                options={userAssignedProjects
+                  .filter((p) => (p.project_type || "weekly") === subReportType)
+                  .map((p) => ({
+                    value: p.id,
+                    label: p.title
+                  }))}
               />
             </div>
           </div>

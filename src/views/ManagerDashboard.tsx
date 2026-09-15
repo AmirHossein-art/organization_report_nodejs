@@ -770,6 +770,7 @@ export default function ManagerDashboard({
       if (!acc[pTitle]) {
         acc[pTitle] = {
           project_title: pTitle,
+          project_type: row.project_type || "weekly",
           total_staff: 0,
           submitted_count: 0,
           late_count: 0,
@@ -1588,8 +1589,33 @@ export default function ManagerDashboard({
             projectAggregatedRows.length === 0 ? (
               <div className="text-slate-400 text-xs text-center">هیچ پروژه‌ای یافت نشد.</div>
             ) : (
-              <div className="relative z-10 w-full flex flex-wrap items-center justify-center gap-10 md:gap-14 pt-16 pb-8">
-                {projectAggregatedRows.map((proj: any, idx: number) => {
+              <div className="relative z-10 w-full space-y-12">
+                {([
+                  { type: "weekly", label: "پروژه‌های هفتگی" },
+                  { type: "monthly", label: "پروژه‌های ماهانه" },
+                ] as const).map((section) => {
+                  const sectionProjects = projectAggregatedRows.filter(
+                    (proj: any) => (proj.project_type || "weekly") === section.type
+                  );
+                  if (sectionProjects.length === 0) return null;
+
+                  return (
+                    <div key={section.type}>
+                      <div className="flex items-center justify-center gap-3 mb-6 pt-4">
+                        <span className="h-px w-16 bg-slate-700/60"></span>
+                        <span
+                          className={`text-xs font-black px-4 py-1.5 rounded-full border ${
+                            section.type === "monthly"
+                              ? "bg-indigo-500/15 text-indigo-300 border-indigo-500/30"
+                              : "bg-sky-500/15 text-sky-300 border-sky-500/30"
+                          }`}
+                        >
+                          {section.label}
+                        </span>
+                        <span className="h-px w-16 bg-slate-700/60"></span>
+                      </div>
+                      <div className="flex flex-wrap items-center justify-center gap-10 md:gap-14">
+                {sectionProjects.map((proj: any, idx: number) => {
                   const healthPercent = Math.round(((proj.submitted_count + proj.late_count) / proj.total_staff) * 100) || 0;
                   
                   const isHighHealth = healthPercent >= 80;
@@ -1653,6 +1679,10 @@ export default function ManagerDashboard({
                         </div>
                       </div>
 
+                    </div>
+                  );
+                })}
+                      </div>
                     </div>
                   );
                 })}
