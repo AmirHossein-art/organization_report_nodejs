@@ -2648,6 +2648,66 @@ function generateAiCacheKey(systemPrompt: string, userPrompt: string): string {
     .digest("hex");
 }
 
+// کش نام مدل هر تامین‌کننده (کشف خودکار؛ برای جلوگیری از فراخوانی مکرر لیست مدل‌ها)
+const aiModelDiscoveryCache = new Map<string, { model: string; discoveredAt: number }>();
+const AI_MODEL_DISCOVERY_TTL_MS = 24 * 60 * 60 * 1000;
+
+// فقط مدل‌های متنی (حذف TTS، embedding، تصویر، صوت و...)
+const isChatCapableModel = (id: string): boolean =>
+  !/(tts|embedding|aqa|image|imagen|veo|audio|live|omni|moderation|rerank)/i.test(id);
+
+const modelVersionOf = (id: string): number => {
+  const m = id.match(/(\d+(?:\.\d+)?)/);
+  return m ? parseFloat(m[1]) : 0;
+};
+
+// پرس‌وجوی لیست مدل‌ها از خود تامین‌کننده و انتخاب جدیدترین مدل متنی
+async function discoverDefaultModel(provider: { id: string; label: string; baseURL: string; apiKey: string }): Promise<string | null> {
+  const cached = aiModelDiscoveryCache.get(provider.id);
+  if (cached && Date.now() - cached.discoveredAt < AI_MODEL_DISCOVERY_TTL_MS) {
+    return cached.model;
+  }
+
+  try {
+    const client = new OpenAI({ apiKey: provider.apiKey, baseURL: provider.baseURL });
+    const page: any = await client.models.list();
+    const ids: string[] = (page?.data || [])
+      .map((m: any) => String(m?.id || ""))
+      .map((id: string) => id.replace(/^models\//, ""))
+      .filter((id: string) => id && isChatCapableModel(id));
+
+    if (ids.length === 0) return cached?.model || null;
+
+    let chosen: string | undefined;
+
+    if (provider.id === "gemini") {
+      // اولویت: جدیدترین نسخهٔ پایدار فمیلی gemini-flash، سپس هر gemini، سپس هر مدل متنی
+      const flash = ids.filter((id) => /gemini/i.test(id) && /flash/i.test(id));
+      const gemini = ids.filter((id) => /gemini/i.test(id));
+      const pool = flash.length > 0 ? flash : gemini.length > 0 ? gemini : ids;
+      chosen = pool
+        .slice()
+        .sort((a, b) => {
+          const previewPenalty = (x: string) => (/preview/i.test(x) ? 1 : 0);
+          if (previewPenalty(a) !== previewPenalty(b)) return previewPenalty(a) - previewPenalty(b);
+          return modelVersionOf(b) - modelVersionOf(a);
+        })[0];
+    } else {
+      // برای بقیه تامین‌کننده‌ها: مدل 70B لاما در اولویت، سپس هر لاما، سپس اولین مدل
+      chosen = ids.find((id) => /70b/i.test(id)) || ids.find((id) => /llama/i.test(id)) || ids[0];
+    }
+
+    if (chosen) {
+      aiModelDiscoveryCache.set(provider.id, { model: chosen, discoveredAt: Date.now() });
+      console.log(`🤖 مدل «${provider.label}» به‌صورت خودکار کشف شد: ${chosen}`);
+    }
+    return chosen || cached?.model || null;
+  } catch (err: any) {
+    console.warn(`⚠️ کشف خودکار نام مدل برای «${provider.label}» ناموفق بود: ${String(err?.message || err).substring(0, 100)}`);
+    return cached?.model || null;
+  }
+}
+
 async function callAiWithFallback(
   systemPrompt: string,
   userPrompt: string,
@@ -2668,29 +2728,51 @@ async function callAiWithFallback(
     aiResponseCache.delete(cacheKey); // پاکسازی کش منقضی‌شده
   }
 
-  const providers = [
+  // پیکربندی تامین‌کننده‌ها — اگر نام مدل «auto» یا نامشخص باشد، از لیست خود تامین‌کننده کشف می‌شود
+  const providerConfigs = [
     {
       id: "gemini",
-      name: "Google AI Studio (gemini-3.8-flash)",
+      label: "Google AI Studio",
       baseURL: process.env.AI_BASE_URL_1 || process.env.AI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai/",
       apiKey: process.env.AI_API_KEY_1 || process.env.AI_API_KEY,
-      model: process.env.AI_MODEL_1 || process.env.AI_MODEL_NAME || "gemini-3.8-flash",
+      model: (process.env.AI_MODEL_1 || process.env.AI_MODEL_NAME || "").trim(),
+      fallbackModel: "gemini-3.5-flash",
     },
     {
       id: "cerebras",
-      name: "Cerebras (Llama 3.3 70B)",
+      label: "Cerebras",
       baseURL: process.env.AI_BASE_URL_2 || "https://api.cerebras.ai/v1",
       apiKey: process.env.AI_API_KEY_2,
-      model: process.env.AI_MODEL_2 || "llama-3.3-70b",
+      model: (process.env.AI_MODEL_2 || "").trim(),
+      fallbackModel: "llama-3.3-70b",
     },
     {
       id: "sambanova",
-      name: "SambaNova (Llama 3.3 70B)",
+      label: "SambaNova",
       baseURL: process.env.AI_BASE_URL_3 || "https://api.sambanova.ai/v1",
       apiKey: process.env.AI_API_KEY_3,
-      model: process.env.AI_MODEL_3 || "Meta-Llama-3.3-70B-Instruct",
+      model: (process.env.AI_MODEL_3 || "").trim(),
+      fallbackModel: "Meta-Llama-3.3-70B-Instruct",
     },
-  ].filter((p) => p.apiKey && p.apiKey.trim() !== "");
+  ];
+
+  const providers = await Promise.all(
+    providerConfigs
+      .filter((p) => p.apiKey && p.apiKey.trim() !== "")
+      .map(async (p) => {
+        const wantsAuto = !p.model || p.model.toLowerCase() === "auto";
+        const model = wantsAuto
+          ? (await discoverDefaultModel({ id: p.id, label: p.label, baseURL: p.baseURL, apiKey: p.apiKey! })) || p.fallbackModel
+          : p.model;
+        return {
+          id: p.id,
+          name: `${p.label} (${model})`,
+          baseURL: p.baseURL,
+          apiKey: p.apiKey!,
+          model,
+        };
+      })
+  );
 
   if (providers.length === 0) {
     throw new Error("هیچ کلید API فعال برای هوش مصنوعی در فایل .env یافت نشد. لطفاً تنظیمات .env را بررسی کنید.");
