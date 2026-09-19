@@ -119,3 +119,33 @@ export function formatToShamsi(dateStr: string): string {
   const pad = (num: number) => String(num).padStart(2, '0');
   return toPersianDigits(`${shamsi.year}/${pad(shamsi.month)}/${pad(shamsi.day)}`);
 }
+
+/**
+ * دریافت هر نوع فرمت تاریخ (میلادی یا شمسی، انگلیسی یا فارسی)
+ * و تبدیل تضمینی و بی‌نقص آن به تاریخ شمسی با ارقام فارسی (مثال: ۱۴۰۵/۰۵/۱۶)
+ */
+export function ensureShamsiDate(dateVal: string | Date | null | undefined): string {
+  if (!dateVal) return "نامشخص";
+  const str = String(dateVal).trim();
+  if (!str || str === "null" || str === "undefined") return "نامشخص";
+
+  const engStr = toEnglishDigits(str);
+  const gregMatch = engStr.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  if (gregMatch) {
+    const y = parseInt(gregMatch[1]);
+    const m = parseInt(gregMatch[2]);
+    const d = parseInt(gregMatch[3]);
+    if (y > 1700) {
+      // تاریخ میلادی است، تبدیل به هجری شمسی
+      const converted = gregorianToShamsi(`${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
+      if (converted) {
+        return toPersianDigits(`${converted.year}/${String(converted.month).padStart(2, '0')}/${String(converted.day).padStart(2, '0')}`);
+      }
+    } else {
+      // از قبل تاریخ شمسی است (مثلاً سال ۱۴۰۵)
+      return toPersianDigits(`${y}/${String(m).padStart(2, '0')}/${String(d).padStart(2, '0')}`);
+    }
+  }
+
+  return toPersianDigits(str);
+}

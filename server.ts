@@ -19,6 +19,7 @@ import crypto from "node:crypto";
 import { config } from "./src/config/env";
 import { parseExcelWBS } from "./src/utils/wbsParser";
 import { getDeadlineState } from "./src/deadline";
+import { ensureShamsiDate } from "./src/dateUtils";
 
 const SALT_ROUNDS = 10;
 const app = express();
@@ -2872,9 +2873,7 @@ function formatNextActionsForPrompt(nextActions: any[] | undefined): string {
   if (!Array.isArray(nextActions) || nextActions.length === 0) return "ثبت نشده";
   return nextActions
     .map((action) => {
-      const targetDate = action.target_date instanceof Date
-        ? action.target_date.toISOString().split("T")[0]
-        : String(action.target_date || "").split("T")[0];
+      const targetDate = ensureShamsiDate(action.target_date);
       return `- ${action.action_text} (تاریخ هدف: ${targetDate})`;
     })
     .join("\n");
@@ -2933,9 +2932,7 @@ app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, r
           .map((act, i) => {
             const projTitle = act.project?.title || "پروژه نامشخص";
             const deputy = act.user?.job_title || act.user?.full_name || "حوزه نامشخص";
-            const targetDate = act.target_date
-              ? act.target_date.toISOString().split("T")[0]
-              : "نامشخص";
+            const targetDate = ensureShamsiDate(act.target_date);
             const claimed = act.claimed_completed ? " (پرسنل اعلام اتمام کرده اما تایید نهایی مدیریتی نشده)" : "";
             return `${i + 1}. پروژه: «${projTitle}» | اقدام: ${act.action_text} | حوزه مسئول: ${deputy} | موعد اقدام: ${targetDate}${claimed}`;
           })
@@ -2965,6 +2962,7 @@ app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, r
 دستورالعمل‌های حیاتی مدیریت ارشد:
 ۱. «خلاصه مدیریتی عملکرد سازمان» را حتماً و قطعاً **به تفکیک معاونت‌ها** (واحدهای سازمانی) ارائه دهید. برای هر معاونت، خلاصه‌ای تحلیلی از عملکرد، پیشرفت پروژه‌ها و تنگناها در این دوره بنویسید.
 ۲. به جای پیشنهادات فرضی و کلی، **«اقدامات تعریف‌شده و انجام‌نشده پروژه‌ها»** (اقدامات و تعهداتی که برای تمامی پروژه‌ها تعریف شده و باید انجام می‌شدند اما انجام نشده یا بر زمین مانده‌اند) را استخراج و گزارش نمایید.
+۳. **قانون اکید و بدون استثنای تاریخ‌ها:** تمامی تاریخ‌هایی که در تحلیل یا برای موعد اقدامات (target_date) ذکر می‌کنید حتماً و قطعاً باید به **تقویم هجری شمسی (مثلاً ۱۴۰۵/۰۵/۱۶)** باشند و تحت هیچ شرایطی نباید تاریخ یا سال میلادی (مانند 2026) در خروجی وجود داشته باشد.
 
 پاسخ شما باید حتماً و فقط یک جی‌سون معتبر با کلید ریشه "analysis" باشد. نمونه دقیق ساختار مورد انتظار:
 {
@@ -2986,7 +2984,7 @@ app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, r
         "project_title": "عنوان پروژه",
         "action_text": "شرح اقدام تعریف‌شده که باید انجام می‌شد اما انجام نشد",
         "deputy_name": "نام معاونت / واحد مسئول",
-        "target_date": "تاریخ سررسید یا موعد تعیین‌شده",
+        "target_date": "تاریخ موعد به تقویم شمسی (مثلاً ۱۴۰۵/۰۵/۱۶)",
         "delay_status": "تحلیل وضعیت تاخیر یا موانع تحقق"
       }
     ]
@@ -3001,7 +2999,7 @@ app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, r
 🚨 بازخورد و دستورات اصلاحی مدیر ارشد سازمان جهت بازنگری و اصلاح این تحلیل:
 «${manager_comment.trim()}»
 
-لطفاً ضمن رعایت دقیق ساختار خروجی JSON (به‌ویژه تفکیک خلاصه مدیریتی بر اساس معاونت‌ها و لیست اقدامات انجام‌نشده پروژه‌ها)، تحلیل قبلی را متناسب با نکات، انتقادات و جهت‌گیری‌های اعلام‌شده توسط مدیر فوق بازنگری، ویرایش و تکمیل نمایید.`;
+لطفاً ضمن رعایت دقیق ساختار خروجی JSON (به‌ویژه تفکیک خلاصه مدیریتی بر اساس معاونت‌ها، لیست اقدامات انجام‌نشده پروژه‌ها، و درج تمامی تاریخ‌ها صرفاً به صورت هجری شمسی)، تحلیل قبلی را متناسب با نکات، انتقادات و جهت‌گیری‌های اعلام‌شده توسط مدیر فوق بازنگری، ویرایش و تکمیل نمایید.`;
 
       if (previous_analysis) {
         userPrompt += `\n\nنسخه تحلیل قبلی جهت اعمال اصلاحات:\n${JSON.stringify(previous_analysis, null, 2)}`;
@@ -3019,10 +3017,16 @@ app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, r
             project_title: act.project?.title || "پروژه نامشخص",
             action_text: act.action_text,
             deputy_name: act.user?.job_title || act.user?.full_name || "حوزه نامشخص",
-            target_date: act.target_date ? act.target_date.toISOString().split("T")[0] : undefined,
+            target_date: ensureShamsiDate(act.target_date),
             delay_status: act.claimed_completed ? "ادعای انجام شده، در انتظار تایید مدیر" : "اقدام انجام‌نشده / معوق",
           }));
         }
+      } else {
+        // تبدیل تضمینی تاریخ‌های برگشتی از هوش مصنوعی به شمسی در صورت ارسال تاریخ میلادی
+        result.analysis.uncompleted_actions = result.analysis.uncompleted_actions.map((act: any) => ({
+          ...act,
+          target_date: act.target_date ? ensureShamsiDate(act.target_date) : undefined,
+        }));
       }
     }
 
@@ -3120,7 +3124,7 @@ app.post("/api/reports/analyze-single", authenticate, aiLimiter, async (req: any
     "future_actions_with_deadlines": [
       {
         "action": "شرح اقدام آتی",
-        "deadline": "تاریخ هدف یا 'تعیین‌نشده'"
+        "deadline": "تاریخ هدف حتماً به هجری شمسی (مثلاً ۱۴۰۵/۰۶/۲۰) یا 'تعیین‌نشده'"
       }
     ],
     "repetitiveness_assessment": {
@@ -3136,7 +3140,7 @@ app.post("/api/reports/analyze-single", authenticate, aiLimiter, async (req: any
     }
   }
 }
-نکته مهم: خروجی باید فقط JSON معتبر به زبان فارسی باشد بدون هیچ عبارت اضافه یا Markdown.`;
+نکته مهم: خروجی باید فقط JSON معتبر به زبان فارسی باشد بدون هیچ عبارت اضافه یا Markdown. کلیه تاریخ‌ها و ددلاین‌ها باید الزاماً و بدون استثنا به تقویم هجری شمسی باشند.`;
 
     const currentKpiSection = (currentReport.kpiValues && currentReport.kpiValues.length > 0)
       ? `شاخص‌های ساختاریافته:\n${formatKpiValuesForPrompt(currentReport.kpiValues)}`
@@ -3157,10 +3161,18 @@ ${previousReportsText}
 فعالیت‌های انجام‌شده: ${currentReport.activities_done}
 نتایج حاصله: ${currentReport.results_achieved || "ثبت نشده"}
 ${currentKpiSection}
-اقدامات آتی: ${currentReport.nextActions?.map((a: any) => `${a.action_text} (ددلاین: ${a.target_date || "ندارد"})`).join(", ") || "ثبت نشده"}
+اقدامات آتی: ${currentReport.nextActions?.map((a: any) => `${a.action_text} (ددلاین: ${ensureShamsiDate(a.target_date)})`).join(", ") || "ثبت نشده"}
 `;
 
-    const result = await callAiWithFallback(systemPrompt, userPrompt, { forceRefresh: Boolean(force_refresh) });
+    const result: any = await callAiWithFallback(systemPrompt, userPrompt, { forceRefresh: Boolean(force_refresh) });
+
+    if (result && result.analysis && Array.isArray(result.analysis.future_actions_with_deadlines)) {
+      result.analysis.future_actions_with_deadlines = result.analysis.future_actions_with_deadlines.map((act: any) => ({
+        ...act,
+        deadline: act.deadline ? ensureShamsiDate(act.deadline) : "تعیین‌نشده",
+      }));
+    }
+
     res.json(result);
   } catch (err: any) {
     console.error("Single Report Audit Error:", err);

@@ -26,6 +26,7 @@ import {
 import { ReportPeriod, Project, User } from "../types";
 import { CustomSelect } from "../components";
 import ReportsPdfDocument from "../components/ReportsPdfDocument";
+import { ensureShamsiDate } from "../dateUtils";
 
 // 🌐 تبدیل اعداد به فارسی
 export const toPersianDigits = (n: string | number | undefined | null): string => {
@@ -285,7 +286,7 @@ function SingleReportAuditModal({
                     <div key={i} className="flex items-center justify-between bg-slate-50 p-3 rounded-xl text-xs border border-slate-100">
                       <span className="text-slate-700 font-medium">{act.action}</span>
                       <span className="bg-amber-100 text-amber-900 px-2.5 py-1 rounded-lg font-bold text-[11px] shrink-0">
-                        📅 {toPersianDigits(act.deadline)}
+                        📅 {ensureShamsiDate(act.deadline)}
                       </span>
                     </div>
                   ))}
@@ -756,7 +757,7 @@ export default function ManagerDashboard({
             <div class="risk-item" style="border-right-color: #f43f5e; background: #fff1f2;">
               <div class="risk-header">
                 <span style="font-weight: 700; color: #9f1239;">${act.project_title}</span>
-                ${act.target_date ? `<span class="risk-badge" style="background: #ffe4e6; color: #be123c;">موعد: ${toPersianDigits(act.target_date)}</span>` : ""}
+                ${act.target_date ? `<span class="risk-badge" style="background: #ffe4e6; color: #be123c;">موعد: ${ensureShamsiDate(act.target_date)}</span>` : ""}
               </div>
               <div style="color: #334155; font-size: 10.5px; margin-top: 3px; line-height: 1.6;">${act.action_text}</div>
               ${act.deputy_name ? `<div style="color: #64748b; font-size: 9.5px; margin-top: 4px;">حوزه مسئول: ${act.deputy_name}</div>` : ""}
@@ -1291,7 +1292,7 @@ export default function ManagerDashboard({
                         </span>
                         {act.target_date && (
                           <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-100 text-rose-700 shrink-0">
-                            موعد: {toPersianDigits(act.target_date)}
+                            موعد: {ensureShamsiDate(act.target_date)}
                           </span>
                         )}
                       </div>

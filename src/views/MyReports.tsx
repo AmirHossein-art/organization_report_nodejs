@@ -34,6 +34,7 @@ import ProjectNextActionsModal, { NextActionItem } from "../components/ProjectNe
 import Projects3DExplorer from "../components/projects-3d/Projects3DExplorer";
 import ReportsPdfDocument from "../components/ReportsPdfDocument";
 import { getDeadlineState } from "../deadline";
+import { ensureShamsiDate } from "../dateUtils";
 
 // 🌐 تابع کمکی تبدیل اعداد انگلیسی به فارسی
 export const toPersianDigits = (n: string | number | undefined | null): string => {
@@ -626,7 +627,7 @@ function SingleReportAuditModal({
                     <div key={i} className="flex items-center justify-between bg-slate-50 p-3 rounded-xl text-xs border border-slate-200/80">
                       <span className="text-slate-800 font-medium">{act.action}</span>
                       <span className="bg-amber-100 text-amber-900 px-2.5 py-1 rounded-lg font-bold text-[11px] shrink-0">
-                        📅 {toPersianDigits(act.deadline)}
+                        📅 {ensureShamsiDate(act.deadline)}
                       </span>
                     </div>
                   ))}
