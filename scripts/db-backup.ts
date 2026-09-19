@@ -27,9 +27,9 @@ function findPgTool(toolName: string): string {
 }
 
 async function runBackup() {
-  const dbUrl = process.env.DATABASE_URL;
+  const dbUrl = process.argv[2] || process.env.RAILWAY_DATABASE_URL || process.env.DATABASE_URL;
   if (!dbUrl) {
-    console.error("❌ متغیر DATABASE_URL در فایل .env تعریف نشده است.");
+    console.error("❌ آدرس دیتابیس مشخص نشده است. می‌توانید آن را به عنوان آرگومان، یا در متغیر RAILWAY_DATABASE_URL یا DATABASE_URL در فایل .env قرار دهید.");
     process.exit(1);
   }
 
