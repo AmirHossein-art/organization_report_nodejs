@@ -9,7 +9,6 @@ import {
   FileText, 
   RefreshCw, 
   ShieldAlert, 
-  Lightbulb, 
   ShieldCheck, 
   Clock, 
   Target, 
@@ -21,7 +20,8 @@ import {
   FolderKanban, 
   Printer,
   Edit3,
-  Send
+  Send,
+  Building2
 } from "lucide-react";
 import { ReportPeriod, Project, User } from "../types";
 import { CustomSelect } from "../components";
@@ -37,14 +37,24 @@ export const toPersianDigits = (n: string | number | undefined | null): string =
 interface AiAnalysisResult {
   health_score: number;
   overall_status: string;
-  executive_summary: string;
+  executive_summary: string | Array<{
+    deputy_name: string;
+    summary: string;
+  }>;
   key_achievements: string[];
   risks_and_delays: {
     project_title: string;
     risk_level: "high" | "medium" | "low";
     description: string;
   }[];
-  actionable_recommendations: string[];
+  uncompleted_actions?: Array<{
+    project_title: string;
+    action_text: string;
+    deputy_name?: string;
+    target_date?: string;
+    delay_status?: string;
+  }>;
+  actionable_recommendations?: string[];
 }
 
 interface SingleReportAuditResult {
@@ -699,10 +709,16 @@ export default function ManagerDashboard({
     </div>
 
     <div class="card">
-      <div class="card-title">📈 خلاصه مدیریتی عملکرد سازمان</div>
-      <p style="font-size: 11.5px; color: #334155; line-height: 1.8; text-align: justify; white-space: pre-line;">
-        ${aiAnalysis.executive_summary}
-      </p>
+      <div class="card-title">📈 خلاصه مدیریتی عملکرد سازمان (به تفکیک معاونت‌ها)</div>
+      ${Array.isArray(aiAnalysis.executive_summary)
+        ? aiAnalysis.executive_summary.map((dep: any) => `
+            <div style="margin-bottom: 10px; padding: 8px 10px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;">
+              <div style="font-weight: 700; font-size: 11px; color: #0f172a; margin-bottom: 4px;">🏢 ${dep.deputy_name || "معاونت"}</div>
+              <div style="font-size: 10.5px; color: #334155; line-height: 1.7; text-align: justify;">${dep.summary}</div>
+            </div>
+          `).join("")
+        : `<p style="font-size: 11.5px; color: #334155; line-height: 1.8; text-align: justify; white-space: pre-line;">${aiAnalysis.executive_summary}</p>`
+      }
     </div>
   </div>
 
@@ -734,10 +750,20 @@ export default function ManagerDashboard({
     </div>
 
     <div class="card">
-      <div class="card-title">💡 پیشنهادات و اقدام‌ها</div>
-      ${(aiAnalysis.actionable_recommendations || [])
-        .map((rec: string) => `<div class="list-item rec">${rec}</div>`)
-        .join("")}
+      <div class="card-title">⏳ اقدامات انجام‌نشده و معوق پروژه‌ها</div>
+      ${aiAnalysis.uncompleted_actions && aiAnalysis.uncompleted_actions.length > 0
+        ? aiAnalysis.uncompleted_actions.map((act: any) => `
+            <div class="risk-item" style="border-right-color: #f43f5e; background: #fff1f2;">
+              <div class="risk-header">
+                <span style="font-weight: 700; color: #9f1239;">${act.project_title}</span>
+                ${act.target_date ? `<span class="risk-badge" style="background: #ffe4e6; color: #be123c;">موعد: ${toPersianDigits(act.target_date)}</span>` : ""}
+              </div>
+              <div style="color: #334155; font-size: 10.5px; margin-top: 3px; line-height: 1.6;">${act.action_text}</div>
+              ${act.deputy_name ? `<div style="color: #64748b; font-size: 9.5px; margin-top: 4px;">حوزه مسئول: ${act.deputy_name}</div>` : ""}
+            </div>
+          `).join("")
+        : (aiAnalysis.actionable_recommendations || []).map((rec: string) => `<div class="list-item rec">${rec}</div>`).join("")
+      }
     </div>
   </div>
 
@@ -1162,14 +1188,38 @@ export default function ManagerDashboard({
               </div>
             </div>
 
-            <div className="md:col-span-8 bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-3">
-              <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2 border-b border-slate-100 pb-3">
-                <TrendingUp className="w-4 h-4 text-emerald-700" />
-                <span>خلاصه مدیریتی عملکرد سازمان</span>
+            <div className="md:col-span-8 bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-4">
+              <h4 className="font-bold text-slate-900 text-sm flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <TrendingUp className="w-4 h-4 text-emerald-700" />
+                  <span>خلاصه مدیریتی عملکرد سازمان (به تفکیک معاونت‌ها)</span>
+                </div>
+                {Array.isArray(aiAnalysis.executive_summary) && (
+                  <span className="text-[11px] font-medium text-slate-500 bg-slate-50 px-2.5 py-0.5 rounded-full border border-slate-200/60">
+                    {toPersianDigits(aiAnalysis.executive_summary.length)} معاونت / واحد سازمانی
+                  </span>
+                )}
               </h4>
-              <p className="text-slate-600 text-xs leading-relaxed whitespace-pre-line">
-                {aiAnalysis.executive_summary}
-              </p>
+              
+              {Array.isArray(aiAnalysis.executive_summary) ? (
+                <div className="space-y-3 max-h-[380px] overflow-y-auto pr-1">
+                  {aiAnalysis.executive_summary.map((dep, idx) => (
+                    <div key={idx} className="p-3.5 rounded-2xl bg-slate-50/80 border border-slate-200/60 space-y-1.5 transition-all hover:bg-slate-50">
+                      <div className="flex items-center gap-2">
+                        <Building2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span className="font-bold text-slate-800 text-xs">{dep.deputy_name || "معاونت نامشخص"}</span>
+                      </div>
+                      <p className="text-slate-600 text-xs leading-relaxed text-justify whitespace-pre-line">
+                        {dep.summary}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-slate-600 text-xs leading-relaxed whitespace-pre-line text-justify">
+                  {aiAnalysis.executive_summary}
+                </p>
+              )}
             </div>
           </div>
 
@@ -1214,18 +1264,65 @@ export default function ManagerDashboard({
             </div>
 
             <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs space-y-3">
-              <h4 className="font-bold text-slate-900 text-xs flex items-center gap-2 border-b border-slate-100 pb-2">
-                <Lightbulb className="w-4 h-4 text-amber-500" />
-                <span>پیشنهادات و اقدام‌های پیشنهادی</span>
+              <h4 className="font-bold text-slate-900 text-xs flex items-center justify-between border-b border-slate-100 pb-2">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-rose-500" />
+                  <span>اقدامات انجام‌نشده و معوق پروژه‌ها</span>
+                </div>
+                {((aiAnalysis.uncompleted_actions && aiAnalysis.uncompleted_actions.length > 0) ||
+                  (aiAnalysis.actionable_recommendations && aiAnalysis.actionable_recommendations.length > 0)) && (
+                  <span className="text-[10px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md border border-rose-100">
+                    {toPersianDigits(
+                      (aiAnalysis.uncompleted_actions && aiAnalysis.uncompleted_actions.length > 0)
+                        ? aiAnalysis.uncompleted_actions.length
+                        : (aiAnalysis.actionable_recommendations || []).length
+                    )} اقدام
+                  </span>
+                )}
               </h4>
-              <ul className="space-y-2 text-xs text-slate-600">
-                {(aiAnalysis.actionable_recommendations || []).map((rec, idx) => (
-                  <li key={idx} className="flex items-start gap-2 bg-amber-50/40 p-2.5 rounded-xl border border-amber-100/50 leading-relaxed">
-                    <span className="w-1.5 h-1.5 bg-amber-500 rounded-full mt-1.5 shrink-0"></span>
-                    <span>{rec}</span>
-                  </li>
-                ))}
-              </ul>
+
+              {aiAnalysis.uncompleted_actions && aiAnalysis.uncompleted_actions.length > 0 ? (
+                <div className="space-y-2.5 max-h-[340px] overflow-y-auto pr-1 text-xs">
+                  {aiAnalysis.uncompleted_actions.map((act, idx) => (
+                    <div key={idx} className="p-3 rounded-xl bg-rose-50/40 border border-rose-100/70 space-y-1.5 transition-all hover:bg-rose-50/70">
+                      <div className="flex justify-between items-start gap-2">
+                        <span className="font-bold text-slate-800 text-[11px] leading-tight">
+                          {act.project_title}
+                        </span>
+                        {act.target_date && (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-100 text-rose-700 shrink-0">
+                            موعد: {toPersianDigits(act.target_date)}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-slate-700 text-[11px] leading-relaxed">
+                        {act.action_text}
+                      </p>
+                      <div className="flex flex-wrap items-center justify-between gap-1 pt-1 text-[10px] text-slate-400 border-t border-rose-100/40">
+                        {act.deputy_name && (
+                          <span className="text-slate-500 font-medium">حوزه: {act.deputy_name}</span>
+                        )}
+                        {act.delay_status && (
+                          <span className="text-rose-600/90 font-medium">{act.delay_status}</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (aiAnalysis.actionable_recommendations && aiAnalysis.actionable_recommendations.length > 0) ? (
+                <ul className="space-y-2 text-xs text-slate-600">
+                  {aiAnalysis.actionable_recommendations.map((rec, idx) => (
+                    <li key={idx} className="flex items-start gap-2 bg-rose-50/40 p-2.5 rounded-xl border border-rose-100/50 leading-relaxed">
+                      <span className="w-1.5 h-1.5 bg-rose-500 rounded-full mt-1.5 shrink-0"></span>
+                      <span>{rec}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="p-4 text-center text-xs text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                  هیچ اقدام معوق یا انجام‌نشده‌ای برای این دوره یافت نشد.
+                </div>
+              )}
             </div>
           </div>
         </div>

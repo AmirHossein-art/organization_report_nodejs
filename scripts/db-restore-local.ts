@@ -97,6 +97,12 @@ async function runRestore() {
   console.log(`📥 در حال انتقال داده‌های فایل ${path.basename(fileToRestore)} به دیتابیس محلی...`);
 
   try {
+    // پاکسازی کامل اسکیما جهت جلوگیری از خطای duplicate key هنگام بازگردانی
+    execSync(`"${psqlPath}" --dbname="${targetUrl}" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"`, {
+      env: envVars,
+      stdio: "inherit",
+    });
+
     execSync(`"${psqlPath}" --dbname="${targetUrl}" -f "${fileToRestore}"`, {
       env: envVars,
       stdio: "inherit",

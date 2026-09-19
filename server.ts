@@ -2915,46 +2915,93 @@ app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, r
       return res.status(400).json({ error: "هیچ گزارش ثبت‌شده‌ای برای تحلیل در این دوره یافت نشد." });
     }
 
+    // استخراج لیست کلیه اقدامات تعریف‌شده و انجام‌نشده در پروژه‌ها از دیتابیس
+    const uncompletedDbActions = await prisma.nextAction.findMany({
+      where: {
+        is_completed: false,
+      },
+      include: {
+        project: { select: { id: true, title: true, code: true } },
+        user: { select: { id: true, full_name: true, job_title: true } },
+      },
+      orderBy: { target_date: "asc" },
+      take: 60,
+    });
+
+    const uncompletedActionsText = uncompletedDbActions.length > 0
+      ? uncompletedDbActions
+          .map((act, i) => {
+            const projTitle = act.project?.title || "پروژه نامشخص";
+            const deputy = act.user?.job_title || act.user?.full_name || "حوزه نامشخص";
+            const targetDate = act.target_date
+              ? act.target_date.toISOString().split("T")[0]
+              : "نامشخص";
+            const claimed = act.claimed_completed ? " (پرسنل اعلام اتمام کرده اما تایید نهایی مدیریتی نشده)" : "";
+            return `${i + 1}. پروژه: «${projTitle}» | اقدام: ${act.action_text} | حوزه مسئول: ${deputy} | موعد اقدام: ${targetDate}${claimed}`;
+          })
+          .join("\n")
+      : "هیچ اقدام معوق یا انجام‌نشده‌ای برای پروژه‌ها در دیتابیس ثبت نشده است.";
+
     const reportsText = submittedReports
       .map((r, index) => {
+        const deputy = r.deputy_name || r.user_job_title || r.user?.job_title || "معاونت / حوزه نامشخص";
         const kpiSection = (r.kpiValues && r.kpiValues.length > 0)
           ? `شاخص‌های ساختاریافته:\n${formatKpiValuesForPrompt(r.kpiValues)}`
           : `شاخص‌ها (متن آزاد): ${r.kpi_text || "ثبت نشده"}`;
         return `--- گزارش ${index + 1} ---
+          معاونت / واحد سازمانی: ${deputy}
           نویسنده: ${r.user_full_name}
           پروژه: ${r.project_title}
           فعالیت‌ها: ${r.activities_done}
           نتایج: ${r.results_achieved || "ثبت نشده"}
-          اقدامات آتی: ${formatNextActionsForPrompt(r.nextActions)}
+          اقدامات آتی ثبت‌شده در این گزارش: ${formatNextActionsForPrompt(r.nextActions)}
           ${kpiSection}`;
       })
       .join("\n\n");
 
     const systemPrompt = `شما یک دستیار هوشمند و ارشد مدیریت استراتژیک در سازمان حمل‌ونقل و ترافیک هستید.
 وظیفه شما تحلیل دقیق گزارش‌های عملکرد پرسنل و ارائه خروجی کاملاً ساختاریافته به فرمت JSON است.
-پاسخ شما باید حتماً و فقط یک جی‌سون معتبر با کلید ریشه "analysis" باشد. نمونه ساختار مورد انتظار:
+
+دستورالعمل‌های حیاتی مدیریت ارشد:
+۱. «خلاصه مدیریتی عملکرد سازمان» را حتماً و قطعاً **به تفکیک معاونت‌ها** (واحدهای سازمانی) ارائه دهید. برای هر معاونت، خلاصه‌ای تحلیلی از عملکرد، پیشرفت پروژه‌ها و تنگناها در این دوره بنویسید.
+۲. به جای پیشنهادات فرضی و کلی، **«اقدامات تعریف‌شده و انجام‌نشده پروژه‌ها»** (اقدامات و تعهداتی که برای تمامی پروژه‌ها تعریف شده و باید انجام می‌شدند اما انجام نشده یا بر زمین مانده‌اند) را استخراج و گزارش نمایید.
+
+پاسخ شما باید حتماً و فقط یک جی‌سون معتبر با کلید ریشه "analysis" باشد. نمونه دقیق ساختار مورد انتظار:
 {
   "analysis": {
     "health_score": 85,
     "overall_status": "پایدار",
-    "executive_summary": "متن خلاصه مدیریتی در دو پاراگراف...",
+    "executive_summary": [
+      {
+        "deputy_name": "نام دقیق معاونت (مثلاً: معاونت مطالعات حمل‌ونقل و ترافیک)",
+        "summary": "متن خلاصه و فشرده از عملکرد این معاونت و وضعیت پروژه‌های زیرمجموعه آن در این دوره..."
+      }
+    ],
     "key_achievements": ["دستاورد ۱", "دستاورد ۲"],
     "risks_and_delays": [
       { "project_title": "عنوان پروژه", "risk_level": "high", "description": "شرح دقیق موانع" }
     ],
-    "actionable_recommendations": ["پیشنهاد ۱", "پیشنهاد ۲"]
+    "uncompleted_actions": [
+      {
+        "project_title": "عنوان پروژه",
+        "action_text": "شرح اقدام تعریف‌شده که باید انجام می‌شد اما انجام نشد",
+        "deputy_name": "نام معاونت / واحد مسئول",
+        "target_date": "تاریخ سررسید یا موعد تعیین‌شده",
+        "delay_status": "تحلیل وضعیت تاخیر یا موانع تحقق"
+      }
+    ]
   }
 }
 نکته: هیچ متن اضافی قبل و بعد از JSON ننویسید.`;
 
-    let userPrompt = `گزارش‌های عملکرد بازه "${period_title}":\n\n${reportsText}`;
+    let userPrompt = `گزارش‌های عملکرد بازه "${period_title}":\n\n${reportsText}\n\n========================================\n📋 لیست اقدامات و تعهداتی که برای تمامی پروژه‌ها در سیستم تعریف شده و تا این لحظه انجام/تایید نشده‌اند:\n${uncompletedActionsText}`;
 
     if (manager_comment && typeof manager_comment === "string" && manager_comment.trim()) {
       userPrompt += `\n\n========================================
 🚨 بازخورد و دستورات اصلاحی مدیر ارشد سازمان جهت بازنگری و اصلاح این تحلیل:
 «${manager_comment.trim()}»
 
-لطفاً ضمن رعایت دقیق ساختار خروجی JSON، تحلیل قبلی را متناسب با نکات، انتقادات و جهت‌گیری‌های اعلام‌شده توسط مدیر فوق بازنگری، ویرایش و تکمیل نمایید.`;
+لطفاً ضمن رعایت دقیق ساختار خروجی JSON (به‌ویژه تفکیک خلاصه مدیریتی بر اساس معاونت‌ها و لیست اقدامات انجام‌نشده پروژه‌ها)، تحلیل قبلی را متناسب با نکات، انتقادات و جهت‌گیری‌های اعلام‌شده توسط مدیر فوق بازنگری، ویرایش و تکمیل نمایید.`;
 
       if (previous_analysis) {
         userPrompt += `\n\nنسخه تحلیل قبلی جهت اعمال اصلاحات:\n${JSON.stringify(previous_analysis, null, 2)}`;
@@ -2962,7 +3009,23 @@ app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, r
     }
 
     const shouldForceRefresh = Boolean(force_refresh || (manager_comment && manager_comment.trim()));
-    const result = await callAiWithFallback(systemPrompt, userPrompt, { forceRefresh: shouldForceRefresh });
+    const result: any = await callAiWithFallback(systemPrompt, userPrompt, { forceRefresh: shouldForceRefresh });
+
+    // ایمن‌سازی: در صورتی که هوش مصنوعی لیست اقدامات انجام‌نشده را خالی برگرداند اما در دیتابیس موجود باشد، لیست دیتابیس را به عنوان پشتیبان درج کن
+    if (result && result.analysis) {
+      if (!Array.isArray(result.analysis.uncompleted_actions) || result.analysis.uncompleted_actions.length === 0) {
+        if (uncompletedDbActions.length > 0) {
+          result.analysis.uncompleted_actions = uncompletedDbActions.slice(0, 15).map((act) => ({
+            project_title: act.project?.title || "پروژه نامشخص",
+            action_text: act.action_text,
+            deputy_name: act.user?.job_title || act.user?.full_name || "حوزه نامشخص",
+            target_date: act.target_date ? act.target_date.toISOString().split("T")[0] : undefined,
+            delay_status: act.claimed_completed ? "ادعای انجام شده، در انتظار تایید مدیر" : "اقدام انجام‌نشده / معوق",
+          }));
+        }
+      }
+    }
+
     res.json(result);
   } catch (err: any) {
     console.error("AI Global Analysis Error:", err);
