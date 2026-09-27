@@ -3183,6 +3183,223 @@ ${currentKpiSection}
   }
 });
 
+// اندپوینت ارزیابی و تحلیل استراتژیک معاونت (پروژه به پروژه + ممیزی WBS و استخراج KPI)
+app.post(["/api/reports/analyze-deputy", "/api/ai/deputy-analysis"], authenticate, requireManager, aiLimiter, async (req: any, res) => {
+  try {
+    const { period_id, deputy_name, user_id, manager_comment, previous_analysis, force_refresh } = req.body;
+
+    if (!period_id) {
+      return res.status(400).json({ error: "شناسه دوره (period_id) الزامی است." });
+    }
+
+    const period = await prisma.reportPeriod.findUnique({
+      where: { id: Number(period_id) },
+    });
+    if (!period) {
+      return res.status(404).json({ error: "بازه گزارش‌دهی مورد نظر یافت نشد." });
+    }
+
+    // ۱. شناسایی کاربران / مدیران مرتبط با این معاونت
+    let deputyUsers: any[] = [];
+    if (user_id) {
+      const u = await prisma.user.findUnique({ where: { id: Number(user_id) } });
+      if (u) deputyUsers.push(u);
+    } else if (deputy_name && typeof deputy_name === "string" && deputy_name.trim()) {
+      const trimmed = deputy_name.trim();
+      deputyUsers = await prisma.user.findMany({
+        where: {
+          is_active: true,
+          OR: [
+            { job_title: { contains: trimmed } },
+            { full_name: { contains: trimmed } },
+            { username: trimmed },
+          ],
+        },
+      });
+    }
+
+    if (deputyUsers.length === 0) {
+      return res.status(404).json({ error: "معاونت یا کاربر مرتبط با این درخواست یافت نشد." });
+    }
+
+    const deputyUserIds = deputyUsers.map((u) => u.id);
+    const resolvedDeputyName = deputyUsers[0].job_title || deputyUsers[0].full_name || deputy_name || "معاونت نامشخص";
+
+    // ۲. استخراج پروژه‌های مرتبط با این معاونت
+    const userProjects = await prisma.userProject.findMany({
+      where: {
+        user_id: { in: deputyUserIds },
+        project: { is_active: true },
+      },
+      include: {
+        project: true,
+        user: true,
+      },
+      orderBy: { project: { order_index: "asc" } },
+    });
+
+    if (userProjects.length === 0) {
+      return res.status(400).json({ error: `هیچ پروژه فعالی برای «${resolvedDeputyName}» تعریف نشده است.` });
+    }
+
+    // پروژه‌های منحصربه‌فرد
+    const projectMap = new Map<number, any>();
+    for (const up of userProjects) {
+      if (!projectMap.has(up.project_id)) {
+        projectMap.set(up.project_id, {
+          ...up.project,
+          responsible_user: up.user.full_name,
+        });
+      }
+    }
+    const projectsList = Array.from(projectMap.values());
+    const projectIds = projectsList.map((p) => p.id);
+
+    // ۳. دریافت گزارش‌های این دوره برای این پروژه‌ها و کاربران
+    const reports = await prisma.report.findMany({
+      where: {
+        period_id: Number(period_id),
+        project_id: { in: projectIds },
+      },
+      include: {
+        user: true,
+        project: true,
+        nextActions: true,
+        kpiValues: true,
+        files: true,
+      },
+      orderBy: { submitted_at: "desc" },
+    });
+
+    // ۴. ساختاردهی اطلاعات پروژه به پروژه همراه با WBS و سابقه
+    const projectsDataForPrompt = projectsList.map((project, idx) => {
+      const report = reports.find((r) => r.project_id === project.id);
+
+      // استخراج WBS در صورت وجود
+      let wbsContext = "فاقد سند مرجع WBS";
+      const wbsPath = resolveProjectWbsFilePath(project);
+      if (wbsPath) {
+        try {
+          const parsed = parseExcelWBS(wbsPath);
+          wbsContext = parsed.formattedPromptText;
+        } catch (e: any) {
+          wbsContext = `خطا در خواندن فایل WBS: ${e.message}`;
+        }
+      }
+
+      if (!report) {
+        return `=== پروژه ${idx + 1}: ${project.title} (مسئول: ${project.responsible_user || "مشخص نشده"}) ===
+وضعیت گزارش: ❌ فاقد گزارش در این دوره (عدم ثبت توسط کارشناس)
+سند مرجع WBS:
+${wbsContext}`;
+      }
+
+      const kpiSection = (report.kpiValues && report.kpiValues.length > 0)
+        ? `شاخص‌های عملکردی ثبت‌شده:\n${formatKpiValuesForPrompt(report.kpiValues)}`
+        : `شاخص‌ها (متن آزاد): ${report.kpi_text || "ثبت نشده"}`;
+
+      return `=== پروژه ${idx + 1}: ${project.title} (مسئول: ${report.user_full_name}) ===
+وضعیت گزارش: ✅ ${report.status === "late" ? "تأخیری" : "ثبت‌شده منظم"} (تاریخ ثبت: ${report.submitted_at.toISOString().split("T")[0]})
+فعالیت‌های انجام‌شده:
+${report.activities_done || "توضیحی ثبت نشده"}
+نتایج ملموس حاصله:
+${report.results_achieved || "توضیحی ثبت نشده"}
+${kpiSection}
+اقدامات آتی تعهدشده:
+${formatNextActionsForPrompt(report.nextActions)}
+سند مرجع WBS:
+${wbsContext}`;
+    }).join("\n\n----------------------------------------\n\n");
+
+    const totalProjectsCount = projectsList.length;
+    const submittedCount = reports.length;
+    const missingCount = totalProjectsCount - submittedCount;
+
+    // ۵. تنظیم دستورات سیستم با الزام اکید به عدم توهم (Strict Grounding)
+    const systemPrompt = `شما یک ارزیاب، ممیز ارشد مدیریت استراتژیک و کنترل پروژه در سازمان حمل‌ونقل و ترافیک هستید.
+وظیفه شما ارزیابی داده‌محور و دقیق عملکرد «معاونت سازمانی» مشخص‌شده در یک بازه زمانی معین، بر اساس تک‌تک پروژه‌های آن است.
+
+قوانین اکید و بدون استثنا:
+۱. اصل استناد مستقیم (Strict Grounding): فقط و فقط بر اساس اطلاعات واقعی ارائه‌شده قضاوت کنید. از ذکر ادعاهای کلی، تعمیم‌های ساختگی یا حدسیات فنی خودداری نمایید.
+۲. صداقت در داده‌های ناقص: اگر پروژه‌ای گزارش ندارد یا سند WBS و KPI ندارد، صراحتاً در تحلیل پروژه بنویسید "فاقد گزارش" یا "فاقد WBS مرجع" و آن را به عنوان یک ریسک/نقطه کور در نظر بگیرید.
+۳. استخراج هوشمند شاخص (KPI Extraction): متن فعالیت‌ها و نتایج پروژه‌ها را بررسی کنید و سنجه‌های عددی/کمی بالقوه‌ای که کارشناس در متن آورده اما به عنوان شاخص ساختاریافته تعریف نشده را استخراج کنید تا سازمان بتواند در آینده آن‌ها را به شاخص مصوب تبدیل کند.
+۴. زبان خروجی: کاملاً فارسی، روان، اداری و بدون هرگونه تعارف یا اطناب.
+۵. خروجی باید حتماً و فقط یک شیء JSON معتبر با کلید ریشه "analysis" باشد بدون هیچ کلمه، توضیح یا کاراکتر اضافی در ابتدا یا انتها.
+
+نمونه ساختار مورد انتظار JSON:
+{
+  "analysis": {
+    "deputy_name": "نام دقیق معاونت",
+    "period_title": "عنوان دوره",
+    "health_score": 75,
+    "overall_status": "پایدار / نیازمند پیگیری جدی / بحرانی",
+    "deputy_executive_summary": "خلاصه مدیریتی دقیق در دو پاراگراف درباره عملکرد کل این معاونت در این دوره...",
+    "projects_analysis": [
+      {
+        "project_title": "عنوان پروژه",
+        "status": "submitted",
+        "project_summary": "خلاصه ۳-۴ خطی از عملکرد واقعی پروژه در این دوره بر اساس گزارش",
+        "key_achievements": ["دستاورد ملموس ۱"],
+        "risks_or_delays": ["موانع، تأخیرها یا ریسک‌ها"],
+        "wbs_alignment": "وضعیت انطباق با سند WBS یا ذکر 'فاقد WBS مرجع'",
+        "kpi_evaluation": "بررسی مقادیر شاخص‌های ثبت‌شده یا ذکر 'فاقد شاخص ساختاریافته'"
+      }
+    ],
+    "suggested_kpis_from_text": [
+      {
+        "project_title": "عنوان پروژه مرتبط",
+        "suggested_kpi_name": "عنوان شاخص پیشنهادی استخراج‌شده از متن",
+        "suggested_unit": "واحد سنجش (مثلاً: سامانه، تقاطع، درصد، روز)",
+        "extracted_context": "بخشی از متن گزارش که این سنجه از آن شناسایی شد",
+        "reasoning": "چرا ثبت رسمی این شاخص برای معاونت ارزش نظارتی دارد"
+      }
+    ],
+    "next_period_commitments": [
+      {
+        "project_title": "عنوان پروژه",
+        "action": "شرح اقدام آتی",
+        "deadline": "تاریخ هدف یا 'تعیین‌نشده'"
+      }
+    ],
+    "actionable_recommendations": [
+      "پیشنهاد عملیاتی و قابل اجرا به مدیر ارشد سازمان جهت بهبود عملکرد این معاونت"
+    ]
+  }
+}`;
+
+    let userPrompt = `🏢 **ارزیابی عملکرد معاونت: ${resolvedDeputyName}**
+📅 **بازه گزارش‌دهی:** ${period.title} (${period.period_start.toISOString().split("T")[0]} الی ${period.period_end.toISOString().split("T")[0]})
+📊 **آمار کمی دوره:** کل پروژه‌ها: ${totalProjectsCount} | گزارش‌های ارائه‌شده: ${submittedCount} | پروژه‌های فاقد گزارش: ${missingCount}
+
+========================================
+📋 **اطلاعات و گزارش‌های به تفکیک پروژه:**
+
+${projectsDataForPrompt}`;
+
+    if (manager_comment && typeof manager_comment === "string" && manager_comment.trim()) {
+      userPrompt += `\n\n========================================
+🚨 بازخورد و دستورات اصلاحی مدیر ارشد سازمان جهت بازنگری و اصلاح این تحلیل:
+«${manager_comment.trim()}»
+
+لطفاً ضمن حفظ دقیق ساختار JSON، تحلیل این معاونت را متناسب با نظرات و اصلاحات مدیر ارشد بازنویسی نمایید.`;
+
+      if (previous_analysis) {
+        userPrompt += `\n\nنسخه تحلیل قبلی جهت اعمال اصلاحات:\n${JSON.stringify(previous_analysis, null, 2)}`;
+      }
+    }
+
+    const shouldForceRefresh = Boolean(force_refresh || (manager_comment && manager_comment.trim()));
+    const result = await callAiWithFallback(systemPrompt, userPrompt, { forceRefresh: shouldForceRefresh });
+    res.json(result);
+  } catch (err: any) {
+    console.error("Deputy AI Analysis Error:", err);
+    const clientError = config.NODE_ENV === "production"
+      ? "خطایی در پردازش تحلیل معاونت توسط هوش مصنوعی رخ داد."
+      : (err.message || "خطا در پردازش هوش مصنوعی.");
+    res.status(500).json({ error: clientError });
+  }
+});
+
 // -----------------------------
 // 13. Frontend Serving & Global Error Handler
 // -----------------------------

@@ -20,7 +20,7 @@ export function parseExcelWBS(filePath: string): ParsedWBSResult {
   const sheetProjectName = workbook.SheetNames.find((s) => s.includes("پروژه")) || workbook.SheetNames[0];
   const sheetProject = workbook.Sheets[sheetProjectName];
   const projectRawData = XLSX.utils.sheet_to_json(sheetProject, { header: 1 }) as any[][];
-  
+
   let projectTitle = "پروژه عمومی";
   let projectInfoText = "";
 
