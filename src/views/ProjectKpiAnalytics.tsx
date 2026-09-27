@@ -365,7 +365,6 @@ export default function ProjectKpiAnalytics({ projects = [] }: ProjectKpiAnalyti
                       dataKey="period_end"
                       tick={{ fontSize: 11, fill: "#64748b" }}
                       tickFormatter={(label) => formatPersianDate(label)}
-                      reversed
                     />
                     <YAxis tick={{ fontSize: 11, fill: "#64748b" }} />
                     <Tooltip
