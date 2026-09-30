@@ -28,7 +28,7 @@ import {
 import { ReportPeriod, Project, User } from "../types";
 import { CustomSelect } from "../components";
 import ReportsPdfDocument from "../components/ReportsPdfDocument";
-import { ensureShamsiDate } from "../dateUtils";
+import { ensureShamsiDate, isLastWeekOfShamsiMonth } from "../dateUtils";
 
 // 🌐 تبدیل اعداد به فارسی
 export const toPersianDigits = (n: string | number | undefined | null): string => {
@@ -963,12 +963,34 @@ export default function ManagerDashboard({
   // استیت‌های خروجی PDF
   const [pdfModalOpen, setPdfModalOpen] = useState<boolean>(false);
 
+  const currentPeriod = useMemo(() => {
+    return (periods || []).find((p) => p.id === selectedPeriodId);
+  }, [periods, selectedPeriodId]);
+
+  const isLastWeek = useMemo(() => {
+    return isLastWeekOfShamsiMonth(currentPeriod, periods);
+  }, [currentPeriod, periods]);
+
   useEffect(() => {
     if (periods && periods.length > 0) {
       const openPeriod = periods.find((p) => p.is_open);
       setSelectedPeriodId(openPeriod ? openPeriod.id : periods[0].id);
     }
   }, [periods]);
+
+  useEffect(() => {
+    if (selectedProjectId && currentPeriod) {
+      const currentProj = (projects || []).find((p) => p.id === selectedProjectId);
+      if (currentProj) {
+        const pType = currentProj.project_type || "weekly";
+        if (currentPeriod.report_type === "weekly" && !isLastWeek && pType === "monthly") {
+          setSelectedProjectId(0);
+        } else if (currentPeriod.report_type === "monthly" && pType !== "monthly") {
+          setSelectedProjectId(0);
+        }
+      }
+    }
+  }, [selectedPeriodId, currentPeriod, isLastWeek, projects, selectedProjectId]);
 
   const fetchSummary = async () => {
     if (!selectedPeriodId) return;
@@ -1543,7 +1565,18 @@ export default function ManagerDashboard({
               onChange={(v) => setSelectedProjectId(Number(v))}
               options={[
                 { value: 0, label: "همه پروژه‌ها" },
-                ...(projects || []).map((p) => ({ value: p.id, label: p.title })),
+                ...(projects || [])
+                  .filter((p) => {
+                    if (!currentPeriod) return true;
+                    if (currentPeriod.report_type === "weekly" && !isLastWeek) {
+                      return (p.project_type || "weekly") === "weekly";
+                    }
+                    if (currentPeriod.report_type === "monthly") {
+                      return (p.project_type || "weekly") === "monthly";
+                    }
+                    return true;
+                  })
+                  .map((p) => ({ value: p.id, label: p.title })),
               ]}
             />
             <CustomSelect

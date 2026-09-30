@@ -19,7 +19,7 @@ import crypto from "node:crypto";
 import { config } from "./src/config/env";
 import { parseExcelWBS } from "./src/utils/wbsParser";
 import { getDeadlineState } from "./src/deadline";
-import { ensureShamsiDate } from "./src/dateUtils";
+import { ensureShamsiDate, isLastWeekOfShamsiMonth } from "./src/dateUtils";
 
 const SALT_ROUNDS = 10;
 const app = express();
@@ -1714,28 +1714,35 @@ app.post("/api/reports", authenticate, upload.array("files", 10), async (req: an
       return res.status(400).json({ error: "اطلاعات پروژه یا بازه گزارش‌دهی نامعتبر است." });
     }
 
-    // اعتبارسنجی نوع گزارش با نوع بازه
-    if (report_type !== period.report_type) {
-      if (uploadedFiles.length > 0) {
-        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
+    const allWeeklyPeriods = await prisma.reportPeriod.findMany({
+      where: { report_type: "weekly" },
+      select: { id: true, title: true, period_end: true, report_type: true },
+    });
+    const isLastWeek = period.report_type === "weekly" && isLastWeekOfShamsiMonth(period, allWeeklyPeriods);
+    const pType = (project.project_type || "weekly");
+
+    // اعتبارسنجی موعد گزارش پروژه با بازه
+    if (period.report_type === "weekly") {
+      if (pType === "monthly" && !isLastWeek) {
+        if (uploadedFiles.length > 0) {
+          uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
+        }
+        return res.status(400).json({
+          error: "این پروژه ماهانه است و ثبت گزارش آن فقط در هفته پایانی هر ماه مجاز است.",
+        });
       }
-      return res.status(400).json({ error: "نوع گزارش ارسالی با نوع بازه گزارش‌دهی مطابقت ندارد." });
+    } else if (period.report_type === "monthly") {
+      if (pType !== "monthly") {
+        if (uploadedFiles.length > 0) {
+          uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
+        }
+        return res.status(400).json({
+          error: "این بازه ماهانه است و امکان ثبت گزارش برای پروژه هفتگی در آن وجود ندارد.",
+        });
+      }
     }
 
-    // اعتبارسنجی نوع گزارش با نوع پروژه (پروژه هفتگی فقط گزارش هفتگی و پروژه ماهانه فقط گزارش ماهانه)
-    const projectTypeMatch =
-      (report_type === "monthly" && project.project_type === "monthly") ||
-      (report_type === "weekly" && (project.project_type || "weekly") === "weekly");
-    if (!projectTypeMatch) {
-      if (uploadedFiles.length > 0) {
-        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
-      }
-      return res.status(400).json({
-        error: report_type === "monthly"
-          ? "این پروژه هفتگی است و امکان ثبت گزارش ماهانه برای آن وجود ندارد."
-          : "این پروژه ماهانه است و امکان ثبت گزارش هفتگی برای آن وجود ندارد.",
-      });
-    }
+    const effectiveReportType: "weekly" | "monthly" = pType === "monthly" ? "monthly" : "weekly";
 
     // اعتبارسنجی برای پرسنل عادی
     if (req.user.role !== "manager") {
@@ -1827,7 +1834,7 @@ app.post("/api/reports", authenticate, upload.array("files", 10), async (req: an
     const validatedKpiValues = await validateAndBuildKpiValues(
       kpi_values,
       project.id,
-      report_type as "weekly" | "monthly"
+      effectiveReportType
     );
 
     let finalResultsAchieved = typeof results_achieved === "string" ? results_achieved.trim() : "";
@@ -1850,7 +1857,7 @@ app.post("/api/reports", authenticate, upload.array("files", 10), async (req: an
         user_username: user.username,
         project_id: project.id,
         project_title: project.title,
-        report_type: report_type as any,
+        report_type: effectiveReportType,
         period_id: period.id,
         period_title: period.title,
         period_start: period.period_start,
@@ -2299,15 +2306,11 @@ app.get("/api/dashboard/summary", authenticate, requireManager, async (req, res)
     });
     const staffIds = activeStaff.map((s) => s.id);
 
-    // آخرین بازه هفتگیِ باز (هفته جاری): تنها در این هفته پروژه‌های ماهانه هم در انتظار گزارش محسوب می‌شوند
-    let isLatestOpenWeekly = false;
-    if (period.report_type === "weekly" && period.is_open) {
-      const latestOpenWeekly = await prisma.reportPeriod.findFirst({
-        where: { report_type: "weekly", is_open: true },
-        orderBy: { period_start: "desc" },
-      });
-      isLatestOpenWeekly = latestOpenWeekly ? latestOpenWeekly.id === period.id : false;
-    }
+    const allWeeklyPeriods = await prisma.reportPeriod.findMany({
+      where: { report_type: "weekly" },
+      select: { id: true, title: true, period_end: true, report_type: true },
+    });
+    const isLastWeek = period.report_type === "weekly" && isLastWeekOfShamsiMonth(period, allWeeklyPeriods);
 
     const userProjects = await prisma.userProject.findMany({
       where: {
@@ -2326,11 +2329,17 @@ app.get("/api/dashboard/summary", authenticate, requireManager, async (req, res)
       if (user_id && up.user_id !== user_id) continue;
       if (deputyName && up.user.job_title?.trim() !== deputyName) continue;
 
-      // تفکیک بر اساس نوع پروژه: بازه ماهانه فقط پروژه‌های ماهانه،
-      // بازه هفتگی فقط پروژه‌های هفتگی (به‌جز آخرین هفته باز که ماهانه‌ها هم اضافه می‌شوند)
       const pType = (up.project as any).project_type || "weekly";
-      if (period.report_type === "monthly" && pType !== "monthly") continue;
-      if (period.report_type === "weekly" && pType === "monthly" && !isLatestOpenWeekly) continue;
+
+      // قانون کسب‌وکار:
+      // ۱. اگر هفته پایانی ماه باشد: هم پروژه‌های هفتگی و هم پروژه‌های ماهانه موعد گزارش دارند و پایش می‌شوند
+      // ۲. اگر هفته عادی باشد: فقط پروژه‌های هفتگی پایش می‌شوند و پروژه‌های ماهانه خواسته نمی‌شوند
+      // ۳. اگر بازه ماهانه باشد: فقط پروژه‌های ماهانه پایش می‌شوند
+      if (period.report_type === "weekly") {
+        if (!isLastWeek && pType === "monthly") continue;
+      } else if (period.report_type === "monthly") {
+        if (pType !== "monthly") continue;
+      }
 
       expectedPairs.push({
         user: sanitizeUser(up.user),
@@ -2389,6 +2398,7 @@ app.get("/api/dashboard/summary", authenticate, requireManager, async (req, res)
     res.json({
       period: {
         ...period,
+        is_last_week: isLastWeek,
         period_start: period.period_start.toISOString().split("T")[0],
         period_end: period.period_end.toISOString().split("T")[0]
       },
@@ -3268,9 +3278,21 @@ app.post(["/api/reports/analyze-deputy", "/api/ai/deputy-analysis"], authenticat
       return res.status(400).json({ error: `هیچ پروژه فعالی برای «${resolvedDeputyName}» تعریف نشده است.` });
     }
 
-    // پروژه‌های منحصربه‌فرد
+    const allWeeklyPeriods = await prisma.reportPeriod.findMany({
+      where: { report_type: "weekly" },
+      select: { id: true, title: true, period_end: true, report_type: true },
+    });
+    const isLastWeek = period.report_type === "weekly" && isLastWeekOfShamsiMonth(period, allWeeklyPeriods);
+
+    // پروژه‌های منحصربه‌فرد (در هفته‌های عادی فقط هفتگی، در هفته پایانی ماه هر دو)
     const projectMap = new Map<number, any>();
     for (const up of userProjects) {
+      const pType = (up.project as any).project_type || "weekly";
+      if (period.report_type === "weekly") {
+        if (!isLastWeek && pType === "monthly") continue;
+      } else if (period.report_type === "monthly") {
+        if (pType !== "monthly") continue;
+      }
       if (!projectMap.has(up.project_id)) {
         projectMap.set(up.project_id, {
           ...up.project,
@@ -3278,6 +3300,13 @@ app.post(["/api/reports/analyze-deputy", "/api/ai/deputy-analysis"], authenticat
         });
       }
     }
+
+    if (projectMap.size === 0) {
+      return res.status(400).json({
+        error: `هیچ پروژه ${period.report_type === "monthly" ? "ماهانه‌ای" : "هفتگی‌ای"} برای «${resolvedDeputyName}» در این بازه تعریف نشده است.`,
+      });
+    }
+
     const projectsList = Array.from(projectMap.values());
     const projectIds = projectsList.map((p) => p.id);
 

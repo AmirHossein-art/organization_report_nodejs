@@ -1,5 +1,5 @@
 // src/views/SubmitReport.tsx
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { 
   Plus, 
   X, 
@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { Project, ReportPeriod, User, Report } from "../types";
 import { CustomSelect, ShamsiDatePicker } from "../components";
+import { isLastWeekOfShamsiMonth } from "../dateUtils";
 
 // 🌐 تبدیل اعداد به فارسی
 const toPersianDigits = (n: string | number | undefined | null): string => {
@@ -70,7 +71,6 @@ interface NextActionInput {
 }
 
 export default function SubmitReport({ projects, periods, user, allReports, onRefresh, onNavigate }: SubmitReportProps) {
-  const [subReportType, setSubReportType] = useState<"weekly" | "monthly">("weekly");
   const [subPeriodId, setSubPeriodId] = useState<number>(0);
   const [subProjectId, setSubProjectId] = useState<number>(0);
   const [activitiesDone, setActivitiesDone] = useState("");
@@ -98,17 +98,13 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
     { action_text: "", target_date: "" }
   ]);
 
-  // تنظیم خودکار بازه زمانی باز متناسب با نوع گزارش
-  useEffect(() => {
-    const openP = periods.filter((p) => p.report_type === subReportType && p.is_open);
-    if (openP.length > 0) {
-      setSubPeriodId(openP[0].id);
-    } else {
-      setSubPeriodId(0);
-    }
-    // با تغییر نوع گزارش، پروژه انتخابی قبلی ممکن است نامعتبر شود؛ انتخاب پاک می‌شود
-    setSubProjectId(0);
-  }, [subReportType, periods]);
+  const currentPeriod = useMemo(() => {
+    return (periods || []).find((p) => p.id === subPeriodId);
+  }, [periods, subPeriodId]);
+
+  const isLastWeek = useMemo(() => {
+    return isLastWeekOfShamsiMonth(currentPeriod, periods);
+  }, [currentPeriod, periods]);
 
   // واکشی پروژه‌های تخصیص‌یافته به کاربر
   const [userAssignedProjects, setUserAssignedProjects] = useState<Project[]>([]);
@@ -122,12 +118,52 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
             .map((a) => a.project_id);
           const assigned = projects.filter((p) => myProjectIds.includes(p.id) && p.is_active);
           setUserAssignedProjects(assigned);
-          if (assigned.length > 0) {
-            setSubProjectId(assigned[0].id);
-          }
         });
     }
   }, [user, projects]);
+
+  // پروژه‌های مجاز برای انتخاب در این بازه:
+  // در هفته‌های عادی فقط پروژه‌های هفتگی، در هفته پایانی ماه هر دو
+  const availableProjects = useMemo(() => {
+    if (!currentPeriod) return userAssignedProjects;
+    if (currentPeriod.report_type === "weekly") {
+      if (!isLastWeek) {
+        return userAssignedProjects.filter((p) => (p.project_type || "weekly") === "weekly");
+      }
+      return userAssignedProjects;
+    }
+    if (currentPeriod.report_type === "monthly") {
+      return userAssignedProjects.filter((p) => (p.project_type || "weekly") === "monthly");
+    }
+    return userAssignedProjects;
+  }, [currentPeriod, isLastWeek, userAssignedProjects]);
+
+  const selectedProject = useMemo(() => {
+    return userAssignedProjects.find((p) => p.id === subProjectId);
+  }, [userAssignedProjects, subProjectId]);
+
+  const currentReportType: "weekly" | "monthly" = selectedProject?.project_type === "monthly" ? "monthly" : "weekly";
+
+  // تنظیم خودکار بازه زمانی باز
+  useEffect(() => {
+    const openP = (periods || []).filter((p) => p.is_open);
+    if (openP.length > 0) {
+      setSubPeriodId((prev) => (prev && openP.some((p) => p.id === prev) ? prev : openP[0].id));
+    } else {
+      setSubPeriodId(0);
+    }
+  }, [periods]);
+
+  // تنظیم خودکار پروژه انتخابی متناسب با پروژه‌های مجاز در این بازه
+  useEffect(() => {
+    if (availableProjects.length > 0) {
+      if (!availableProjects.some((p) => p.id === subProjectId)) {
+        setSubProjectId(availableProjects[0].id);
+      }
+    } else {
+      setSubProjectId(0);
+    }
+  }, [availableProjects, subProjectId]);
 
   const existingReportForSelection = allReports.find(
     (r) => r.project_id === subProjectId && r.period_id === subPeriodId
@@ -160,7 +196,7 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
       return;
     }
     setKpisLoading(true);
-    fetch(`/api/projects/${subProjectId}/kpis?report_type=${subReportType}`)
+    fetch(`/api/projects/${subProjectId}/kpis?report_type=${currentReportType}`)
       .then((r) => (r.ok ? r.json() : []))
       .then((data: any[]) => {
         setKpis(Array.isArray(data) ? data : []);
@@ -180,7 +216,7 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
         setKpis([]);
       })
       .finally(() => setKpisLoading(false));
-  }, [subProjectId, subPeriodId, subReportType]);
+  }, [subProjectId, subPeriodId, currentReportType]);
 
   const updateKpiValue = (kpiId: number, patch: Partial<any>) => {
     setKpiValues((prev) => ({
@@ -261,7 +297,7 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
     const formData = new FormData();
     formData.append("user_id", user.id.toString());
     formData.append("project_id", subProjectId.toString());
-    formData.append("report_type", subReportType);
+    formData.append("report_type", currentReportType);
     formData.append("period_id", subPeriodId.toString());
     formData.append("activities_done", activitiesDone);
     formData.append("results_achieved", extraResultsNotes);
@@ -438,19 +474,7 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
         <form onSubmit={handleSubmit} className="bg-white rounded-3xl p-6 md:p-8 border border-slate-200 shadow-sm space-y-6">
           
           {/* منوهای بالایی انتخاب بازه و پروژه */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div>
-              <label className="block text-slate-700 text-sm font-medium mb-1.5">نوع گزارش</label>
-              <CustomSelect
-                value={subReportType}
-                onChange={(val) => setSubReportType(val as "weekly" | "monthly")}
-                options={[
-                  { value: "weekly", label: "گزارش هفتگی" },
-                  { value: "monthly", label: "گزارش ماهانه" }
-                ]}
-              />
-            </div>
-
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <label className="block text-slate-700 text-sm font-medium mb-1.5">بازه گزارش‌دهی</label>
               <CustomSelect
@@ -459,7 +483,7 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
                 options={[
                   { value: 0, label: "-- انتخاب بازه --" },
                   ...periods
-                    .filter((p) => p.report_type === subReportType && p.is_open)
+                    .filter((p) => p.is_open)
                     .map((p) => ({
                       value: p.id,
                       label: p.title
@@ -473,13 +497,16 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
               <CustomSelect
                 value={subProjectId}
                 onChange={(val) => setSubProjectId(Number(val))}
-                options={userAssignedProjects
-                  .filter((p) => (p.project_type || "weekly") === subReportType)
-                  .map((p) => ({
-                    value: p.id,
-                    label: p.title
-                  }))}
+                options={availableProjects.map((p) => ({
+                  value: p.id,
+                  label: p.project_type === "monthly" ? `${p.title} (پروژه ماهانه)` : p.title
+                }))}
               />
+              {userAssignedProjects.some((p) => p.project_type === "monthly") && !isLastWeek && currentPeriod?.report_type === "weekly" && (
+                <p className="text-[11px] text-slate-500 mt-1.5 font-medium">
+                  📌 پروژه‌های ماهانه شما در هفته پایانی هر ماه برای ثبت گزارش فعال خواهند شد.
+                </p>
+              )}
             </div>
           </div>
 
