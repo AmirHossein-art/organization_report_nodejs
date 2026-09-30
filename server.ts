@@ -200,8 +200,15 @@ function sanitizeUser(user: any) {
 // تمیزکاری خودکار وضعیت اقداماتی که در گزارش تیک نخورده بودند
 prisma.nextAction.updateMany({
   where: { claimed_report_id: null, claimed_completed: true },
-  data: { claimed_completed: false }
+  data: { claimed_completed: false },
 }).catch((e) => console.error("Error auto-sanitizing unlinked actions:", e));
+
+// تبدیل خودکار اقدامات اعلام‌شده توسط پرسنل به اقدامات تکمیل‌شده
+
+prisma.nextAction.updateMany({
+  where: { claimed_completed: true, is_completed: false },
+  data: { is_completed: true, completed_at: new Date() },
+}).catch((e) => console.error("Error auto-updating claimed actions to completed:", e));
 
 // -----------------------------
 // Middlewares: احراز هویت و کنترل دسترسی
@@ -1872,11 +1879,14 @@ app.post("/api/reports", authenticate, upload.array("files", 10), async (req: an
     });
 
     if (parsedAchievedActionIds.length > 0) {
+      const now = new Date();
       await prisma.nextAction.updateMany({
         where: { id: { in: parsedAchievedActionIds } },
         data: {
+          is_completed: true,
+          completed_at: now,
           claimed_completed: true,
-          claimed_at: new Date(),
+          claimed_at: now,
           claimed_report_id: newReport.id,
         }
       });
@@ -2038,17 +2048,22 @@ app.put("/api/reports/:id", authenticate, upload.array("files", 10), async (req:
         await tx.nextAction.updateMany({
           where: { claimed_report_id: id },
           data: {
+            is_completed: false,
+            completed_at: null,
             claimed_completed: false,
             claimed_at: null,
             claimed_report_id: null,
           }
         });
         if (parsedAchievedActionIds.length > 0) {
+          const now = new Date();
           await tx.nextAction.updateMany({
             where: { id: { in: parsedAchievedActionIds } },
             data: {
+              is_completed: true,
+              completed_at: now,
               claimed_completed: true,
-              claimed_at: new Date(),
+              claimed_at: now,
               claimed_report_id: id,
             }
           });

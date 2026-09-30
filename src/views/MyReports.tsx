@@ -108,7 +108,6 @@ function RawReportDetailsModal({
   onClose,
   onRunAudit,
   showAiAudit = false,
-  onToggleActionStatus,
 }: {
   report: any | null;
   kpiMap: Record<number, any>;
@@ -235,21 +234,9 @@ function RawReportDetailsModal({
                       </div>
 
                       <div className="flex items-center gap-2 self-end sm:self-center">
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
-                          isVerified ? "bg-emerald-600 text-white" : "bg-indigo-600 text-white"
-                        }`}>
-                          {isVerified ? "تایید شده توسط مدیر" : "اعلام پرسنل (در انتظار تایید)"}
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-600 text-white">
+                          تکمیل‌شده در این گزارش
                         </span>
-
-                        {onToggleActionStatus && (
-                          <button
-                            type="button"
-                            onClick={() => onToggleActionStatus(act.id, act.is_completed)}
-                            className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-[10px] font-bold text-slate-800 transition-all cursor-pointer shadow-2xs"
-                          >
-                            {isVerified ? "لغو تایید" : "تایید صحت"}
-                          </button>
-                        )}
                       </div>
                     </div>
                   );

@@ -12,7 +12,6 @@ import {
   Plus,
   Crown,
   Trash2,
-  FileCheck2,
   RefreshCw
 } from "lucide-react";
 import { Project, User } from "../types";
@@ -52,10 +51,9 @@ export default function ProjectNextActionsModal({
   onClose,
   project,
   actions,
-  onToggleStatus,
   onRefresh,
 }: ModalProps) {
-  const [activeTab, setActiveTab] = useState<"all" | "pending" | "claimed" | "completed">("all");
+  const [activeTab, setActiveTab] = useState<"all" | "pending" | "completed">("all");
 
   // فرم افزودن اقدام مدیریتی
   const [showAddForm, setShowAddForm] = useState(false);
@@ -97,27 +95,17 @@ export default function ProjectNextActionsModal({
     if (item.is_completed) {
       if (targetTime !== null && completedTime !== null && completedTime > targetTime) {
         return {
-          label: "تایید مدیر (تحویل با تأخیر)",
+          label: "تکمیل با تاخیر",
           bgColor: "bg-amber-50/80 border-amber-200 text-amber-950",
           badgeColor: "bg-amber-600 text-white",
           icon: <CheckCircle2 className="w-4 h-4 text-amber-600 shrink-0" />,
         };
       }
       return {
-        label: "تایید شده توسط مدیر",
+        label: "تکمیل شده",
         bgColor: "bg-emerald-50/80 border-emerald-200 text-emerald-950",
         badgeColor: "bg-emerald-600 text-white",
         icon: <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />,
-      };
-    }
-
-    // ۲. اعلام انجام توسط پرسنل (در انتظار تایید مدیر)
-    if (item.claimed_completed) {
-      return {
-        label: "اعلام انجام توسط پرسنل (در انتظار تایید)",
-        bgColor: "bg-indigo-50/90 border-indigo-200 text-indigo-950 ring-1 ring-indigo-300",
-        badgeColor: "bg-indigo-600 text-white animate-pulse",
-        icon: <FileCheck2 className="w-4 h-4 text-indigo-600 shrink-0" />,
       };
     }
 
@@ -148,13 +136,11 @@ export default function ProjectNextActionsModal({
     };
   };
 
-  const pendingActions = actions.filter((a) => !a.is_completed && !a.claimed_completed);
-  const claimedActions = actions.filter((a) => !a.is_completed && a.claimed_completed);
+  const pendingActions = actions.filter((a) => !a.is_completed);
   const completedActions = actions.filter((a) => a.is_completed);
 
   const getActiveList = () => {
     if (activeTab === "pending") return pendingActions;
-    if (activeTab === "claimed") return claimedActions;
     if (activeTab === "completed") return completedActions;
     return actions;
   };
@@ -239,7 +225,7 @@ export default function ProjectNextActionsModal({
           <div className="flex items-center justify-between pl-10">
             <div className="flex items-center gap-2 text-emerald-400 text-[11px] font-bold">
               <FolderGit2 className="w-4 h-4" />
-              <span>پایش و تایید اقدامات آتی و ابلاغیه‌های پروژه</span>
+              <span>پایش اقدامات آتی و ابلاغیه‌های پروژه</span>
             </div>
 
             <button
@@ -259,8 +245,9 @@ export default function ProjectNextActionsModal({
           <div className="flex flex-wrap bg-slate-800/80 p-1 rounded-2xl gap-1 pt-1 mt-2 max-w-lg">
             <button
               onClick={() => setActiveTab("all")}
-              className={`py-1.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${activeTab === "all" ? "bg-emerald-600 text-white shadow-xs" : "text-slate-300 hover:text-white"
-                }`}
+              className={`py-1.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === "all" ? "bg-emerald-600 text-white shadow-xs" : "text-slate-300 hover:text-white"
+              }`}
             >
               <span>همه</span>
               <span className="bg-slate-900/60 px-2 py-0.5 rounded-full text-[10px]">
@@ -269,23 +256,10 @@ export default function ProjectNextActionsModal({
             </button>
 
             <button
-              onClick={() => setActiveTab("claimed")}
-              className={`py-1.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${activeTab === "claimed" ? "bg-indigo-600 text-white shadow-xs" : "text-slate-300 hover:text-white"
-                }`}
-            >
-              <span className="flex items-center gap-1">
-                <FileCheck2 className="w-3 h-3 text-indigo-300" />
-                <span>اعلام‌شده (پرسنل)</span>
-              </span>
-              <span className="bg-indigo-900/80 px-2 py-0.5 rounded-full text-[10px] text-indigo-200">
-                {claimedActions.length.toLocaleString("fa-IR")}
-              </span>
-            </button>
-
-            <button
               onClick={() => setActiveTab("pending")}
-              className={`py-1.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${activeTab === "pending" ? "bg-emerald-600 text-white shadow-xs" : "text-slate-300 hover:text-white"
-                }`}
+              className={`py-1.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === "pending" ? "bg-emerald-600 text-white shadow-xs" : "text-slate-300 hover:text-white"
+              }`}
             >
               <span>در جریان</span>
               <span className="bg-slate-900/60 px-2 py-0.5 rounded-full text-[10px]">
@@ -295,10 +269,11 @@ export default function ProjectNextActionsModal({
 
             <button
               onClick={() => setActiveTab("completed")}
-              className={`py-1.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${activeTab === "completed" ? "bg-emerald-600 text-white shadow-xs" : "text-slate-300 hover:text-white"
-                }`}
+              className={`py-1.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === "completed" ? "bg-emerald-600 text-white shadow-xs" : "text-slate-300 hover:text-white"
+              }`}
             >
-              <span>تایید مدیر</span>
+              <span>تکمیل‌شده</span>
               <span className="bg-slate-900/60 px-2 py-0.5 rounded-full text-[10px]">
                 {completedActions.length.toLocaleString("fa-IR")}
               </span>
@@ -454,40 +429,6 @@ export default function ProjectNextActionsModal({
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
-
-                        <div className="flex items-center gap-1.5">
-                          {/* اگر پرسنل ادعای انجام کرده ولی هنوز تایید نشده: مدیر می‌تواند تایید کند یا ادعا را رد کند */}
-                          {item.claimed_completed && !item.is_completed && (
-                            <button
-                              type="button"
-                              onClick={() => onToggleStatus(item.id, false, true)}
-                              className="px-2.5 py-1.5 rounded-xl text-[10px] font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 transition-all cursor-pointer shadow-2xs"
-                              title="رد ادعای پرسنل و بازگرداندن به در جریان"
-                            >
-                              رد ادعا
-                            </button>
-                          )}
-
-                          <button
-                            type="button"
-                            onClick={() => onToggleStatus(item.id, item.is_completed, false)}
-                            className={`px-3 py-1.5 rounded-xl text-[10px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shadow-2xs ${item.is_completed
-                                ? "bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300"
-                                : item.claimed_completed
-                                  ? "bg-emerald-700 hover:bg-emerald-800 text-white shadow-xs"
-                                  : "bg-white hover:bg-slate-100 text-slate-800 border border-slate-300"
-                              }`}
-                          >
-                            <CheckCircle2 className={`w-3.5 h-3.5 ${item.is_completed ? "text-emerald-600" : item.claimed_completed ? "text-white" : "text-slate-400"}`} />
-                            <span>
-                              {item.is_completed
-                                ? "لغو تایید مدیر"
-                                : item.claimed_completed
-                                  ? "تایید صحت عملکرد پرسنل"
-                                  : "تایید و اتمام اقدام"}
-                            </span>
-                          </button>
-                        </div>
                       </div>
                     </div>
                   </div>
@@ -501,8 +442,7 @@ export default function ProjectNextActionsModal({
         <div className="p-3 bg-white border-t border-slate-200 text-[10px] text-slate-500 flex flex-wrap justify-around gap-2 shrink-0">
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-600"></span> گذشته از ددلاین</span>
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-sky-600"></span> در جریان</span>
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-indigo-600"></span> اعلام انجام توسط پرسنل</span>
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-600"></span> تایید شده توسط مدیر</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-600"></span> تکمیل‌شده</span>
         </div>
 
       </div>

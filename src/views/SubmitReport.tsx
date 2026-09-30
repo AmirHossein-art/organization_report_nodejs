@@ -577,9 +577,6 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
                         </span>
                       )}
                     </div>
-                    <p className="text-[11px] text-slate-500 font-medium">
-                      اقداماتی که در این بازه تکمیل و محقق کرده‌اید را علامت بزنید (جهت بررسی و تایید نهایی توسط مدیر).
-                    </p>
                   </div>
 
                   <button
