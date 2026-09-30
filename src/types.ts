@@ -124,6 +124,11 @@ export interface ReportKpiValue {
   id?: number;
   report_id?: number;
   project_kpi_id: number;
+  name?: string;
+  unit?: string;
+  target_value?: number;
+  target_direction?: "minimum" | "maximum";
+  input_type?: "direct" | "percentage_change";
   current_value: number | null;
   baseline_value: number | null;
   calculated_value: number | null;

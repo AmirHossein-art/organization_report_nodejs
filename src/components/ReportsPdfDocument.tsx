@@ -6,7 +6,7 @@ import {
   FileText,
   RefreshCw,
 } from "lucide-react";
-import { Report, ReportPeriod, Project, User } from "../types";
+import { Report, ReportPeriod, Project, User, ProjectKpi } from "../types";
 import { CustomSelect } from "../components";
 import { toPersianDigits } from "../dateUtils";
 
@@ -93,6 +93,7 @@ export default function ReportsPdfDocument({
   const [localPeriods, setLocalPeriods] = useState<ReportPeriod[]>([]);
   const [localProjects, setLocalProjects] = useState<Project[]>([]);
   const [localUsers, setLocalUsers] = useState<User[]>([]);
+  const [localKpis, setLocalKpis] = useState<ProjectKpi[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
 
   const printAreaRef = useRef<HTMLDivElement>(null);
@@ -164,8 +165,9 @@ export default function ReportsPdfDocument({
         needFetchPeriods ? fetch("/api/report-periods").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(periods || []),
         needFetchProjects ? fetch("/api/projects").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(projects || []),
         needFetchUsers ? fetch("/api/users").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(users || []),
+        fetch("/api/project-kpis").then((r) => (r.ok ? r.json() : [])).catch(() => []),
       ])
-        .then(([reps, pers, projs, usrs]) => {
+        .then(([reps, pers, projs, usrs, kps]) => {
           if (Array.isArray(reps)) setLocalReports(reps);
           if (Array.isArray(pers)) {
             setLocalPeriods(pers);
@@ -176,11 +178,21 @@ export default function ReportsPdfDocument({
           }
           if (Array.isArray(projs)) setLocalProjects(projs);
           if (Array.isArray(usrs)) setLocalUsers(usrs);
+          if (Array.isArray(kps)) setLocalKpis(kps);
         })
         .catch((err) => console.error("Error fetching data in PDF modal:", err))
         .finally(() => setLoading(false));
     }
   }, [isOpen, defaultPeriodId]);
+
+  // مپ سریع شاخص‌ها برای دسترسی به نام، واحد و هدف
+  const kpiMap = useMemo(() => {
+    const map: Record<number, ProjectKpi> = {};
+    (localKpis || []).forEach((k) => {
+      map[k.id] = k;
+    });
+    return map;
+  }, [localKpis]);
 
   // لیست فیلترشده و مرتب‌شده بر اساس اولویت پروژه‌ها
   const orderedReports = useMemo(() => {
@@ -209,29 +221,47 @@ export default function ReportsPdfDocument({
     });
   }, [localReports, localProjects, localUsers, selectedPeriodId, selectedProjectId, selectedDeputy]);
 
-  // کمکی برای تفکیک خطوط به بالت‌ها
+  // کمکی برای تفکیک خطوط به بالت‌ها (با شکستن پاراگراف‌های بسیار طولانی جهت جلوگیری از سرریز در صفحه A4)
   const parseBulletPoints = (text: string | null | undefined): string[] => {
     if (!text) return [];
-    return text
+    const lines = text
       .split("\n")
       .map((l) => l.trim())
       .filter(Boolean)
       .map((l) => l.replace(/^([•\-\*\d+\.\s\u06F0-\u06F9\.\-\–\—])+\s*/, "").trim())
       .filter((l) => l.length > 0);
+
+    const result: string[] = [];
+    lines.forEach((line) => {
+      // اگر یک پاراگراف بدون اینتر طولانی باشد (بیش از ۴۲۰ کاراکتر)，
+      // آن را بر اساس علائم نگارشی به جملات کوچکتر تفکیک کن تا در صورت لزوم بین صفحات بشکند
+      if (line.length > 220) {
+        const sentences = line.split(/(?<=[.!?؛؟\n])\s+/).filter((s) => s.trim().length > 0);
+        if (sentences.length > 1) {
+          result.push(...sentences);
+          return;
+        }
+      }
+      result.push(line);
+    });
+    return result;
   };
 
   // الگوریتم صفحه‌بندی هوشمند: چند گزارش کوتاه در یک صفحه، گزارش‌های بلند به چند صفحه
   const paginatedReportPages = useMemo(() => {
     const pages: ReportPageData[] = [];
-    const MAX_PAGE_LINES = 68; // گنجایش واقعی تعداد خطوط در یک صفحه A4
+    const MAX_PAGE_LINES = 48; // گنجایش واقعی تعداد خطوط در یک صفحه استاندارد A4 با احتساب هدر و فوتر
+    const BLOCK_OVERHEAD_LINES = 5; // هزینه عنوان پروژه، کادر و حاشیه‌ها
+    const BLOCK_GAP_LINES = 2; // فاصله بین دو گزارش در یک صفحه مشترک
+    const MAX_PAGE_CONTENT_LINES = MAX_PAGE_LINES - BLOCK_OVERHEAD_LINES; // گنجایش محتوای متنی در هر صفحه (۳۳ خط)
 
     const estimateItemLines = (text: string): number => {
       if (!text) return 1;
       const len = text.length;
-      if (len <= 85) return 1.1;
-      if (len <= 170) return 2.1;
-      if (len <= 255) return 3.1;
-      return Math.max(1, Math.ceil(len / 85)) + 0.1;
+      // هر خط استاندارد در عرض کارت A4 حدود ۷۵ کاراکتر است
+      // به همراه فاصله عمودی هر آیتم
+      const lines = Math.max(1, Math.ceil(len / 75));
+      return lines + 0.35;
     };
 
     // هزینه هر گزارش به خطوط معادل صفحه‌ای
@@ -249,6 +279,63 @@ export default function ReportsPdfDocument({
             date: na.target_date_raw || (na.target_date ? formatPersianDate(na.target_date) : null),
           }))
           : [];
+
+      // ایجاد بخش ۳: شاخص‌های کلیدی عملکرد (KPI)
+      const kpisList: Array<{ text: string }> = [];
+      if (report.kpiValues && report.kpiValues.length > 0) {
+        report.kpiValues.forEach((kv) => {
+          const kpiMeta = kv.name ? kv : (kpiMap[kv.project_kpi_id] || kv);
+          const kpiName = kpiMeta?.name || "شاخص";
+          const unit = kpiMeta?.unit ? ` ${kpiMeta.unit}` : "";
+          const targetVal = kpiMeta?.target_value;
+          const targetDir = kpiMeta?.target_direction;
+          const targetDirLabel = targetDir === "minimum" ? "حداقل" : "حداکثر";
+          const baselineVal = kv.baseline_value ?? kpiMeta?.baseline_value;
+          const inputType = kpiMeta?.input_type || "direct";
+
+          if (kv.not_measured) {
+            kpisList.push({
+              text: `${kpiName}: اندازه‌گیری نشده (${kv.missing_reason || "ثبت نشده در این دوره"})`,
+            });
+          } else if (inputType === "percentage_change") {
+            const calc = kv.calculated_value !== null && kv.calculated_value !== undefined
+              ? `${toPersianDigits(Number(kv.calculated_value).toFixed(1))}٪`
+              : "—";
+            const base = baselineVal !== null && baselineVal !== undefined
+              ? `مبنا: ${toPersianDigits(baselineVal)}٪`
+              : null;
+            const target = targetVal !== null && targetVal !== undefined
+              ? `هدف: ${targetDirLabel} ${toPersianDigits(targetVal)}٪`
+              : null;
+            const metaParts = [base, target].filter(Boolean).join(" | ");
+            kpisList.push({
+              text: `${kpiName}: ${calc}${metaParts ? ` (${metaParts})` : ""}`,
+            });
+          } else {
+            const current = kv.current_value !== null && kv.current_value !== undefined
+              ? `${toPersianDigits(kv.current_value)}${unit}`
+              : "—";
+            const base = baselineVal !== null && baselineVal !== undefined
+              ? `مبنا: ${toPersianDigits(baselineVal)}${unit}`
+              : null;
+            const target = targetVal !== null && targetVal !== undefined
+              ? `هدف: ${targetDirLabel} ${toPersianDigits(targetVal)}${unit}`
+              : null;
+            let growthStr = "";
+            if (kv.current_value !== null && kv.current_value !== undefined && baselineVal !== null && baselineVal !== undefined) {
+              const diff = Number(kv.current_value) - Number(baselineVal);
+              const sign = diff > 0 ? "+" : "";
+              growthStr = ` [رشد: ${sign}${toPersianDigits(diff.toFixed(2))}${unit}]`;
+            }
+            const metaParts = [base, target].filter(Boolean).join(" | ");
+            kpisList.push({
+              text: `${kpiName}: ${current}${metaParts ? ` (${metaParts})` : ""}${growthStr}`,
+            });
+          }
+        });
+      } else if (report.kpi_text && report.kpi_text.trim()) {
+        kpisList.push({ text: report.kpi_text.trim() });
+      }
 
       // ایجاد بخش‌های خام
       const rawSections: Array<{ heading: string; items: Array<{ text: string; date?: string | null }> }> = [];
@@ -279,9 +366,22 @@ export default function ReportsPdfDocument({
         });
       }
 
+      // بخش ۳: شاخص‌های کلیدی عملکرد (اگر ثبت شده بود نمایش مقادیر، اگر ثبت نشده بود درج پیام شفاف)
+      if (kpisList.length > 0) {
+        rawSections.push({
+          heading: ".۳ شاخص‌های کلیدی عملکرد (KPI):",
+          items: kpisList,
+        });
+      } else {
+        rawSections.push({
+          heading: ".۳ شاخص‌های کلیدی عملکرد (KPI):",
+          items: [{ text: "شاخص‌های عملکردی برای این دوره ثبت نشده است." }],
+        });
+      }
+
       let totalLinesInReport = 0;
       rawSections.forEach((sec) => {
-        totalLinesInReport += 1.3; // عنوان بخش
+        totalLinesInReport += 1.4; // عنوان بخش
         sec.items.forEach((item) => {
           totalLinesInReport += estimateItemLines(item.text);
         });
@@ -290,7 +390,7 @@ export default function ReportsPdfDocument({
       return { rawSections, totalLinesInReport };
     };
 
-    // ساخت بلوک‌های صفحات یک گزارش طولانی (به همان روش قبلی)
+    // ساخت بلوک‌های صفحات یک گزارش طولانی
     const splitLongReport = (
       report: Report,
       rawSections: Array<{ heading: string; items: Array<{ text: string; date?: string | null }> }>
@@ -303,10 +403,10 @@ export default function ReportsPdfDocument({
       rawSections.forEach((section) => {
         if (section.items.length === 0) return;
 
-        const headingLines = 1.3;
+        const headingLines = 1.4;
 
         if (
-          currentLines + headingLines + estimateItemLines(section.items[0].text) > MAX_PAGE_LINES &&
+          currentLines + headingLines + estimateItemLines(section.items[0].text) > MAX_PAGE_CONTENT_LINES &&
           currentPageSections.length > 0
         ) {
           blocks.push({
@@ -321,7 +421,7 @@ export default function ReportsPdfDocument({
         }
 
         let currentSection: PageSection = {
-          heading: section.heading,
+          heading: isContinuation && currentPageSections.length === 0 ? `${section.heading} (ادامه)` : section.heading,
           items: [],
         };
         currentLines += headingLines;
@@ -330,7 +430,7 @@ export default function ReportsPdfDocument({
           const l = estimateItemLines(item.text);
 
           if (
-            currentLines + l > MAX_PAGE_LINES &&
+            currentLines + l > MAX_PAGE_CONTENT_LINES &&
             (currentSection.items.length > 0 || currentPageSections.length > 0)
           ) {
             if (currentSection.items.length > 0) {
@@ -348,7 +448,7 @@ export default function ReportsPdfDocument({
             currentLines = headingLines;
             isContinuation = true;
             currentSection = {
-              heading: section.heading + " (ادامه)",
+              heading: `${section.heading} (ادامه)`,
               items: [],
             };
           }
@@ -374,11 +474,6 @@ export default function ReportsPdfDocument({
       return blocks;
     };
 
-    // هزینه اضافی هر بلوک پروژه روی صفحه (عنوان + قاب + فاصله‌ها)
-    const BLOCK_OVERHEAD_LINES = 6.5;
-    // فاصله بین دو گزارش در یک صفحه مشترک
-    const BLOCK_GAP_LINES = 2;
-
     let currentPage: ReportPageData = { blocks: [] };
     let currentPageLines = 0;
 
@@ -394,7 +489,7 @@ export default function ReportsPdfDocument({
       const { rawSections, totalLinesInReport } = measureReport(report);
 
       if (rawSections.length === 0) {
-        // گزارش خالی: بلوک ساده (کادر «موردی ثبت نشده») در صفحه جاری
+        // گزارش خالی: بلوک ساده در صفحه جاری
         const emptyBlockCost = BLOCK_OVERHEAD_LINES + 2;
         if (currentPageLines + emptyBlockCost > MAX_PAGE_LINES) {
           flushPage();
@@ -410,7 +505,7 @@ export default function ReportsPdfDocument({
       }
 
       // گزارشی که کلش در یک صفحه جا می‌شود: در صورت امکان به صفحه جاری اضافه شود
-      if (totalLinesInReport <= MAX_PAGE_LINES) {
+      if (totalLinesInReport + BLOCK_OVERHEAD_LINES <= MAX_PAGE_LINES) {
         const blockCost =
           BLOCK_OVERHEAD_LINES + totalLinesInReport + (currentPage.blocks.length > 0 ? BLOCK_GAP_LINES : 0);
 
@@ -435,7 +530,7 @@ export default function ReportsPdfDocument({
         return;
       }
 
-      // گزارش بسیار طولانی: صفحه جاری بسته شود و گزارش روی صفحات جدید شکسته شود
+      // گزارش بسیار طولانی است: صفحه جاری بسته شود و گزارش روی صفحات متعدد شکسته شود
       flushPage();
       splitLongReport(report, rawSections).forEach((block) => {
         pages.push({ blocks: [block] });

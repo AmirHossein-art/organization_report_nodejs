@@ -486,8 +486,13 @@ function serializeReport(report: any) {
       ? report.kpiValues.map((v: any) => ({
         id: v.id,
         project_kpi_id: v.project_kpi_id,
+        name: v.kpi?.name,
+        unit: v.kpi?.unit,
+        target_value: v.kpi?.target_value,
+        target_direction: v.kpi?.target_direction,
+        input_type: v.kpi?.input_type,
         current_value: v.current_value,
-        baseline_value: v.baseline_value,
+        baseline_value: v.baseline_value ?? v.kpi?.baseline_value,
         calculated_value: v.calculated_value,
         not_measured: v.not_measured,
         missing_reason: v.missing_reason,
@@ -1660,7 +1665,9 @@ app.get("/api/reports", authenticate, async (req: any, res) => {
         files: true,
         nextActions: true,
         achievedActions: true,
-        kpiValues: true
+        kpiValues: {
+          include: { kpi: true }
+        }
       },
       orderBy: { id: "desc" }
     });
@@ -2187,7 +2194,9 @@ app.get("/api/reports/:id/pdf-data", authenticate, async (req: any, res) => {
         files: true,
         nextActions: true,
         achievedActions: true,
-        kpiValues: true,
+        kpiValues: {
+          include: { kpi: true }
+        },
       },
     });
 
@@ -2233,7 +2242,9 @@ app.get("/api/reports/pdf-data/all", authenticate, async (req: any, res) => {
         files: true,
         nextActions: true,
         achievedActions: true,
-        kpiValues: true,
+        kpiValues: {
+          include: { kpi: true }
+        },
       },
       orderBy: [
         { period: { period_start: "asc" } },
