@@ -12,7 +12,8 @@ import {
   ArrowUp,
   ArrowDown,
   Power,
-  PowerOff
+  PowerOff,
+  GripVertical,
 } from "lucide-react";
 import { Project, User } from "../types";
 import { CustomSelect } from "../components";
@@ -78,6 +79,52 @@ export default function ManageProjects({
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pdfModalOpen, setPdfModalOpen] = useState<boolean>(false);
+
+  // --- وضعیت‌های کشیدن و رها کردن (Drag and Drop) ---
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    setDraggedIndex(index);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", index.toString());
+  };
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (dragOverIndex !== index) {
+      setDragOverIndex(index);
+    }
+  };
+
+  const handleDrop = async (e: React.DragEvent, targetIndex: number) => {
+    e.preventDefault();
+    if (draggedIndex === null || draggedIndex === targetIndex) {
+      setDraggedIndex(null);
+      setDragOverIndex(null);
+      return;
+    }
+
+    const newProjects = [...projects];
+    const [moved] = newProjects.splice(draggedIndex, 1);
+    newProjects.splice(targetIndex, 0, moved);
+
+    setDraggedIndex(null);
+    setDragOverIndex(null);
+
+    const orderedIds = newProjects.map((p) => p.id);
+    try {
+      const res = await fetch("/api/projects/reorder", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ordered_ids: orderedIds }),
+      });
+      if (res.ok && onRefresh) onRefresh();
+    } catch (e) {
+      console.error("Error reordering projects via drag & drop:", e);
+    }
+  };
 
   // 🔢 توابع جابجایی و مرتب‌سازی پروژه‌ها برای خروجی
   const handleMoveProject = async (index: number, direction: "up" | "down") => {
@@ -441,11 +488,32 @@ export default function ManageProjects({
               <div className="p-8 text-center text-slate-400">هیچ پروژه‌ای ثبت نشده است.</div>
             ) : (
               projects.map((proj, idx) => (
-                <div key={proj.id} className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 hover:bg-slate-50/50 transition-colors">
+                <div
+                  key={proj.id}
+                  draggable={true}
+                  onDragStart={(e) => handleDragStart(e, idx)}
+                  onDragOver={(e) => handleDragOver(e, idx)}
+                  onDrop={(e) => handleDrop(e, idx)}
+                  className={`p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 transition-all select-none ${
+                    draggedIndex === idx ? "opacity-30 bg-slate-100 ring-2 ring-emerald-400 rounded-xl" : "hover:bg-slate-50/70"
+                  } ${dragOverIndex === idx ? "border-t-2 border-emerald-500" : ""}`}
+                >
                   <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="w-5 h-5 rounded-full bg-slate-900 text-white font-bold text-[10px] flex items-center justify-center font-sans shrink-0">
-                        {proj.order_index || idx + 1}
+                    <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                      {/* دستگیره Drag and Drop */}
+                      <div
+                        className="cursor-grab active:cursor-grabbing p-1 -mr-1 text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 rounded transition-colors shrink-0"
+                        title="برای تغییر ترتیب، بگیرید و بکشید (Drag & Drop)"
+                      >
+                        <GripVertical className="w-4 h-4" />
+                      </div>
+
+                      {/* ردیف ترتیبی مستمر لیست (بدون تکرار) */}
+                      <span
+                        className="w-5 h-5 rounded-full bg-slate-900 text-white font-bold text-[10px] flex items-center justify-center font-sans shrink-0"
+                        title={`ردیف ${toPersianDigits(idx + 1)}`}
+                      >
+                        {toPersianDigits(idx + 1)}
                       </span>
                       <h4 className={`font-bold text-sm ${proj.is_active ? "text-slate-900" : "text-slate-400 line-through"}`}>
                         {proj.title}
@@ -491,7 +559,7 @@ export default function ManageProjects({
                                 className="inline-flex items-center gap-1 text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200/80 px-2.5 py-0.5 rounded-full cursor-pointer hover:bg-emerald-100 transition-colors"
                                 title={`مسئول نظارت: ${u.full_name} (${u.job_title || ""}) - کلیک برای تغییر تخصیص`}
                               >
-                                <span>👤 {u.full_name}</span>
+                                <span> {u.full_name}</span>
                                 {u.job_title && <span className="text-emerald-600 font-normal">({u.job_title})</span>}
                               </span>
                             ))}

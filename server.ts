@@ -938,12 +938,19 @@ app.post("/api/projects", authenticate, requireManager, uploadWBS.single("wbs_fi
       return res.status(400).json({ error: "کد پروژه تکراری است." });
     }
 
+    const maxProject = await prisma.project.findFirst({
+      orderBy: { order_index: "desc" },
+      select: { order_index: true },
+    });
+    const nextOrderIndex = (maxProject?.order_index ?? 0) + 1;
+
     const newProject = await prisma.project.create({
       data: {
         code: code.trim(),
         title: title.trim(),
         description: description ? description.trim() : null,
         project_type: project_type === "monthly" ? "monthly" : "weekly",
+        order_index: nextOrderIndex,
         wbs_file_name: file ? file.originalname : null,
         wbs_storage_filename: file ? file.filename : null,
       },

@@ -13,7 +13,6 @@ import {
   Target,
   ChevronRight,
   ChevronLeft,
-  FolderGit2,
 } from "lucide-react";
 import { User } from "../types";
 
@@ -50,6 +49,7 @@ export default function Sidebar({ user, currentView, setCurrentView, onLogout }:
     setMobileMenuOpen(false);
   };
 
+  const isProjectsActive = currentView === "manage_projects" || currentView === "project_allocations";
   const isCalendarActive = currentView === "report_periods" || currentView === "deadline_settings";
   const isKpiActive =
     currentView === "project_kpis" ||
@@ -165,21 +165,11 @@ export default function Sidebar({ user, currentView, setCurrentView, onLogout }:
                   <button
                     onClick={() => handleNavClick("manage_projects")}
                     className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-2xl text-sm font-semibold transition-colors text-right cursor-pointer ${
-                      currentView === "manage_projects" ? "bg-white/10 text-amber-400 font-bold" : "hover:bg-white/5 text-slate-300"
+                      isProjectsActive ? "bg-white/10 text-amber-400 font-bold" : "hover:bg-white/5 text-slate-300"
                     }`}
                   >
                     <Folder className="w-5 h-5 shrink-0" />
-                    <span>مدیریت پروژه‌ها</span>
-                  </button>
-
-                  <button
-                    onClick={() => handleNavClick("project_allocations")}
-                    className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-2xl text-sm font-semibold transition-colors text-right cursor-pointer ${
-                      currentView === "project_allocations" ? "bg-white/10 text-amber-400 font-bold" : "hover:bg-white/5 text-slate-300"
-                    }`}
-                  >
-                    <FolderGit2 className="w-5 h-5 shrink-0 text-emerald-400" />
-                    <span>تخصیص پروژه به پرسنل</span>
+                    <span>مدیریت و تخصیص پروژه‌ها</span>
                   </button>
 
                   <button
@@ -350,24 +340,13 @@ export default function Sidebar({ user, currentView, setCurrentView, onLogout }:
 
               <button
                 onClick={() => handleNavClick("manage_projects")}
-                title="مدیریت پروژه‌ها"
+                title="مدیریت و تخصیص پروژه‌ها"
                 className={`w-full flex items-center ${isCollapsed ? "justify-center px-0 py-3" : "gap-3 px-3.5 py-3"} rounded-2xl text-sm font-semibold transition-colors cursor-pointer ${
-                  currentView === "manage_projects" ? "bg-white/10 text-amber-400 font-bold shadow-xs" : "hover:bg-white/5 hover:text-white"
+                  isProjectsActive ? "bg-white/10 text-amber-400 font-bold shadow-xs" : "hover:bg-white/5 hover:text-white"
                 }`}
               >
                 <Folder className="w-5 h-5 shrink-0" />
-                {!isCollapsed && <span>مدیریت پروژه‌ها</span>}
-              </button>
-
-              <button
-                onClick={() => handleNavClick("project_allocations")}
-                title="تخصیص پروژه به پرسنل"
-                className={`w-full flex items-center ${isCollapsed ? "justify-center px-0 py-3" : "gap-3 px-3.5 py-3"} rounded-2xl text-sm font-semibold transition-colors cursor-pointer ${
-                  currentView === "project_allocations" ? "bg-white/10 text-amber-400 font-bold shadow-xs" : "hover:bg-white/5 hover:text-white"
-                }`}
-              >
-                <FolderGit2 className="w-5 h-5 shrink-0 text-emerald-400" />
-                {!isCollapsed && <span>تخصیص پروژه به پرسنل</span>}
+                {!isCollapsed && <span>مدیریت و تخصیص پروژه‌ها</span>}
               </button>
 
               {/* هاب تقویم و مهلت‌های گزارش‌دهی */}

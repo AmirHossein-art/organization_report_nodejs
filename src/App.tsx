@@ -11,10 +11,9 @@ import HomeDashboard from "./views/HomeDashboard";
 import SubmitReport from "./views/SubmitReport";
 import MyReports from "./views/MyReports";
 import ManagerDashboard from "./views/ManagerDashboard";
-import ManageProjects from "./views/ManageProjects";
+import ManageProjectsHub from "./views/ManageProjectsHub";
 import ManageUsers from "./views/ManageUsers";
 import ReportPeriods from "./views/ReportPeriods";
-import ProjectAllocations from "./views/ProjectAllocations";
 import ProjectKpiHub from "./views/ProjectKpiHub";
 
 export default function App() {
@@ -185,16 +184,13 @@ export default function App() {
             {currentView === "manager_dashboard" && (
               <ManagerDashboard periods={periods} projects={projects} users={users} />
             )}
-            {currentView === "manage_projects" && (
-              <ManageProjects
+            {(currentView === "manage_projects" || currentView === "project_allocations") && (
+              <ManageProjectsHub
                 projects={projects}
                 users={users}
                 onRefresh={fetchData}
-                onNavigateToAllocations={() => setCurrentView("project_allocations")}
+                initialTab={currentView === "project_allocations" ? "allocations" : "projects"}
               />
-            )}
-            {currentView === "project_allocations" && (
-              <ProjectAllocations users={users} projects={projects} />
             )}
             {(currentView === "report_periods" || currentView === "deadline_settings") && (
               <ReportPeriods
