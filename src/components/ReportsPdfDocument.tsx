@@ -144,7 +144,7 @@ export default function ReportsPdfDocument({
     return localPeriods.filter((p) => periodIdsInReports.has(p.id));
   }, [localPeriods, localReports, isManager]);
 
-  // بارگذاری داده‌ها هنگام باز شدن مودال
+  // بارگذاری داده‌ها هنگام باز شدن مودال — با اولویت نمایش بلادرنگ و کش محلی
   useEffect(() => {
     if (!isOpen) {
       isFetchingRef.current = false;
@@ -155,32 +155,40 @@ export default function ReportsPdfDocument({
       setSelectedPeriodId(defaultPeriodId);
     }
 
-    // همگام‌سازی سریع داده‌های دریافت شده از طریق Props
-    if (reports && reports.length > 0) setLocalReports(reports);
-    if (periods && periods.length > 0) {
+    // ۱. همگام‌سازی بلادرنگ داده‌های ارسال‌شده از صفحه والد (نمایش بدون ۱ میلی‌ثانیه تاخیر)
+    const hasPropsReports = Array.isArray(reports) && reports.length > 0;
+    const hasPropsPeriods = Array.isArray(periods) && periods.length > 0;
+    const hasPropsProjects = Array.isArray(projects) && projects.length > 0;
+    const hasPropsUsers = Array.isArray(users) && users.length > 0;
+
+    if (hasPropsReports) setLocalReports(reports);
+    if (hasPropsPeriods) {
       setLocalPeriods(periods);
       if (defaultPeriodId === undefined) {
         const openPeriod = periods.find((p: any) => p.is_open) || periods[0];
         if (openPeriod) setSelectedPeriodId(openPeriod.id);
       }
     }
-    if (projects && projects.length > 0) setLocalProjects(projects);
-    if (users && users.length > 0) setLocalUsers(users);
+    if (hasPropsProjects) setLocalProjects(projects);
+    if (hasPropsUsers) setLocalUsers(users);
 
-    const needFetchReports = !reports || reports.length === 0;
-    const needFetchPeriods = !periods || periods.length === 0;
-    const needFetchProjects = !projects || projects.length === 0;
-    const needFetchUsers = !users || users.length === 0;
+    // تنها در صورتی که هیچ گزارشی از قبل موجود نباشد لودینگ نمایش داده می‌شود
+    if (!hasPropsReports && localReports.length === 0) {
+      setLoading(true);
+    }
 
-    // بارگذاری داده‌های مستقل و الزامی (اقدامات آتی و شاخص‌های پروژه) در هر بار باز شدن مودال
-    setLoading(true);
+    // جلوگیری از ارسال مکرر درخواست‌های همزمان به سرور Railway
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+
+    // واکشی موازی داده‌های تکمیلی بدون بلاک کردن نمایش گزارش‌ها
     Promise.all([
-      needFetchReports ? fetch("/api/reports").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(reports || []),
-      needFetchPeriods ? fetch("/api/report-periods").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(periods || []),
-      needFetchProjects ? fetch("/api/projects").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(projects || []),
-      needFetchUsers ? fetch("/api/users").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(users || []),
-      fetch("/api/project-kpis").then((r) => (r.ok ? r.json() : [])).catch(() => []),
-      fetch("/api/next-actions").then((r) => (r.ok ? r.json() : [])).catch(() => []),
+      !hasPropsReports && localReports.length === 0 ? fetch("/api/reports").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(null),
+      !hasPropsPeriods && localPeriods.length === 0 ? fetch("/api/report-periods").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(null),
+      !hasPropsProjects && localProjects.length === 0 ? fetch("/api/projects").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(null),
+      !hasPropsUsers && localUsers.length === 0 ? fetch("/api/users").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(null),
+      localKpis.length === 0 ? fetch("/api/project-kpis").then((r) => (r.ok ? r.json() : [])).catch(() => []) : Promise.resolve(null),
+      localNextActions.length === 0 ? fetch("/api/next-actions").then((r) => (r.ok ? r.json() : [])).catch(() => []) : Promise.resolve(null),
     ])
       .then(([reps, pers, projs, usrs, kps, acts]) => {
         if (Array.isArray(reps)) setLocalReports(reps);
@@ -193,12 +201,12 @@ export default function ReportsPdfDocument({
         }
         if (Array.isArray(projs)) setLocalProjects(projs);
         if (Array.isArray(usrs)) setLocalUsers(usrs);
-        if (Array.isArray(kps)) setLocalKpis(kps);
-        if (Array.isArray(acts)) setLocalNextActions(acts);
+        if (Array.isArray(kps) && kps.length > 0) setLocalKpis(kps);
+        if (Array.isArray(acts) && acts.length > 0) setLocalNextActions(acts);
       })
-      .catch((err) => console.error("Error fetching data in PDF modal:", err))
+      .catch((err) => console.error("Error fetching supplemental PDF data:", err))
       .finally(() => setLoading(false));
-  }, [isOpen, defaultPeriodId, reports, periods, projects, users]);
+  }, [isOpen, defaultPeriodId]);
 
   // نقشه‌بندی اقدامات آتی تعریف‌شده به تفکیک پروژه
   const projectActionsMap = useMemo(() => {
@@ -280,7 +288,7 @@ export default function ReportsPdfDocument({
   // الگوریتم صفحه‌بندی هوشمند: چند گزارش کوتاه در یک صفحه، گزارش‌های بلند به چند صفحه
   const paginatedReportPages = useMemo(() => {
     const pages: ReportPageData[] = [];
-    const MAX_PAGE_LINES = 48; // گنجایش واقعی تعداد خطوط در یک صفحه استاندارد A4 با احتساب هدر و فوتر
+    const MAX_PAGE_LINES = 38; // گنجایش کاملاً استاندارد و بدون سرریز در هر برگ A4
     const BLOCK_OVERHEAD_LINES = 5; // هزینه عنوان پروژه، کادر و حاشیه‌ها
     const BLOCK_GAP_LINES = 2; // فاصله بین دو گزارش در یک صفحه مشترک
     const MAX_PAGE_CONTENT_LINES = MAX_PAGE_LINES - BLOCK_OVERHEAD_LINES; // گنجایش محتوای متنی در هر صفحه (۳۳ خط)
@@ -622,25 +630,39 @@ export default function ReportsPdfDocument({
 
   const reportTypeName = activePeriod?.report_type === "monthly" ? "گزارش ماهانه" : "گزارش هفتگی";
 
-  // پرینت خروجی PDF با تمپلیت استاندارد سایز A4
+  // پرینت خروجی PDF با تمپلیت استاندارد سایز A4 بدون سرریز و با لود آنی
   const handlePrint = () => {
     if (!printAreaRef.current) return;
     const content = printAreaRef.current.innerHTML;
 
-    // استخراج تمامی استایل‌های موجود در سند (Tailwind CSS و فونت‌ها)
-    const existingStyles = Array.from(
-      document.querySelectorAll("link[rel='stylesheet'], style")
-    )
-      .map((el) => el.outerHTML)
-      .join("\n");
+    // استخراج تمامی کدهای CSS کامپایل‌شده اپلیکیشن بدون نیاز به دانلود مجدد شبکه
+    let combinedCss = "";
+    Array.from(document.styleSheets).forEach((sheet) => {
+      try {
+        const rules = sheet.cssRules || sheet.rules;
+        if (rules) {
+          for (let i = 0; i < rules.length; i++) {
+            combinedCss += rules[i].cssText + "\n";
+          }
+        }
+      } catch (e) {
+        // نادیده گرفتن استایل‌های cross-origin
+      }
+    });
+
+    // پاک‌سازی پرینت‌فریم قبلی در صورت وجود
+    const existingFrame = document.getElementById("reports-a4-print-iframe");
+    if (existingFrame) existingFrame.remove();
 
     const printFrame = document.createElement("iframe");
+    printFrame.id = "reports-a4-print-iframe";
     printFrame.style.position = "fixed";
     printFrame.style.right = "0";
     printFrame.style.bottom = "0";
     printFrame.style.width = "0";
     printFrame.style.height = "0";
     printFrame.style.border = "0";
+    printFrame.style.visibility = "hidden";
     document.body.appendChild(printFrame);
 
     const doc = printFrame.contentWindow?.document;
@@ -652,22 +674,26 @@ export default function ReportsPdfDocument({
       <html dir="rtl" lang="fa">
       <head>
         <meta charset="utf-8">
+        <base href="${window.location.origin}">
         <title>گزارش پروژه‌های استراتژیک - ${formatPersianDateTime(new Date())}</title>
-        <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css" />
-        ${existingStyles}
         <style>
+          ${combinedCss}
+
+          /* تنظیمات قطعی پرینتر مرورگر بدون ایجاد صفحات سفید مازاد */
           * {
             box-sizing: border-box !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
             color-adjust: exact !important;
           }
+
           @page {
             size: A4 portrait;
             margin: 0 !important;
           }
+
           html, body {
-            width: 210mm !important;
+            width: 100% !important;
             margin: 0 !important;
             padding: 0 !important;
             background-color: #ffffff !important;
@@ -675,49 +701,76 @@ export default function ReportsPdfDocument({
             direction: rtl !important;
             text-align: right !important;
             color: #0f172a !important;
-            font-size: 11px !important;
-            line-height: 1.5 !important;
+            font-size: 10.5px !important;
+            line-height: 1.45 !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
           }
 
-          /* ساختار دقیق صفحه استاندارد A4 بدون ایجاد صفحات سفید مازاد */
+          /* حذف مارجین‌های space-y-6 در هنگام چاپ */
+          #printable-pdf-document, .space-y-6 {
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+          #printable-pdf-document > :not([hidden]) ~ :not([hidden]),
+          .space-y-6 > :not([hidden]) ~ :not([hidden]) {
+            margin-top: 0 !important;
+            margin-bottom: 0 !important;
+          }
+
+          /* هر صفحه A4 با ارتفاع ایمن ۲۷۸ میلی‌متر:
+             تضمین می‌کند حتی با مارجین‌های سخت‌افزاری پرینتر یا هدر/فوتر مرورگر،
+             ارتفاع از ۲۹۷ میلی‌متر تجاوز نکند و هیچ صفحه سفیدی تولید نشود */
           .pdf-page-container {
-            width: 210mm !important;
-            height: 295mm !important;
-            min-height: 295mm !important;
-            max-height: 295mm !important;
-            padding: 10mm 12mm 8mm 12mm !important;
+            width: 100% !important;
+            max-width: 210mm !important;
+            height: 278mm !important;
+            min-height: 278mm !important;
+            max-height: 278mm !important;
+            padding: 8mm 12mm 6mm 12mm !important;
             margin: 0 auto !important;
             position: relative !important;
             display: flex !important;
             flex-direction: column !important;
             justify-content: space-between !important;
+            overflow: hidden !important;
+            border: none !important;
+            border-radius: 0 !important;
+            box-shadow: none !important;
+            background-color: #ffffff !important;
+            box-sizing: border-box !important;
+            page-break-before: auto !important;
+            break-before: auto !important;
             page-break-after: always !important;
             break-after: page !important;
             page-break-inside: avoid !important;
             break-inside: avoid !important;
-            background-color: #ffffff !important;
-            box-sizing: border-box !important;
-            overflow: hidden !important;
           }
 
+          /* صفحه اول هرگز صفحه سفید قبل از خود نخواهد داشت */
+          .pdf-page-container:first-child {
+            page-break-before: avoid !important;
+            break-before: avoid !important;
+            margin-top: 0 !important;
+          }
+
+          /* صفحه آخر هرگز برگه سفید مازاد بعد از خود ایجاد نمی‌کند */
           .pdf-page-container:last-child {
             page-break-after: auto !important;
             break-after: auto !important;
           }
 
-          /* استایل‌های تضمینی جدول شاخص‌ها و نشانگرها */
+          /* استایل‌های قطعی جدول شاخص‌ها */
           .kpi-matrix-table {
             width: 100% !important;
             border-collapse: collapse !important;
             border: 1px solid #cbd5e1 !important;
-            font-size: 10px !important;
+            font-size: 9.5px !important;
             line-height: 1.25 !important;
           }
           .kpi-matrix-table th, .kpi-matrix-table td {
             border: 1px solid #cbd5e1 !important;
-            padding: 4px 6px !important;
+            padding: 3.5px 5px !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
           }
@@ -727,169 +780,171 @@ export default function ReportsPdfDocument({
             font-weight: bold !important;
           }
 
-          /* صفحه اول / کاور استارتر */
+          /* صفحه کاور اول با پس‌زمینه سبز تیره و تناسب ابعاد */
           .cover-page-box {
-            background-color: #55913e;
-            border-radius: 20px;
-            width: 100%;
-            height: 100%;
-            padding: 44px 36px 36px 36px;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            color: #ffffff;
-            box-sizing: border-box;
+            background-color: #55913e !important;
+            border-radius: 16px !important;
+            width: 100% !important;
+            height: 100% !important;
+            padding: 28px 24px !important;
+            display: flex !important;
+            flex-direction: column !important;
+            justify-content: space-between !important;
+            color: #ffffff !important;
+            box-sizing: border-box !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
 
           .cover-subtitle {
-            font-size: 20px;
-            font-weight: 700;
-            color: #ffffff;
-            margin-bottom: 6px;
+            font-size: 18px !important;
+            font-weight: 700 !important;
+            color: #ffffff !important;
+            margin-bottom: 4px !important;
           }
 
           .cover-title {
-            font-size: 30px;
-            font-weight: 900;
-            color: #ffffff;
-            letter-spacing: -0.5px;
-            margin-bottom: 24px;
+            font-size: 26px !important;
+            font-weight: 900 !important;
+            color: #ffffff !important;
+            letter-spacing: -0.5px !important;
+            margin-bottom: 14px !important;
           }
 
           .cover-divider {
-            width: 100%;
-            height: 2px;
-            background-color: rgba(255, 255, 255, 0.85);
-            margin-bottom: 40px;
+            width: 100% !important;
+            height: 2px !important;
+            background-color: rgba(255, 255, 255, 0.85) !important;
+            margin-bottom: 24px !important;
           }
 
           .cover-center {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            text-align: center;
-            margin: auto 0;
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: center !important;
+            justify-content: center !important;
+            text-align: center !important;
+            margin: auto 0 !important;
           }
 
           .cover-logo-circle {
-            background-color: #ffffff;
-            border-radius: 50%;
-            width: 145px;
-            height: 145px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-bottom: 26px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+            background-color: #ffffff !important;
+            border-radius: 50% !important;
+            width: 120px !important;
+            height: 120px !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            margin-bottom: 18px !important;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1) !important;
           }
 
           .cover-logo-circle img {
-            width: 100px;
-            height: 100px;
-            object-fit: contain;
+            width: 80px !important;
+            height: 80px !important;
+            object-fit: contain !important;
           }
 
           .cover-org-title {
-            font-size: 21px;
-            font-weight: 800;
-            color: #ffffff;
+            font-size: 18px !important;
+            font-weight: 800 !important;
+            color: #ffffff !important;
           }
 
           .cover-bottom-date {
-            font-size: 16px;
-            font-weight: 700;
-            color: #ffffff;
-            text-align: right;
-            padding-right: 8px;
+            font-size: 14px !important;
+            font-weight: 700 !important;
+            color: #ffffff !important;
+            text-align: right !important;
           }
 
           /* هدر سبز بالای صفحات گزارش */
           .page-header-banner {
-            background-color: #4a8b38;
-            color: #ffffff;
-            font-weight: 800;
-            font-size: 13.5px;
-            text-align: center;
-            padding: 7px 14px;
-            border-radius: 4px;
-            margin-bottom: 10px;
-            width: 100%;
+            background-color: #4a8b38 !important;
+            color: #ffffff !important;
+            font-weight: 800 !important;
+            font-size: 12.5px !important;
+            text-align: center !important;
+            padding: 5px 12px !important;
+            border-radius: 4px !important;
+            margin-bottom: 6px !important;
+            width: 100% !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
 
-          /* عنوان پروژه */
           .page-project-title {
-            font-size: 14.5px;
-            font-weight: 900;
-            color: #0f172a;
-            margin: 0 0 8px 0;
-            text-align: right;
+            font-size: 13.5px !important;
+            font-weight: 900 !important;
+            color: #0f172a !important;
+            margin: 0 0 6px 0 !important;
+            text-align: right !important;
           }
 
-          /* باکس دور پروژه متناسب با حجم متن */
+          /* باکس دور پروژه */
           .project-main-card {
-            border: 1.5px solid #1e293b;
-            border-radius: 18px;
-            padding: 16px 20px;
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            background-color: #ffffff;
+            border: 1.5px solid #1e293b !important;
+            border-radius: 14px !important;
+            padding: 12px 16px !important;
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 8px !important;
+            background-color: #ffffff !important;
           }
 
           .section-block {
-            margin-bottom: 4px;
+            margin-bottom: 3px !important;
           }
 
           .section-heading {
-            font-size: 11.5px;
-            font-weight: 900;
-            color: #0f172a;
-            margin-bottom: 5px;
+            font-size: 11px !important;
+            font-weight: 900 !important;
+            color: #0f172a !important;
+            margin-bottom: 3px !important;
           }
 
           .bullet-list {
-            list-style: none;
-            padding: 0;
-            margin: 0;
+            list-style: none !important;
+            padding: 0 !important;
+            margin: 0 !important;
           }
 
           .bullet-item {
-            position: relative;
-            padding-right: 14px;
-            margin-bottom: 5px;
-            font-size: 10.8px;
-            line-height: 1.55;
-            color: #1e293b;
-            text-align: justify;
+            position: relative !important;
+            padding-right: 14px !important;
+            margin-bottom: 4px !important;
+            font-size: 10px !important;
+            line-height: 1.45 !important;
+            color: #1e293b !important;
+            text-align: justify !important;
           }
 
           .bullet-item::before {
-            content: "•";
-            position: absolute;
-            right: 0;
-            top: -1px;
-            font-size: 13px;
-            font-weight: bold;
-            color: #0f172a;
+            content: "•" !important;
+            position: absolute !important;
+            right: 0 !important;
+            top: -1px !important;
+            font-size: 12px !important;
+            font-weight: bold !important;
+            color: #0f172a !important;
           }
 
           .target-date-tag {
-            display: inline-block;
-            direction: ltr;
-            font-weight: bold;
-            color: #334155;
-            margin-right: 4px;
+            display: inline-block !important;
+            direction: ltr !important;
+            font-weight: bold !important;
+            color: #334155 !important;
+            margin-right: 4px !important;
           }
 
-          /* شماره صفحه در وسط و پایین */
+          /* شماره صفحه در پایین */
           .page-bottom-number {
-            text-align: center;
-            font-size: 13.5px;
-            font-weight: 800;
-            color: #0f172a;
-            padding-top: 8px;
-            margin-top: auto;
+            text-align: center !important;
+            font-size: 12px !important;
+            font-weight: 800 !important;
+            color: #0f172a !important;
+            padding-top: 4px !important;
+            margin-top: auto !important;
           }
         </style>
       </head>
@@ -900,15 +955,17 @@ export default function ReportsPdfDocument({
     `);
     doc.close();
 
-    setTimeout(() => {
+    // اجرای فوری چاپ به محض آماده شدن سند بدون معطلی لودینگ مرورگر
+    const executePrint = () => {
       printFrame.contentWindow?.focus();
       printFrame.contentWindow?.print();
-      setTimeout(() => {
-        if (document.body.contains(printFrame)) {
-          document.body.removeChild(printFrame);
-        }
-      }, 1500);
-    }, 450);
+    };
+
+    if (doc.readyState === "complete") {
+      setTimeout(executePrint, 60);
+    } else {
+      printFrame.onload = () => setTimeout(executePrint, 60);
+    }
   };
 
   return (
