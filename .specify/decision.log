@@ -96,3 +96,12 @@
      - **Cancelled (`✕ حذف‌شده`):** Struck-through text with explicit display of cancellation reason (`علت حذف: ...`) so executives and auditors maintain full operational context.
   3. **Unconditional Data Hydration in PDF:** Ensure `ReportsPdfDocument.tsx` unconditionally fetches `/api/next-actions` and `/api/project-kpis` on modal open regardless of passed props, preventing sparse or stale local state.
 - **Rationale:** Eliminates data loss from unrecorded cancellations, informs executives of abandoned project commitments, and guarantees complete accountability in printed audits.
+
+### D19 — High-Fidelity Print Engine Synchronization & Next Action Temporal Filtering
+- **Decision:** Synchronize physical browser print output with in-app A4 preview and introduce granular temporal action filtering:
+  1. **Full Style Hydration in Print Iframe:** In `ReportsPdfDocument.tsx`, dynamically inject all application `<link>` and `<style>` sheets into the hidden printing iframe. Provide explicit inline CSS fallbacks with `-webkit-print-color-adjust: exact !important` on table grids, segmented progress bars, and status badges to guarantee 1:1 fidelity with the web preview.
+  2. **Sub-Pixel A4 Bounds Optimization:** Constrain `.pdf-page-container` height to `295mm` with `box-sizing: border-box` and strict page-break avoidance, preventing browser margin rounding from generating phantom blank pages or splitting single pages into multiple sheets.
+  3. **Temporal Next Actions Filter:** Introduce a dedicated toolbar filter (`actionsFilter`):
+     - **All Defined Actions (Default/Base):** Renders all 4 states (completed, overdue, upcoming, and cancelled with reason).
+     - **Future Only (اقدامات آینده نرسیده):** Filters view to strictly active, non-completed, non-cancelled actions whose deadlines have not yet expired (`target_date >= now`).
+- **Rationale:** Ensures executive print outputs perfectly reflect the designed typography, colors, and layout seen on screen without artificial formatting loss, while offering executives customizable reporting scopes.
