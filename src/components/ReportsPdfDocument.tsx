@@ -98,6 +98,7 @@ export default function ReportsPdfDocument({
   const [localProjects, setLocalProjects] = useState<Project[]>([]);
   const [localUsers, setLocalUsers] = useState<User[]>([]);
   const [localKpis, setLocalKpis] = useState<ProjectKpi[]>([]);
+  const [localNextActions, setLocalNextActions] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
 
   const printAreaRef = useRef<HTMLDivElement>(null);
@@ -170,8 +171,9 @@ export default function ReportsPdfDocument({
         needFetchProjects ? fetch("/api/projects").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(projects || []),
         needFetchUsers ? fetch("/api/users").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(users || []),
         fetch("/api/project-kpis").then((r) => (r.ok ? r.json() : [])).catch(() => []),
+        fetch("/api/next-actions").then((r) => (r.ok ? r.json() : [])).catch(() => []),
       ])
-        .then(([reps, pers, projs, usrs, kps]) => {
+        .then(([reps, pers, projs, usrs, kps, acts]) => {
           if (Array.isArray(reps)) setLocalReports(reps);
           if (Array.isArray(pers)) {
             setLocalPeriods(pers);
@@ -183,11 +185,27 @@ export default function ReportsPdfDocument({
           if (Array.isArray(projs)) setLocalProjects(projs);
           if (Array.isArray(usrs)) setLocalUsers(usrs);
           if (Array.isArray(kps)) setLocalKpis(kps);
+          if (Array.isArray(acts)) setLocalNextActions(acts);
         })
         .catch((err) => console.error("Error fetching data in PDF modal:", err))
         .finally(() => setLoading(false));
     }
   }, [isOpen, defaultPeriodId]);
+
+  // نقشه‌بندی اقدامات آتی تعریف‌شده به تفکیک پروژه
+  const projectActionsMap = useMemo(() => {
+    const map: Record<number, any[]> = {};
+    (localNextActions || []).forEach((action: any) => {
+      const pid = action.project_id || action.report?.project_id;
+      if (pid) {
+        if (!map[pid]) map[pid] = [];
+        if (!action.is_cancelled) {
+          map[pid].push(action);
+        }
+      }
+    });
+    return map;
+  }, [localNextActions]);
 
   // مپ سریع شاخص‌ها برای دسترسی به نام، واحد و هدف
   const kpiMap = useMemo(() => {
@@ -276,10 +294,27 @@ export default function ReportsPdfDocument({
           ? report.achievedActions.map((a) => a.action_text)
           : parseBulletPoints(report.results_achieved);
 
+      // جمع‌آوری تمامی اقدامات آتی تعریف‌شده برای این پروژه (شامل دوره‌های گذشته و جاری)
+      const allProjectActions = [
+        ...(projectActionsMap[report.project_id] || []),
+        ...(report.nextActions || []),
+      ];
+
+      const seenActionTexts = new Set<string>();
+      const deduplicatedActions: any[] = [];
+      allProjectActions.forEach((na: any) => {
+        if (!na || na.is_cancelled) return;
+        const textKey = (na.action_text || "").trim();
+        if (textKey && !seenActionTexts.has(textKey)) {
+          seenActionTexts.add(textKey);
+          deduplicatedActions.push(na);
+        }
+      });
+
       const nextActionsList =
-        report.nextActions && report.nextActions.length > 0
-          ? report.nextActions.map((na) => ({
-            text: na.action_text,
+        deduplicatedActions.length > 0
+          ? deduplicatedActions.map((na) => ({
+            text: na.is_completed ? `${na.action_text} (تکمیل‌شده)` : na.action_text,
             date: na.target_date_raw || (na.target_date ? formatPersianDate(na.target_date) : null),
           }))
           : [];

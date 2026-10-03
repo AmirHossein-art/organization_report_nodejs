@@ -73,6 +73,15 @@
   3. **Consolidated Top-Tab Hubs:** Consolidate fragmented sidebar links:
      - Combine Reporting Periods and Deadline Settings under a unified "تقویم و مهلت‌های گزارش‌دهی" hub using top horizontal tabs.
      - Combine KPI Tracking and KPI Definitions under a unified "شاخص‌های کلیدی عملکرد (KPI)" hub using top horizontal tabs.
+     - Combine Project Management and Personnel Allocation under a unified "مدیریت و تخصیص پروژه‌ها" hub (`ManageProjectsHub.tsx`) using top horizontal tabs.
   4. **Personnel-Centric Allocation Partitioning:** On the project allocation page, automatically partition and prioritize the selected official's assigned projects at the top of the grid.
   5. **Same-Day Weekly Deadline Resolution:** Correct the weekly deadline calculation to resolve on the period end date itself when day matches, eliminating the erroneous 1-week forward shift bug.
 - **Rationale:** Reduces visual clutter, prevents navigation cognitive fatigue, maximizes viewport utility on large monitors, and resolves deadline scheduling friction.
+
+### D17 — Comprehensive Multi-Period Next Actions in PDF & Drag-and-Drop Project Ordering
+- **Decision:** Enhance project governance and print fidelity:
+  1. **Multi-Period Next Actions Aggregation:** In `ReportsPdfDocument.tsx`, aggregate and deduplicate all active, non-cancelled next actions ever defined for each project across all periods, rather than strictly displaying only the sparse actions recorded in the latest single period submission.
+  2. **Native Drag-and-Drop Reordering:** Support drag-and-drop reordering of organizational projects using `GripVertical` handles in `ManageProjects.tsx`, backed by `PATCH /api/projects/reorder`.
+  3. **Auto-Increment Project Order Index:** In `POST /api/projects`, compute `nextOrderIndex = (maxOrderIndex ?? 0) + 1` to guarantee unique sequential priority ordering and prevent duplicate indexes on new creation.
+  4. **Removal of Redundant Export Triggers:** Remove redundant PDF export buttons from inside project configuration forms to keep operational tools focused on data entry and administration.
+- **Rationale:** Auditing managers requiring executive PDF reports must have visibility into all active commitments of a strategic project regardless of which specific weekly period they were originally recorded under.

@@ -8,7 +8,6 @@ import {
   FileSpreadsheet,
   FolderKanban,
   RefreshCw,
-  Printer,
   ArrowUp,
   ArrowDown,
   Power,
@@ -17,7 +16,6 @@ import {
 } from "lucide-react";
 import { Project, User } from "../types";
 import { CustomSelect } from "../components";
-import ReportsPdfDocument from "../components/ReportsPdfDocument";
 
 // 🌐 تابع کمکی تبدیل اعداد به فارسی
 export const toPersianDigits = (n: string | number | undefined | null): string => {
@@ -78,7 +76,6 @@ export default function ManageProjects({
   const editFileInputRef = useRef<HTMLInputElement>(null);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [pdfModalOpen, setPdfModalOpen] = useState<boolean>(false);
 
   // --- وضعیت‌های کشیدن و رها کردن (Drag and Drop) ---
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
@@ -340,26 +337,16 @@ export default function ManageProjects({
     <div className="space-y-6 animate-fade-in text-xs font-sans dir-rtl text-right">
 
       {/* هدر */}
-      <div className="border-b border-slate-200 pb-4 flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+      <div className="border-b border-slate-200 pb-4">
         <div>
           <h1 className="text-xl font-bold text-slate-950 flex items-center gap-2">
             <FolderKanban className="w-6 h-6 text-emerald-700" />
             <span>مدیریت پروژه‌ها و سندهای WBS</span>
           </h1>
           <p className="text-slate-500 text-xs mt-1">
-            تعریف پروژه‌های جدید، بارگذاری ساختار شکست کار (WBS)، تنظیم چیدمان و صدور نسخه PDF گزارش‌ها.
+            تعریف پروژه‌های جدید، بارگذاری ساختار شکست کار (WBS) و تنظیم چیدمان و اولویت پروژه‌ها.
           </p>
         </div>
-
-        <button
-          type="button"
-          onClick={() => setPdfModalOpen(true)}
-          className="bg-emerald-800 hover:bg-emerald-700 active:scale-95 text-white font-extrabold text-xs px-4 py-2.5 rounded-2xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer border border-emerald-600/40 whitespace-nowrap shrink-0"
-          title="صدور نسخه رسمی PDF از تمامی گزارش‌ها با امکان تنظیم ترتیب چینش"
-        >
-          <Printer className="w-4 h-4 text-emerald-300" />
-          <span>خروجی PDF تمام گزارش‌ها</span>
-        </button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -855,13 +842,6 @@ export default function ManageProjects({
           </div>
         </div>
       )}
-
-      {/* 📄 رندر مودال خروجی PDF جامع تمام گزارش‌ها با قابلیت تنظیم ترتیب چینش */}
-      <ReportsPdfDocument
-        isOpen={pdfModalOpen}
-        onClose={() => setPdfModalOpen(false)}
-        projects={projects}
-      />
 
     </div>
   );
