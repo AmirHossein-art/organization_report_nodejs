@@ -197,6 +197,34 @@ function sanitizeUser(user: any) {
   };
 }
 
+// اطمینان از وجود ستون‌ها و ساختار دیتابیس در استقرار پروداکشن (Railway Self-Healing Migrations)
+async function ensureDatabaseSchema() {
+  try {
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "NextAction" ADD COLUMN IF NOT EXISTS "is_cancelled" BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE "NextAction" ADD COLUMN IF NOT EXISTS "cancelled_at" TIMESTAMP(3);
+      ALTER TABLE "NextAction" ADD COLUMN IF NOT EXISTS "cancellation_reason" TEXT;
+      ALTER TABLE "NextAction" ADD COLUMN IF NOT EXISTS "cancelled_by_user_id" INTEGER;
+      ALTER TABLE "NextAction" ADD COLUMN IF NOT EXISTS "cancelled_by_user_name" TEXT;
+      ALTER TABLE "NextAction" ADD COLUMN IF NOT EXISTS "canelled_period_id" INTEGER;
+      CREATE INDEX IF NOT EXISTS "NextAction_is_cancelled_idx" ON "NextAction"("is_cancelled");
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "ProjectKpi" ADD COLUMN IF NOT EXISTS "baseline_value" DOUBLE PRECISION;
+      ALTER TABLE "ReportKpiValue" ADD COLUMN IF NOT EXISTS "baseline_value" DOUBLE PRECISION;
+      ALTER TABLE "ReportKpiValue" ADD COLUMN IF NOT EXISTS "calculated_value" DOUBLE PRECISION;
+      ALTER TABLE "ReportKpiValue" ADD COLUMN IF NOT EXISTS "not_measured" BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE "ReportKpiValue" ADD COLUMN IF NOT EXISTS "missing_reason" TEXT;
+    `);
+
+    console.log("Database schema checked and verified successfully.");
+  } catch (error) {
+    console.error("Warning: Error verifying database schema updates:", error);
+  }
+}
+ensureDatabaseSchema();
+
 // تمیزکاری خودکار وضعیت اقداماتی که در گزارش تیک نخورده بودند
 prisma.nextAction.updateMany({
   where: { claimed_report_id: null, claimed_completed: true },
@@ -445,24 +473,42 @@ function parseNextActions(
   });
 }
 
+function safeIsoDate(val: any): string | null {
+  if (!val) return null;
+  if (typeof val === "string") return val.split("T")[0] || null;
+  if (val instanceof Date && !isNaN(val.getTime())) {
+    return val.toISOString().split("T")[0];
+  }
+  try {
+    const d = new Date(val);
+    if (!isNaN(d.getTime())) return d.toISOString().split("T")[0];
+  } catch (_) {}
+  return String(val).split("T")[0] || null;
+}
+
+function safeIsoDateTime(val: any): string | null {
+  if (!val) return null;
+  if (typeof val === "string") return val;
+  if (val instanceof Date && !isNaN(val.getTime())) {
+    return val.toISOString();
+  }
+  try {
+    const d = new Date(val);
+    if (!isNaN(d.getTime())) return d.toISOString();
+  } catch (_) {}
+  return String(val) || null;
+}
+
 function serializeAction(action: any) {
   const hasClaimedReport = action.claimed_report_id !== null && action.claimed_report_id !== undefined;
   return {
     ...action,
     claimed_completed: hasClaimedReport ? Boolean(action.claimed_completed) : false,
-    target_date: action.target_date
-      ? action.target_date.toISOString().split("T")[0]
-      : null,
+    target_date: safeIsoDate(action.target_date),
     target_date_raw: action.target_date_raw ?? null,
-    claimed_at: action.claimed_at
-      ? action.claimed_at.toISOString()
-      : null,
-    completed_at: action.completed_at
-      ? action.completed_at.toISOString()
-      : null,
-    verified_at: action.verified_at
-      ? action.verified_at.toISOString()
-      : null,
+    claimed_at: safeIsoDateTime(action.claimed_at),
+    completed_at: safeIsoDateTime(action.completed_at),
+    verified_at: safeIsoDateTime(action.verified_at),
   };
 }
 
@@ -473,13 +519,11 @@ function serializeReport(report: any) {
     user_job_title: report.user?.job_title || null,
     deputy_name: report.user?.job_title || report.user_full_name,
 
-    period_start: report.period_start.toISOString().split("T")[0],
-    period_end: report.period_end.toISOString().split("T")[0],
-    submitted_at: report.submitted_at.toISOString(),
+    period_start: safeIsoDate(report.period_start) || "",
+    period_end: safeIsoDate(report.period_end) || "",
+    submitted_at: safeIsoDateTime(report.submitted_at) || new Date().toISOString(),
 
-    imported_at: report.imported_at
-      ? report.imported_at.toISOString()
-      : null,
+    imported_at: safeIsoDateTime(report.imported_at),
 
     nextActions: Array.isArray(report.nextActions)
       ? report.nextActions.map(serializeAction)
@@ -503,7 +547,7 @@ function serializeReport(report: any) {
         calculated_value: v.calculated_value,
         not_measured: v.not_measured,
         missing_reason: v.missing_reason,
-        created_at: v.created_at ? v.created_at.toISOString() : null,
+        created_at: safeIsoDateTime(v.created_at),
       }))
       : [],
   };
