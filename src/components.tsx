@@ -307,15 +307,29 @@ interface DeadlineSetting {
 
 interface DeadlineCardProps {
   dl: DeadlineSetting;
-  onUpdate: (id: number, day: number, time: string, graceDays: number) => void;
+  onUpdate: (id: number, day: number, time: string, graceDays: number) => Promise<boolean> | void;
 }
 
 export function DeadlineCard({ dl, onUpdate }: DeadlineCardProps) {
   const [day, setDay] = useState(dl.deadline_day);
   const [time, setTime] = useState(dl.deadline_time);
   const [graceDays, setGraceDays] = useState(dl.grace_days ?? 0);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   const daysOfWeek = ["شنبه", "یک‌شنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه"];
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    setSaveSuccess(false);
+    try {
+      await onUpdate(dl.id, day, time, graceDays);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3500);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   return (
     <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4 font-sans text-right dir-rtl">
@@ -410,12 +424,32 @@ export function DeadlineCard({ dl, onUpdate }: DeadlineCardProps) {
           </div>
         </div>
 
+        {saveSuccess && (
+          <div className="p-3 bg-emerald-50 border border-emerald-300 text-emerald-800 rounded-2xl text-xs font-bold flex items-center gap-2 animate-fade-in">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-600 inline-block animate-ping" />
+            <span>✓ تنظیمات ددلاین با موفقیت ذخیره و در سرور اعمال شد.</span>
+          </div>
+        )}
+
         <div className="pt-2">
           <button
-            onClick={() => onUpdate(dl.id, day, time, graceDays)}
-            className="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium py-2.5 rounded-xl text-xs cursor-pointer text-center transition-all shadow-sm"
+            onClick={handleSave}
+            disabled={isSaving}
+            className={`w-full text-white font-bold py-2.5 rounded-xl text-xs cursor-pointer text-center transition-all shadow-sm flex items-center justify-center gap-2 ${
+              saveSuccess
+                ? "bg-emerald-700 hover:bg-emerald-800"
+                : isSaving
+                ? "bg-slate-700 cursor-not-allowed"
+                : "bg-slate-900 hover:bg-slate-800 active:scale-[0.99]"
+            }`}
           >
-            ذخیره تنظیمات ددلاین
+            {isSaving ? (
+              <span>در حال ذخیره‌سازی...</span>
+            ) : saveSuccess ? (
+              <span>✓ تغییرات با موفقیت ثبت شد</span>
+            ) : (
+              <span>ذخیره تنظیمات ددلاین</span>
+            )}
           </button>
         </div>
       </div>

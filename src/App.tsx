@@ -18,6 +18,7 @@ import ReportPeriods from "./views/ReportPeriods";
 import ProjectAllocations from "./views/ProjectAllocations";
 import ProjectKpiManagement from "./views/ProjectKpiManagement";
 import ProjectKpiAnalytics from "./views/ProjectKpiAnalytics";
+import ProjectKpiHub from "./views/ProjectKpiHub";
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -148,8 +149,8 @@ export default function App() {
       {/* سایدبار ناوبری سیستم */}
       <Sidebar user={user} currentView={currentView} setCurrentView={setCurrentView} onLogout={handleLogout} />
 
-      {/* بخش نمایش داینامیک ویوها براساس انتخاب کاربر */}
-      <main className="flex-1 p-6 md:p-8 max-w-7xl mx-auto w-full">
+      {/* بخش نمایش داینامیک ویوها براساس ابعاد مانیتور (تمام‌عرض با پدینگ واکنش‌گرا) */}
+      <main className="flex-1 p-4 sm:p-6 lg:p-8 w-full max-w-full overflow-x-hidden min-w-0">
         {currentView === "home" && (
           <HomeDashboard
             user={user}
@@ -184,14 +185,40 @@ export default function App() {
         {/* روت‌های مدیریتی */}
         {user.role === "manager" && (
           <>
-            {currentView === "manager_dashboard" && <ManagerDashboard periods={periods} projects={projects} users={users} />}
-            {currentView === "manage_projects" && <ManageProjects projects={projects} onRefresh={fetchData} />}
-            {currentView === "deadline_settings" && <DeadlineSettings settings={deadlineSettings} onRefresh={fetchData} />}
-            {currentView === "manage_users" && <ManageUsers users={users} onRefresh={fetchData} />}
-            {currentView === "report_periods" && <ReportPeriods periods={periods} onRefresh={fetchData} />}
-            {currentView === "project_allocations" && <ProjectAllocations users={users} projects={projects} />}
-            {currentView === "project_kpi_management" && <ProjectKpiManagement projects={projects} onRefresh={fetchData} />}
-            {currentView === "project_kpi_analytics" && <ProjectKpiAnalytics projects={projects} />}
+            {currentView === "manager_dashboard" && (
+              <ManagerDashboard periods={periods} projects={projects} users={users} />
+            )}
+            {currentView === "manage_projects" && (
+              <ManageProjects
+                projects={projects}
+                users={users}
+                onRefresh={fetchData}
+                onNavigateToAllocations={() => setCurrentView("project_allocations")}
+              />
+            )}
+            {currentView === "project_allocations" && (
+              <ProjectAllocations users={users} projects={projects} />
+            )}
+            {(currentView === "report_periods" || currentView === "deadline_settings") && (
+              <ReportPeriods
+                periods={periods}
+                deadlineSettings={deadlineSettings}
+                onRefresh={fetchData}
+                initialTab={currentView === "deadline_settings" ? "settings" : "periods"}
+              />
+            )}
+            {(currentView === "project_kpis" ||
+              currentView === "project_kpi_management" ||
+              currentView === "project_kpi_analytics") && (
+              <ProjectKpiHub
+                projects={projects}
+                onRefresh={fetchData}
+                initialTab={currentView === "project_kpi_management" ? "management" : "analytics"}
+              />
+            )}
+            {currentView === "manage_users" && (
+              <ManageUsers users={users} onRefresh={fetchData} />
+            )}
           </>
         )}
       </main>

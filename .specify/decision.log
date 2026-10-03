@@ -65,3 +65,14 @@
   1. Adopting optimistic UI confirmation in the browser.
   2. Eliminating historical database re-fetch storms (`fetch("/api/reports")`) upon save, merging single updated records into local state instead.
 - **Rationale:** For 10–15 concurrent users, distributed brokers add unnecessary memory bloat and architectural fragility on cloud hosting; the actual bottleneck is client-side re-fetching and sequential network roundtrips.
+
+### D16 — Fluid Workspace Geometry, Collapsible Navigation & Consolidated Management Hubs
+- **Decision:** Overhaul system layout and administrative navigation:
+  1. **Fixed & Collapsible Navigation:** Stabilize sidebar with sticky top positioning and zero layout shifts (eliminating the wiggle effect) plus an expand/collapse toggle (`w-64` <-> `w-20`) persisted in local storage.
+  2. **Fluid Responsive Workspace:** Eliminate the restrictive `max-w-7xl` constraint, enabling the application layout to dynamically adapt to 100% of any monitor width.
+  3. **Consolidated Top-Tab Hubs:** Consolidate fragmented sidebar links:
+     - Combine Reporting Periods and Deadline Settings under a unified "تقویم و مهلت‌های گزارش‌دهی" hub using top horizontal tabs.
+     - Combine KPI Tracking and KPI Definitions under a unified "شاخص‌های کلیدی عملکرد (KPI)" hub using top horizontal tabs.
+  4. **Personnel-Centric Allocation Partitioning:** On the project allocation page, automatically partition and prioritize the selected official's assigned projects at the top of the grid.
+  5. **Same-Day Weekly Deadline Resolution:** Correct the weekly deadline calculation to resolve on the period end date itself when day matches, eliminating the erroneous 1-week forward shift bug.
+- **Rationale:** Reduces visual clutter, prevents navigation cognitive fatigue, maximizes viewport utility on large monitors, and resolves deadline scheduling friction.

@@ -1,5 +1,5 @@
 // src/views/ProjectAllocations.tsx
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { User, Project } from "../types";
 import { 
   FolderGit2, 
@@ -68,6 +68,15 @@ export default function ProjectAllocations({ users = [], projects = [] }: Projec
 
   const activeUser = users.find((u) => u.id === selectedUserId);
   const currentAllocatedProjectIds = selectedUserId ? (userProjectsMap[selectedUserId] || []) : [];
+
+  // تفکیک و اولویت‌دهی پروژه‌ها: پروژه‌های خود این مسئول در بالا قرار می‌گیرند
+  const allocatedProjects = useMemo(() => {
+    return projects.filter((p) => currentAllocatedProjectIds.includes(p.id));
+  }, [projects, currentAllocatedProjectIds]);
+
+  const otherProjects = useMemo(() => {
+    return projects.filter((p) => !currentAllocatedProjectIds.includes(p.id));
+  }, [projects, currentAllocatedProjectIds]);
 
   // تغییر وضعیت تخصیص پروژه با کلیک روی کادر
   const handleToggleProject = (projectId: number) => {
@@ -214,35 +223,100 @@ export default function ProjectAllocations({ users = [], projects = [] }: Projec
               ) : projects.length === 0 ? (
                 <div className="py-12 text-center text-slate-400">هیچ پروژه‌ای در سیستم تعریف نشده است.</div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {projects.map((proj) => {
-                    const isChecked = currentAllocatedProjectIds.includes(proj.id);
+                <div className="space-y-6">
+                  {/* ۱. بخش پروژه‌های تخصیص‌یافته به این مسئول (در بالای صفحه) */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between border-b border-emerald-200/80 pb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-600 inline-block shadow-xs"></span>
+                        <span className="font-extrabold text-slate-900 text-xs">
+                          پروژه‌های تحت نظارت این مسئول
+                        </span>
+                        <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2.5 py-0.5 rounded-full border border-emerald-300">
+                          {toPersianDigits(allocatedProjects.length)} پروژه
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-slate-400">
+                        کلیک روی کارت، دسترسی پروژه را برمی‌دارد
+                      </span>
+                    </div>
 
-                    return (
-                      <div
-                        key={proj.id}
-                        onClick={() => handleToggleProject(proj.id)}
-                        className={`p-4 rounded-2xl border transition-all flex items-start gap-3 cursor-pointer select-none ${
-                          isChecked
-                            ? "bg-emerald-50/80 border-emerald-400 text-emerald-950 shadow-2xs ring-1 ring-emerald-300"
-                            : "bg-slate-50/60 border-slate-200 hover:border-slate-300 text-slate-700 hover:bg-slate-100/50"
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          readOnly
-                          className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4 cursor-pointer pointer-events-none shrink-0"
-                        />
-                        <div className="space-y-1">
-                          <span className="font-bold block text-xs text-slate-900">{proj.title}</span>
-                          <span className="text-[10px] text-slate-400 block font-sans">
-                            کد شناسایی: {toPersianDigits(proj.code)}
+                    {allocatedProjects.length === 0 ? (
+                      <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl text-center text-slate-500 text-xs">
+                        هنوز پروژه‌ای به این مسئول تخصیص نیافته است. از بخش زیر پروژه‌های مورد نظر را کلیک کنید.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {allocatedProjects.map((proj) => (
+                          <div
+                            key={proj.id}
+                            onClick={() => handleToggleProject(proj.id)}
+                            className="p-4 rounded-2xl border transition-all flex items-start gap-3 cursor-pointer select-none bg-emerald-50/90 border-emerald-400 text-emerald-950 shadow-2xs ring-1 ring-emerald-300 hover:bg-rose-50/60 hover:border-rose-300 group"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={true}
+                              readOnly
+                              className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4 cursor-pointer pointer-events-none shrink-0"
+                            />
+                            <div className="space-y-1">
+                              <span className="font-bold block text-xs text-slate-900 group-hover:text-rose-900 transition-colors">
+                                {proj.title}
+                              </span>
+                              <span className="text-[10px] text-emerald-700 block font-sans">
+                                کد: {toPersianDigits(proj.code)}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ۲. بخش سایر پروژه‌های سازمان */}
+                  {otherProjects.length > 0 && (
+                    <div className="space-y-3 pt-3 border-t border-slate-200">
+                      <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2.5 h-2.5 rounded-full bg-slate-400 inline-block"></span>
+                          <span className="font-bold text-slate-700 text-xs">
+                            سایر پروژه‌های سازمان جهت تخصیص
+                          </span>
+                          <span className="bg-slate-100 text-slate-600 text-[10px] font-bold px-2 py-0.5 rounded-full border border-slate-200">
+                            {toPersianDigits(otherProjects.length)} پروژه
                           </span>
                         </div>
+                        <span className="text-[10px] text-slate-400">
+                          کلیک روی کارت، پروژه را به این مسئول اضافه می‌کند
+                        </span>
                       </div>
-                    );
-                  })}
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[380px] overflow-y-auto pl-1">
+                        {otherProjects.map((proj) => (
+                          <div
+                            key={proj.id}
+                            onClick={() => handleToggleProject(proj.id)}
+                            className="p-4 rounded-2xl border transition-all flex items-start gap-3 cursor-pointer select-none bg-slate-50/60 border-slate-200 hover:border-emerald-300 text-slate-700 hover:bg-emerald-50/40"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={false}
+                              readOnly
+                              className="mt-0.5 rounded text-slate-400 w-4 h-4 cursor-pointer pointer-events-none shrink-0"
+                            />
+                            <div className="space-y-1">
+                              <span className="font-bold block text-xs text-slate-800">
+                                {proj.title}
+                              </span>
+                              <span className="text-[10px] text-slate-400 block font-sans">
+                                کد: {toPersianDigits(proj.code)}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </>

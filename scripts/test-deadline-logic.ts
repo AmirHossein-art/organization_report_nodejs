@@ -269,6 +269,23 @@ function runTests() {
   assert(stateH4.graceDays === 0, "Monthly grace days override = 0 works");
   assert(stateH4.deadlineAt?.getTime() === stateH4.graceUntil?.getTime(), "Monthly cutoff equals deadline when grace_override = 0");
 
+  // ----------------------------------------------------
+  // Test I: Period ending on Tuesday with Tuesday deadline (Same-Day Deadline)
+  // ----------------------------------------------------
+  console.log("\n--- Test I: Period ending on Tuesday with Tuesday deadline (No 1-week shift) ---");
+  const tuesdayPeriod: ReportPeriodLike = {
+    id: 99,
+    title: "هفته سه‌شنبه‌ای",
+    report_type: "weekly",
+    period_start: "2026-06-30T00:00:00.000Z",
+    period_end: "2026-07-07T00:00:00.000Z", // Tuesday July 7, 2026
+    is_open: true,
+  };
+  const stateI = getDeadlineState(tuesdayPeriod, weeklySetting);
+  const partsDeadlineI = getTehranParts(stateI.deadlineAt!);
+  assert(partsDeadlineI.year === 2026 && partsDeadlineI.month === 7 && partsDeadlineI.day === 7, "Deadline is on the SAME Tuesday (2026-07-07), NOT shifted to next week");
+  assert(partsDeadlineI.hour === 14 && partsDeadlineI.minute === 0, "Deadline time is 14:00 Tehran");
+
   console.log("\n==========================================");
   console.log(`Test Results: ${passed} passed, ${failed} failed.`);
   console.log("==========================================\n");

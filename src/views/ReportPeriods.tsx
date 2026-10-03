@@ -1,14 +1,17 @@
 // src/views/ReportPeriods.tsx
 import { useState } from "react";
 import { Plus, Trash2, Edit2, RefreshCw, Clock, Calendar, CheckCircle, AlertCircle, ShieldAlert } from "lucide-react";
-import { ReportPeriod } from "../types";
+import { ReportPeriod, DeadlineSetting } from "../types";
 import { CustomSelect, ShamsiDatePicker } from "../components";
 import { formatToShamsi, gregorianToShamsi, toPersianDigits } from "../dateUtils";
 import { getTehranParts, parseTehranWallClock } from "../deadline";
+import DeadlineSettings from "./DeadlineSettings";
 
 interface ReportPeriodsProps {
   periods: ReportPeriod[];
+  deadlineSettings?: DeadlineSetting[];
   onRefresh: () => void;
+  initialTab?: "periods" | "settings";
 }
 
 /**
@@ -27,7 +30,14 @@ function formatTehranPersianDateTime(isoStr: string | null | undefined): string 
   }
 }
 
-export default function ReportPeriods({ periods = [], onRefresh }: ReportPeriodsProps) {
+export default function ReportPeriods({
+  periods = [],
+  deadlineSettings = [],
+  onRefresh,
+  initialTab = "periods",
+}: ReportPeriodsProps) {
+  const [activeTab, setActiveTab] = useState<"periods" | "settings">(initialTab);
+
   // New Period Form State
   const [newPeriodTitle, setNewPeriodTitle] = useState("");
   const [newPeriodType, setNewPeriodType] = useState<"weekly" | "monthly">("weekly");
@@ -228,14 +238,53 @@ export default function ReportPeriods({ periods = [], onRefresh }: ReportPeriods
 
   return (
     <div className="space-y-6 animate-fade-in text-xs font-sans dir-rtl text-right">
-      <div className="border-b border-slate-200 pb-4">
-        <h1 className="text-xl font-bold text-slate-950">🗓️ مدیریت دوره‌های گزارش‌دهی و ددلاین‌ها</h1>
-        <p className="text-slate-500 text-xs mt-1">
-          تعریف چرخه‌های پایش هفتگی و ماهانه، اعمال استثنائات زمانی اختصاصی برای هر دوره و کنترل مسدودسازی دریافت گزارش‌ها.
-        </p>
+      {/* هدر یکپارچه و سوئیچر زبانه‌ها */}
+      <div className="border-b border-slate-200 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-bold text-slate-950 flex items-center gap-2">
+            <Calendar className="w-6 h-6 text-emerald-700" />
+            <span>تقویم و مهلت‌های گزارش‌دهی</span>
+          </h1>
+          <p className="text-slate-500 text-xs mt-1">
+            مدیریت بازه‌های دوره‌ای (هفتگی/ماهانه) و تنظیم قواعد سراسری ددلاین و مهلت ارفاقی.
+          </p>
+        </div>
+
+        {deadlineSettings && deadlineSettings.length > 0 && (
+          <div className="flex items-center bg-slate-100 p-1 rounded-2xl border border-slate-200 shrink-0 self-start sm:self-auto">
+            <button
+              type="button"
+              onClick={() => setActiveTab("periods")}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === "periods"
+                  ? "bg-white text-emerald-800 shadow-sm"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              <Calendar className="w-4 h-4 text-emerald-600" />
+              <span>بازه‌های گزارش‌دهی</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("settings")}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === "settings"
+                  ? "bg-white text-emerald-800 shadow-sm"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              <Clock className="w-4 h-4 text-emerald-600" />
+              <span>تنظیمات سراسری ددلاین</span>
+            </button>
+          </div>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {activeTab === "settings" && deadlineSettings && deadlineSettings.length > 0 ? (
+        <DeadlineSettings settings={deadlineSettings} onRefresh={onRefresh} />
+      ) : (
+        <>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* فرم ثبت بازه */}
         <div className="bg-white rounded-2xl p-5 border border-slate-200 h-fit space-y-4 shadow-2xs">
           <h3 className="font-bold text-slate-900 border-b border-slate-100 pb-2">ایجاد بازه پایش جدید</h3>
@@ -620,6 +669,8 @@ export default function ReportPeriods({ periods = [], onRefresh }: ReportPeriods
             </form>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );

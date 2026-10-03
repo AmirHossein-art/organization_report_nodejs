@@ -14,7 +14,7 @@ import {
   Power,
   PowerOff
 } from "lucide-react";
-import { Project } from "../types";
+import { Project, User } from "../types";
 import { CustomSelect } from "../components";
 import ReportsPdfDocument from "../components/ReportsPdfDocument";
 
@@ -27,10 +27,34 @@ export const toPersianDigits = (n: string | number | undefined | null): string =
 
 interface ManageProjectsProps {
   projects: Project[];
+  users?: User[];
   onRefresh: () => void;
+  onNavigateToAllocations?: () => void;
 }
 
-export default function ManageProjects({ projects = [], onRefresh }: ManageProjectsProps) {
+export default function ManageProjects({
+  projects = [],
+  users = [],
+  onRefresh,
+  onNavigateToAllocations,
+}: ManageProjectsProps) {
+  // --- استیت‌های تخصیص پروژه به پرسنل ---
+  const [allocations, setAllocations] = useState<Array<{ user_id: number; project_id: number }>>([]);
+
+  const fetchAllocations = async () => {
+    try {
+      const res = await fetch("/api/user-projects");
+      if (res.ok) {
+        const data = await res.json();
+        setAllocations(Array.isArray(data) ? data : []);
+      }
+    } catch (_) {}
+  };
+
+  useEffect(() => {
+    fetchAllocations();
+  }, []);
+
   // --- استیت‌های فرم ساخت پروژه ---
   const [code, setCode] = useState("");
   const [title, setTitle] = useState("");
@@ -449,6 +473,47 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
                         </span>
                       )}
                     </div>
+
+                    {/* نمایش مسئول / معاونت تخصیص‌یافته */}
+                    {(() => {
+                      const assignedUsers = allocations
+                        .filter((a) => a.project_id === proj.id)
+                        .map((a) => (users || []).find((u) => u.id === a.user_id))
+                        .filter(Boolean);
+
+                      if (assignedUsers.length > 0) {
+                        return (
+                          <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                            {assignedUsers.map((u: any) => (
+                              <span
+                                key={u.id}
+                                onClick={() => onNavigateToAllocations && onNavigateToAllocations()}
+                                className="inline-flex items-center gap-1 text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200/80 px-2.5 py-0.5 rounded-full cursor-pointer hover:bg-emerald-100 transition-colors"
+                                title={`مسئول نظارت: ${u.full_name} (${u.job_title || ""}) - کلیک برای تغییر تخصیص`}
+                              >
+                                <span>👤 {u.full_name}</span>
+                                {u.job_title && <span className="text-emerald-600 font-normal">({u.job_title})</span>}
+                              </span>
+                            ))}
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="pt-0.5">
+                          <button
+                            type="button"
+                            onClick={() => onNavigateToAllocations && onNavigateToAllocations()}
+                            className="inline-flex items-center gap-1 text-[10px] font-medium bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200/80 px-2 py-0.5 rounded-full transition-colors cursor-pointer"
+                            title="کلیک برای تخصیص به مسئول"
+                          >
+                            <span>⚠️ بدون تخصیص به مسئول</span>
+                            <span className="text-[9px] underline mr-1">تخصیص</span>
+                          </button>
+                        </div>
+                      );
+                    })()}
+
                     <p className="text-slate-500 text-[11px] line-clamp-1">{proj.description}</p>
                     {proj.wbs_file_name && (
                       <a
