@@ -62,7 +62,7 @@ interface SubmitReportProps {
   periods: ReportPeriod[];
   user: User;
   allReports: Report[];
-  onRefresh: () => void;
+  onRefresh: (newReport?: any) => void;
   onNavigate?: (tab: string) => void; // 🟢 اضافه شدن پروپ تغییر تب
 }
 

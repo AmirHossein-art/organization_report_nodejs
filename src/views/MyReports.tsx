@@ -71,7 +71,7 @@ interface MyReportsProps {
   allReports?: Report[];
   projects?: Project[];
   periods?: ReportPeriod[];
-  onRefresh?: () => void;
+  onRefresh?: (updatedReport?: any) => void;
 }
 
 interface SingleReportAuditResult {
@@ -648,9 +648,9 @@ function ManagerVisualBubbleExplorer({
 
   // استیت‌های خروجی PDF
   const [pdfModalOpen, setPdfModalOpen] = useState<boolean>(false);
-  const [rawReports, setRawReports] = useState<Report[]>([]);
-  const [periodsList, setPeriodsList] = useState<ReportPeriod[]>([]);
-  const [projectsList, setProjectsList] = useState<Project[]>([]);
+  const [rawReports, setRawReports] = useState<Report[]>(initialReports);
+  const [periodsList, setPeriodsList] = useState<ReportPeriod[]>(initialPeriods);
+  const [projectsList, setProjectsList] = useState<Project[]>(initialProjects);
   const [usersList, setUsersList] = useState<User[]>([]);
 
   // استخراج لیست یکتای نام معاونت‌ها
@@ -1838,11 +1838,6 @@ export default function MyReports({ currentUser, user, reports = [], allReports 
         onClose={() => setEditingReport(null)}
         isGrace={getReportDeadlineState(editingReport)?.phase === "grace"}
         onSaved={(updatedReport?: any) => {
-          if (updatedReport) {
-            setActiveReports((prev) =>
-              prev.map((r) => (r.id === updatedReport.id ? updatedReport : r))
-            );
-          }
           if (onRefresh) onRefresh(updatedReport);
         }}
       />

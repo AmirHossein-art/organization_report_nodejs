@@ -12,12 +12,9 @@ import SubmitReport from "./views/SubmitReport";
 import MyReports from "./views/MyReports";
 import ManagerDashboard from "./views/ManagerDashboard";
 import ManageProjects from "./views/ManageProjects";
-import DeadlineSettings from "./views/DeadlineSettings";
 import ManageUsers from "./views/ManageUsers";
 import ReportPeriods from "./views/ReportPeriods";
 import ProjectAllocations from "./views/ProjectAllocations";
-import ProjectKpiManagement from "./views/ProjectKpiManagement";
-import ProjectKpiAnalytics from "./views/ProjectKpiAnalytics";
 import ProjectKpiHub from "./views/ProjectKpiHub";
 
 export default function App() {
