@@ -13,9 +13,9 @@
 - [x] **T006**: [US2] Connect the interactive gauge to the numeric input in `ReportEditModal`: show real-time progress relative to baseline and target with instant color transitions.
 
 ## Phase 3: Performance & Save Latency Optimization (Guardrail PERF-001)
-- [ ] **T007**: [PERF] In `src/views/MyReports.tsx`, update `handleSave` to consume the returned `newReport` from `POST /api/reports` and `PUT /api/reports/:id` and update local state directly instead of triggering a full `fetch("/api/reports")` storm.
-- [ ] **T008**: [PERF] Provide optimistic visual confirmation (instant green checkmark feedback) on form submit.
+- [x] **T007**: [PERF] In `src/views/MyReports.tsx`, update `handleSave` to consume the returned `newReport` from `POST /api/reports` and `PUT /api/reports/:id` and update local state directly instead of triggering a full `fetch("/api/reports")` storm.
+- [x] **T008**: [PERF] Provide optimistic visual confirmation (instant green checkmark feedback) on form submit.
 
 ## Phase 4: Verification & Build
-- [ ] **T009**: Run `npm run build` to verify zero TypeScript errors and zero compilation failures.
+- [x] **T009**: Run `npm run build` to verify zero TypeScript errors and zero compilation failures.
 - [ ] **T010**: Validate A4 PDF print preview in browser for projects with 1, 3, and 0 KPIs to confirm zero page-break distortion.

@@ -602,10 +602,31 @@ function SingleReportAuditModal({
 // 🚀 ۳. کاوشگر دیداری مدیر (Visual Explorer)
 // =================================================================
 
-function ManagerVisualBubbleExplorer({ currentUser }: { currentUser?: User } = {}) {
-  const [projectClusters, setProjectClusters] = useState<any[]>([]);
+function ManagerVisualBubbleExplorer({
+  currentUser,
+  initialReports = [],
+  initialProjects = [],
+  initialPeriods = [],
+}: {
+  currentUser?: User;
+  initialReports?: Report[];
+  initialProjects?: Project[];
+  initialPeriods?: ReportPeriod[];
+} = {}) {
+  const [projectClusters, setProjectClusters] = useState<any[]>(() => {
+    if (initialProjects && initialProjects.length > 0) {
+      return initialProjects.map((p: any) => ({
+        ...p,
+        project_title: p.title,
+        reports: (initialReports || []).filter(
+          (r: any) => r.project_id === p.id || r.project_title === p.title
+        ),
+      }));
+    }
+    return [];
+  });
   const [nextActions, setNextActions] = useState<NextActionItem[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState<boolean>(() => !(initialProjects && initialProjects.length > 0));
 
   // استیت‌های لایه‌بندی
   const [activeProjectLayer, setActiveProjectLayer] = useState<any | null>(null);
@@ -1028,7 +1049,7 @@ function ReportEditModal({
   report: any | null;
   isOpen: boolean;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (updatedReport?: any) => void;
   isGrace?: boolean;
 }) {
   const [activitiesDone, setActivitiesDone] = useState("");
@@ -1218,9 +1239,10 @@ function ReportEditModal({
     try {
       const res = await fetch(`/api/reports/${report.id}`, { method: "PUT", body: formData });
       if (res.ok) {
+        const updated = await res.json();
         flashSuccess("گزارش با موفقیت ویرایش شد.");
-        onSaved();
-        setTimeout(() => onClose(), 1200);
+        onSaved(updated);
+        setTimeout(() => onClose(), 800);
       } else {
         const data = await res.json();
         flashError(data.error || "خطا در ویرایش گزارش.");
@@ -1682,7 +1704,14 @@ export default function MyReports({ currentUser, user, reports = [], allReports 
 
   // 🟢 برای مدیران -> کاوشگر دیداری حباب‌ها همراه با سیارک‌های چرخان
   if (isManagerOrAdmin) {
-    return <ManagerVisualBubbleExplorer currentUser={activeUser} />;
+    return (
+      <ManagerVisualBubbleExplorer
+        currentUser={activeUser}
+        initialReports={activeReports}
+        initialProjects={projects}
+        initialPeriods={periods}
+      />
+    );
   }
 
   // 🟡 برای پرسنل عادی -> جدول گزارش‌های شخص خودش
@@ -1808,8 +1837,13 @@ export default function MyReports({ currentUser, user, reports = [], allReports 
         isOpen={Boolean(editingReport)}
         onClose={() => setEditingReport(null)}
         isGrace={getReportDeadlineState(editingReport)?.phase === "grace"}
-        onSaved={() => {
-          if (onRefresh) onRefresh();
+        onSaved={(updatedReport?: any) => {
+          if (updatedReport) {
+            setActiveReports((prev) =>
+              prev.map((r) => (r.id === updatedReport.id ? updatedReport : r))
+            );
+          }
+          if (onRefresh) onRefresh(updatedReport);
         }}
       />
 

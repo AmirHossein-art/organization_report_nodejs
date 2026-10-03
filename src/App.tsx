@@ -55,6 +55,21 @@ export default function App() {
     }
   };
 
+  // به‌روزرسانی سریع لوکال بدون ارسال درخواست‌های سنگین و موازی (PERF-001)
+  const handleReportUpsert = (newOrUpdatedReport?: any) => {
+    if (newOrUpdatedReport && newOrUpdatedReport.id) {
+      setAllReports((prev) => {
+        const exists = prev.some((r) => r.id === newOrUpdatedReport.id);
+        if (exists) {
+          return prev.map((r) => (r.id === newOrUpdatedReport.id ? newOrUpdatedReport : r));
+        }
+        return [newOrUpdatedReport, ...prev];
+      });
+    } else {
+      fetchData();
+    }
+  };
+
   // ۱. بررسی وضعیت کوکی امن به محض بوت شدن کامپوننت
   useEffect(() => {
     fetch("/api/auth/me")
@@ -151,7 +166,7 @@ export default function App() {
             periods={periods}
             user={user}
             allReports={allReports}
-            onRefresh={fetchData}
+            onRefresh={handleReportUpsert}
             onNavigate={(view) => setCurrentView(view)} // 🟢 اصلاح‌شده به setCurrentView
           />
         )}
@@ -162,7 +177,7 @@ export default function App() {
             reports={allReports}
             projects={projects}
             periods={periods}
-            onRefresh={fetchData}
+            onRefresh={handleReportUpsert}
           />
         )}
 

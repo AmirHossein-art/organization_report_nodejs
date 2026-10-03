@@ -349,6 +349,7 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
     try {
       const res = await fetch("/api/reports", { method: "POST", body: formData });
       if (res.ok) {
+        const createdReport = await res.json();
         flashSuccess("گزارش شما با موفقیت ثبت شد.");
         setActivitiesDone("");
         setExtraResultsNotes("");
@@ -358,7 +359,7 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
         setSubFiles(null);
         const fileInput = document.getElementById("report_files_input") as HTMLInputElement;
         if (fileInput) fileInput.value = "";
-        onRefresh();
+        if (onRefresh) onRefresh(createdReport);
       } else {
         const err = await res.json();
         flashError(err.error || "خطا در ثبت گزارش.");
