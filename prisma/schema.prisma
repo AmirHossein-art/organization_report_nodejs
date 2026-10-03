@@ -164,6 +164,14 @@ model NextAction {
   completed_at      DateTime?
   verified_at       DateTime?
 
+  // فیلدهای لغو اقدام توسط کاربر
+  is_cancelled            Boolean   @default(false)
+  cancelled_at            DateTime?
+  cancellation_reason     String?
+  cancelled_by_user_id    Int?
+  cancelled_by_user_name  String?
+  canelled_period_id      Int?  
+
   report         Report?  @relation("ReportNextActions", fields: [report_id], references: [id], onDelete: Cascade)
   claimedReport  Report?  @relation("ReportAchievedActions", fields: [claimed_report_id], references: [id], onDelete: SetNull)
   project        Project? @relation(fields: [project_id], references: [id], onDelete: Cascade)
@@ -173,6 +181,7 @@ model NextAction {
   @@index([user_id])
   @@index([report_id])
   @@index([claimed_report_id])
+  @@index([is_cancelled])
 }
 
 model ProjectKpi {

@@ -203,3 +203,6 @@ prisma/legacy-data/
 
 # Ignore the claude files
 .claude/
+
+# Agent internal folder
+.hermes/
