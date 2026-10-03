@@ -96,6 +96,7 @@ export default function ReportsPdfDocument({
   const [selectedPeriodId, setSelectedPeriodId] = useState<number>(defaultPeriodId);
   const [selectedProjectId, setSelectedProjectId] = useState<number>(0);
   const [selectedDeputy, setSelectedDeputy] = useState<string>("");
+  const [actionsFilter, setActionsFilter] = useState<"all" | "future_only">("all");
 
   const [localReports, setLocalReports] = useState<Report[]>([]);
   const [localPeriods, setLocalPeriods] = useState<ReportPeriod[]>([]);
@@ -318,12 +319,23 @@ export default function ReportsPdfDocument({
         }
       });
 
+      // اعمال فیلتر اقدامات آتی در صورت انتخاب کاربر (فقط اقدامات آینده که تاریخشان نرسیده است)
+      let filteredActions = deduplicatedActions;
+      if (actionsFilter === "future_only") {
+        const nowTime = Date.now();
+        filteredActions = deduplicatedActions.filter((item: any) => {
+          if (item.is_completed || item.is_cancelled) return false;
+          if (!item.target_date) return true;
+          return new Date(item.target_date).getTime() >= nowTime;
+        });
+      }
+
       // اولویت‌بندی مرتب‌سازی:
       // ۱. اقدامات در دست اقدام (آتی نرسیده)
       // ۲. اقدامات گذشته از موعد / دارای تأخیر
       // ۳. اقدامات تکمیل‌شده
       // ۴. اقدامات لغو/حذف‌شده توسط پرسنل با ذکر دلیل
-      deduplicatedActions.sort((a, b) => {
+      filteredActions.sort((a, b) => {
         const getPriority = (item: any) => {
           if (item.is_cancelled) return 4;
           if (item.is_completed) return 3;
@@ -335,8 +347,8 @@ export default function ReportsPdfDocument({
       });
 
       const nextActionsList: PageSectionItem[] =
-        deduplicatedActions.length > 0
-          ? deduplicatedActions.map((na) => {
+        filteredActions.length > 0
+          ? filteredActions.map((na) => {
             let status: "completed" | "overdue" | "upcoming" | "cancelled" = "upcoming";
             const isOverdue = !na.is_completed && !na.is_cancelled && na.target_date && new Date(na.target_date).getTime() < Date.now();
             if (na.is_cancelled) status = "cancelled";
@@ -597,7 +609,7 @@ export default function ReportsPdfDocument({
     flushPage();
 
     return pages;
-  }, [orderedReports]);
+  }, [orderedReports, actionsFilter, projectActionsMap]);
 
   if (!isOpen) return null;
 
@@ -614,6 +626,13 @@ export default function ReportsPdfDocument({
   const handlePrint = () => {
     if (!printAreaRef.current) return;
     const content = printAreaRef.current.innerHTML;
+
+    // استخراج تمامی استایل‌های موجود در سند (Tailwind CSS و فونت‌ها)
+    const existingStyles = Array.from(
+      document.querySelectorAll("link[rel='stylesheet'], style")
+    )
+      .map((el) => el.outerHTML)
+      .join("\n");
 
     const printFrame = document.createElement("iframe");
     printFrame.style.position = "fixed";
@@ -635,50 +654,77 @@ export default function ReportsPdfDocument({
         <meta charset="utf-8">
         <title>گزارش پروژه‌های استراتژیک - ${formatPersianDateTime(new Date())}</title>
         <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css" />
+        ${existingStyles}
         <style>
           * {
-            box-sizing: border-box;
+            box-sizing: border-box !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
             color-adjust: exact !important;
           }
           @page {
             size: A4 portrait;
-            margin: 0;
+            margin: 0 !important;
           }
           html, body {
-            width: 210mm;
-            height: 297mm;
-            margin: 0;
-            padding: 0;
-            background-color: #ffffff;
-            font-family: 'Vazirmatn', Sahel, Vazir, Shabnam, Tahoma, system-ui, -apple-system, sans-serif;
-            direction: rtl;
-            text-align: right;
-            color: #0f172a;
-            font-size: 11.5px;
-            line-height: 1.55;
+            width: 210mm !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            background-color: #ffffff !important;
+            font-family: 'Vazirmatn', Sahel, Vazir, Shabnam, Tahoma, system-ui, -apple-system, sans-serif !important;
+            direction: rtl !important;
+            text-align: right !important;
+            color: #0f172a !important;
+            font-size: 11px !important;
+            line-height: 1.5 !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
 
-          /* ساختار دقیق صفحه استاندارد A4 */
+          /* ساختار دقیق صفحه استاندارد A4 بدون ایجاد صفحات سفید مازاد */
           .pdf-page-container {
-            width: 210mm;
-            height: 297mm;
-            min-height: 297mm;
-            max-height: 297mm;
-            padding: 12mm 14mm 10mm 14mm;
-            margin: 0 auto;
-            position: relative;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            page-break-after: always;
-            break-after: page;
-            page-break-inside: avoid;
-            break-inside: avoid;
-            background-color: #ffffff;
-            box-sizing: border-box;
-            overflow: hidden;
+            width: 210mm !important;
+            height: 295mm !important;
+            min-height: 295mm !important;
+            max-height: 295mm !important;
+            padding: 10mm 12mm 8mm 12mm !important;
+            margin: 0 auto !important;
+            position: relative !important;
+            display: flex !important;
+            flex-direction: column !important;
+            justify-content: space-between !important;
+            page-break-after: always !important;
+            break-after: page !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+            background-color: #ffffff !important;
+            box-sizing: border-box !important;
+            overflow: hidden !important;
+          }
+
+          .pdf-page-container:last-child {
+            page-break-after: auto !important;
+            break-after: auto !important;
+          }
+
+          /* استایل‌های تضمینی جدول شاخص‌ها و نشانگرها */
+          .kpi-matrix-table {
+            width: 100% !important;
+            border-collapse: collapse !important;
+            border: 1px solid #cbd5e1 !important;
+            font-size: 10px !important;
+            line-height: 1.25 !important;
+          }
+          .kpi-matrix-table th, .kpi-matrix-table td {
+            border: 1px solid #cbd5e1 !important;
+            padding: 4px 6px !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          .kpi-matrix-table thead tr {
+            background-color: #f1f5f9 !important;
+            color: #1e293b !important;
+            font-weight: bold !important;
           }
 
           /* صفحه اول / کاور استارتر */
@@ -949,6 +995,19 @@ export default function ReportsPdfDocument({
               />
             </div>
           )}
+
+          {/* فیلتر اقدامات آتی */}
+          <div className="w-56 sm:w-64">
+            <label className="text-[10px] text-slate-400 font-bold block mb-1">اقدامات آتی:</label>
+            <CustomSelect
+              value={actionsFilter}
+              onChange={(val) => setActionsFilter(String(val) as "all" | "future_only")}
+              options={[
+                { value: "all", label: "همه اقدامات تعریف‌شده (پایه)" },
+                { value: "future_only", label: "فقط اقدامات آینده (سررسید نرسیده)" },
+              ]}
+            />
+          </div>
         </div>
 
         {/* بدنه پیش‌نمایش سند PDF با ابعاد استاندارد A4 */}
@@ -1062,12 +1121,33 @@ export default function ReportsPdfDocument({
                                                 className="bullet-item text-[10.5px] leading-relaxed text-slate-500 text-justify relative pr-3.5"
                                               >
                                                 <span className="absolute right-0 top-0 font-bold text-rose-500">•</span>
-                                                <span className="inline-block bg-rose-50 text-rose-700 border border-rose-200 text-[9px] font-bold px-1.5 py-0.5 rounded ml-1.5">
+                                                <span
+                                                  style={{
+                                                    backgroundColor: "#f8fafc",
+                                                    color: "#475569",
+                                                    border: "1px solid #cbd5e1",
+                                                    padding: "1px 6px",
+                                                    borderRadius: "4px",
+                                                    fontSize: "9px",
+                                                    fontWeight: "bold",
+                                                    marginLeft: "6px",
+                                                    display: "inline-block",
+                                                    printColorAdjust: "exact",
+                                                    WebkitPrintColorAdjust: "exact",
+                                                  }}
+                                                >
                                                   ✕ حذف‌شده
                                                 </span>
                                                 <span className="line-through">{it.text}</span>
                                                 {it.cancellationReason && (
-                                                  <span className="text-rose-800 font-bold text-[10px] mr-1.5">
+                                                  <span
+                                                    style={{
+                                                      color: "#9f1239",
+                                                      fontWeight: "bold",
+                                                      fontSize: "10px",
+                                                      marginRight: "6px",
+                                                    }}
+                                                  >
                                                     (علت حذف: {it.cancellationReason})
                                                   </span>
                                                 )}
@@ -1082,12 +1162,34 @@ export default function ReportsPdfDocument({
                                                 className="bullet-item text-[10.5px] leading-relaxed text-slate-800 text-justify relative pr-3.5"
                                               >
                                                 <span className="absolute right-0 top-0 font-bold text-emerald-600">•</span>
-                                                <span className="inline-block bg-emerald-50 text-emerald-800 border border-emerald-300 text-[9px] font-bold px-1.5 py-0.5 rounded ml-1.5">
+                                                <span
+                                                  style={{
+                                                    backgroundColor: "#ecfdf5",
+                                                    color: "#065f46",
+                                                    border: "1px solid #6ee7b7",
+                                                    padding: "1px 6px",
+                                                    borderRadius: "4px",
+                                                    fontSize: "9px",
+                                                    fontWeight: "bold",
+                                                    marginLeft: "6px",
+                                                    display: "inline-block",
+                                                    printColorAdjust: "exact",
+                                                    WebkitPrintColorAdjust: "exact",
+                                                  }}
+                                                >
                                                   ✓ تکمیل‌شده
                                                 </span>
                                                 <span>{it.text}</span>
                                                 {it.date && (
-                                                  <span className="target-date-tag text-slate-600 font-bold mr-1">
+                                                  <span
+                                                    style={{
+                                                      display: "inline-block",
+                                                      direction: "ltr",
+                                                      fontWeight: "bold",
+                                                      color: "#475569",
+                                                      marginRight: "6px",
+                                                    }}
+                                                  >
                                                     ({toPersianDigits(it.date)})
                                                   </span>
                                                 )}
@@ -1102,12 +1204,34 @@ export default function ReportsPdfDocument({
                                                 className="bullet-item text-[10.5px] leading-relaxed text-slate-800 text-justify relative pr-3.5"
                                               >
                                                 <span className="absolute right-0 top-0 font-bold text-amber-600">•</span>
-                                                <span className="inline-block bg-amber-50 text-amber-800 border border-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded ml-1.5">
+                                                <span
+                                                  style={{
+                                                    backgroundColor: "#fff1f2",
+                                                    color: "#be123c",
+                                                    border: "1px solid #fecdd3",
+                                                    padding: "1px 6px",
+                                                    borderRadius: "4px",
+                                                    fontSize: "9px",
+                                                    fontWeight: "bold",
+                                                    marginLeft: "6px",
+                                                    display: "inline-block",
+                                                    printColorAdjust: "exact",
+                                                    WebkitPrintColorAdjust: "exact",
+                                                  }}
+                                                >
                                                   ⚠️ گذشته از موعد
                                                 </span>
                                                 <span>{it.text}</span>
                                                 {it.date && (
-                                                  <span className="target-date-tag text-amber-800 font-bold mr-1">
+                                                  <span
+                                                    style={{
+                                                      display: "inline-block",
+                                                      direction: "ltr",
+                                                      fontWeight: "bold",
+                                                      color: "#be123c",
+                                                      marginRight: "6px",
+                                                    }}
+                                                  >
                                                     ({toPersianDigits(it.date)})
                                                   </span>
                                                 )}
@@ -1123,7 +1247,15 @@ export default function ReportsPdfDocument({
                                               <span className="absolute right-0 top-0 font-bold">•</span>
                                               <span>{it.text}</span>
                                               {it.date && (
-                                                <span className="target-date-tag text-slate-700 font-bold mr-1">
+                                                <span
+                                                  style={{
+                                                    display: "inline-block",
+                                                    direction: "ltr",
+                                                    fontWeight: "bold",
+                                                    color: "#334155",
+                                                    marginRight: "6px",
+                                                  }}
+                                                >
                                                   ({toPersianDigits(it.date)})
                                                 </span>
                                               )}
