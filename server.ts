@@ -2571,6 +2571,11 @@ app.get("/api/next-actions", authenticate, async (req: any, res) => {
       is_completed: a.is_completed,
       completed_at: a.completed_at ? a.completed_at.toISOString() : null,
       verified_at: a.verified_at ? a.verified_at.toISOString() : null,
+      is_cancelled: Boolean(a.is_cancelled),
+      cancelled_at: a.cancelled_at ? a.cancelled_at.toISOString() : null,
+      cancellation_reason: a.cancellation_reason || null,
+      cancelled_by_user_id: a.cancelled_by_user_id || null,
+      cancelled_by_user_name: a.cancelled_by_user_name || null,
       project: a.project || a.report?.project,
       user: a.user || a.report?.user,
     }));
@@ -2704,13 +2709,112 @@ app.patch("/api/next-actions/:id/toggle", authenticate, requireManager, async (r
   }
 });
 
-app.delete("/api/next-actions/:id", authenticate, requireManager, async (req, res) => {
+// لغو یا حذف اقدام آتی توسط کاربر یا مدیر با ثبت دلیل اجباری (جهت مستندسازی در گزارش رسمی PDF)
+app.patch("/api/next-actions/:id/cancel", authenticate, async (req: any, res) => {
   try {
     const actionId = Number(req.params.id);
-    await prisma.nextAction.delete({ where: { id: actionId } });
-    res.json({ success: true, message: "اقدام با موفقیت حذف شد." });
+    const { reason } = req.body || {};
+
+    const trimmedReason = typeof reason === "string" ? reason.trim() : "";
+    if (!trimmedReason) {
+      return res.status(400).json({ error: "ثبت دلیل حذف یا لغو اقدام الزامی است." });
+    }
+
+    const action = await prisma.nextAction.findUnique({
+      where: { id: actionId },
+      include: { report: true, project: true },
+    });
+
+    if (!action) {
+      return res.status(404).json({ error: "اقدام مورد نظر یافت نشد." });
+    }
+
+    // بررسی دسترسی: مدیران یا پرسنل تخصیص‌یافته به پروژه یا منتسب به اقدام
+    if (req.user.role !== "manager") {
+      const pid = action.project_id || action.report?.project_id;
+      let hasAccess = action.user_id === req.user.id || action.report?.user_id === req.user.id;
+      if (!hasAccess && pid) {
+        const isAssigned = await prisma.userProject.findUnique({
+          where: { user_id_project_id: { user_id: req.user.id, project_id: pid } },
+        });
+        if (isAssigned) hasAccess = true;
+      }
+      if (!hasAccess) {
+        return res.status(403).json({ error: "شما دسترسی لازم برای لغو این اقدام را ندارید." });
+      }
+    }
+
+    const updated = await prisma.nextAction.update({
+      where: { id: actionId },
+      data: {
+        is_cancelled: true,
+        cancelled_at: new Date(),
+        cancellation_reason: trimmedReason,
+        cancelled_by_user_id: req.user.id,
+        cancelled_by_user_name: req.user.full_name || req.user.username,
+      },
+    });
+
+    res.json({ success: true, message: "اقدام با موفقیت لغو شد.", action: updated });
   } catch (error) {
-    console.error("Error deleting next action:", error);
+    console.error("Error cancelling next action:", error);
+    res.status(500).json({ error: "خطا در لغو اقدام." });
+  }
+});
+
+// اندپوینت حذف: برای پرسنل لغو نرم با دلیل، برای مدیران لغو با دلیل یا هارد دلیت در صورت force
+app.delete("/api/next-actions/:id", authenticate, async (req: any, res) => {
+  try {
+    const actionId = Number(req.params.id);
+    const { reason, force } = req.body || {};
+
+    const action = await prisma.nextAction.findUnique({
+      where: { id: actionId },
+      include: { report: true, project: true },
+    });
+
+    if (!action) {
+      return res.status(404).json({ error: "اقدام مورد نظر یافت نشد." });
+    }
+
+    if (req.user.role === "manager" && force) {
+      await prisma.nextAction.delete({ where: { id: actionId } });
+      return res.json({ success: true, message: "اقدام به صورت کامل از دیتابیس حذف شد." });
+    }
+
+    const trimmedReason = (typeof reason === "string" ? reason.trim() : "") || (typeof req.query.reason === "string" ? req.query.reason.trim() : "");
+    if (!trimmedReason) {
+      return res.status(400).json({ error: "ثبت دلیل حذف یا لغو اقدام الزامی است." });
+    }
+
+    if (req.user.role !== "manager") {
+      const pid = action.project_id || action.report?.project_id;
+      let hasAccess = action.user_id === req.user.id || action.report?.user_id === req.user.id;
+      if (!hasAccess && pid) {
+        const isAssigned = await prisma.userProject.findUnique({
+          where: { user_id_project_id: { user_id: req.user.id, project_id: pid } },
+        });
+        if (isAssigned) hasAccess = true;
+      }
+      if (!hasAccess) {
+        return res.status(403).json({ error: "شما دسترسی لازم برای حذف این اقدام را ندارید." });
+      }
+    }
+
+    const updated = await prisma.nextAction.update({
+      where: { id: actionId },
+      data: {
+        is_cancelled: true,
+        cancelled_at: new Date(),
+        cancellation_reason: trimmedReason,
+        cancelled_by_user_id: req.user.id,
+        cancelled_by_user_name: req.user.full_name || req.user.username,
+      },
+    });
+
+    res.json({ success: true, message: "اقدام با موفقیت لغو شد.", action: updated });
+  } catch (error) {
+    console.error("Error deleting/cancelling next action:", error);
     res.status(500).json({ error: "خطا در حذف اقدام." });
   }
 });

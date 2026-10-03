@@ -1162,6 +1162,34 @@ function ReportEditModal({
     );
   };
 
+  const handleCancelAction = async (actionId: number) => {
+    const reason = prompt("لطفاً دلیل حذف یا لغو این اقدام را بنویسید (الزامی جهت درج در گزارش رسمی PDF):");
+    if (reason === null) return;
+    const trimmedReason = reason.trim();
+    if (!trimmedReason) {
+      alert("ثبت دلیل برای حذف اقدام الزامی است.");
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/next-actions/${actionId}/cancel`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: trimmedReason }),
+      });
+      if (res.ok) {
+        setPendingActions((prev) => prev.filter((a) => a.id !== actionId));
+        setSelectedActionIds((prev) => prev.filter((id) => id !== actionId));
+        setSuccessMsg("اقدام با موفقیت لغو شد و در گزارش رسمی با ذکر دلیل مستند گردید.");
+      } else {
+        const data = await res.json();
+        alert(data.error || "خطا در لغو اقدام.");
+      }
+    } catch (err) {
+      alert("خطا در برقراری ارتباط با سرور جهت لغو اقدام.");
+    }
+  };
+
   const kpiIncomplete = kpis.some((k) => {
     const v = kpiValues[k.id];
     if (!v) return true;
@@ -1361,14 +1389,16 @@ function ReportEditModal({
                   return (
                     <div
                       key={action.id}
-                      onClick={() => toggleActionSelected(action.id)}
-                      className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex items-start justify-between gap-3 ${
+                      className={`p-3.5 rounded-2xl border transition-all flex items-start justify-between gap-3 ${
                         isSelected
                           ? "bg-emerald-50/90 border-emerald-400 shadow-xs ring-1 ring-emerald-400"
                           : "bg-slate-50 hover:bg-slate-100 border-slate-200/80 shadow-2xs"
                       }`}
                     >
-                      <div className="flex items-start gap-3 flex-1 min-w-0">
+                      <div
+                        onClick={() => toggleActionSelected(action.id)}
+                        className="flex items-start gap-3 flex-1 min-w-0 cursor-pointer"
+                      >
                         <div className="pt-0.5 shrink-0">
                           {isSelected ? (
                             <CheckSquare className="w-5 h-5 text-emerald-600" />
@@ -1403,6 +1433,19 @@ function ReportEditModal({
                           </div>
                         </div>
                       </div>
+
+                      {/* دکمه لغو یا حذف اقدام با ثبت دلیل الزامی */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCancelAction(action.id);
+                        }}
+                        className="p-1.5 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer shrink-0"
+                        title="لغو یا حذف اقدام با ذکر دلیل الزامی"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   );
                 })}

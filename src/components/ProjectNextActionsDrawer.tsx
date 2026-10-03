@@ -33,6 +33,8 @@ export interface NextActionItem {
   is_completed: boolean;
   completed_at: string | null;
   verified_at?: string | null;
+  is_cancelled?: boolean;
+  cancellation_reason?: string | null;
   project?: { id: number; title: string };
   user?: { id: number; full_name: string; job_title: string | null };
 }
@@ -53,7 +55,7 @@ export default function ProjectNextActionsModal({
   actions,
   onRefresh,
 }: ModalProps) {
-  const [activeTab, setActiveTab] = useState<"all" | "pending" | "completed">("all");
+  const [activeTab, setActiveTab] = useState<"all" | "pending" | "completed" | "cancelled">("all");
 
   // فرم افزودن اقدام مدیریتی
   const [showAddForm, setShowAddForm] = useState(false);
@@ -92,6 +94,15 @@ export default function ProjectNextActionsModal({
     const completedTime = item.completed_at ? new Date(item.completed_at).getTime() : null;
 
     // ۱. تایید نهایی توسط مدیر
+    if (item.is_cancelled) {
+      return {
+        label: "لغو / حذف‌شده",
+        bgColor: "bg-slate-100/90 border-slate-300 text-slate-500",
+        badgeColor: "bg-slate-600 text-white",
+        icon: <XCircle className="w-4 h-4 text-slate-500 shrink-0" />,
+      };
+    }
+
     if (item.is_completed) {
       if (targetTime !== null && completedTime !== null && completedTime > targetTime) {
         return {
@@ -136,12 +147,14 @@ export default function ProjectNextActionsModal({
     };
   };
 
-  const pendingActions = actions.filter((a) => !a.is_completed);
-  const completedActions = actions.filter((a) => a.is_completed);
+  const pendingActions = actions.filter((a) => !a.is_completed && !a.is_cancelled);
+  const completedActions = actions.filter((a) => a.is_completed && !a.is_cancelled);
+  const cancelledActions = actions.filter((a) => a.is_cancelled);
 
   const getActiveList = () => {
     if (activeTab === "pending") return pendingActions;
     if (activeTab === "completed") return completedActions;
+    if (activeTab === "cancelled") return cancelledActions;
     return actions;
   };
 
@@ -192,12 +205,28 @@ export default function ProjectNextActionsModal({
   };
 
   const handleDeleteAction = async (actionId: number) => {
-    if (!confirm("آیا از حذف این اقدام اطمینان دارید؟")) return;
+    const reason = prompt("لطفاً دلیل حذف یا لغو این اقدام را بنویسید (الزامی جهت درج در گزارش رسمی PDF):");
+    if (reason === null) return;
+    const trimmedReason = reason.trim();
+    if (!trimmedReason) {
+      alert("ثبت دلیل برای حذف اقدام الزامی است.");
+      return;
+    }
+
     try {
-      const res = await fetch(`/api/next-actions/${actionId}`, { method: "DELETE" });
-      if (res.ok && onRefresh) onRefresh();
+      const res = await fetch(`/api/next-actions/${actionId}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: trimmedReason }),
+      });
+      if (res.ok) {
+        if (onRefresh) onRefresh();
+      } else {
+        const data = await res.json();
+        alert(data.error || "خطا در حذف اقدام.");
+      }
     } catch (err) {
-      alert("خطا در حذف اقدام.");
+      alert("خطا در برقراری ارتباط با سرور جهت حذف اقدام.");
     }
   };
 
@@ -276,6 +305,18 @@ export default function ProjectNextActionsModal({
               <span>تکمیل‌شده</span>
               <span className="bg-slate-900/60 px-2 py-0.5 rounded-full text-[10px]">
                 {completedActions.length.toLocaleString("fa-IR")}
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab("cancelled")}
+              className={`py-1.5 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === "cancelled" ? "bg-rose-600 text-white shadow-xs" : "text-slate-300 hover:text-white"
+              }`}
+            >
+              <span>لغوشده</span>
+              <span className="bg-slate-900/60 px-2 py-0.5 rounded-full text-[10px]">
+                {cancelledActions.length.toLocaleString("fa-IR")}
               </span>
             </button>
           </div>
@@ -401,6 +442,22 @@ export default function ProjectNextActionsModal({
                           <p className="text-indigo-700">در بازه: {item.claimed_report.period_title}</p>
                         </div>
                       )}
+
+                      {/* نمایش دلیل لغو و مشخصات حذف‌کننده */}
+                      {item.is_cancelled && (
+                        <div className="bg-rose-50/90 p-2.5 rounded-xl border border-rose-200 text-[10.5px] text-rose-950 space-y-1">
+                          <div className="flex items-center gap-1.5 font-bold text-rose-800">
+                            <XCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                            <span>اقدام لغو / حذف شده است</span>
+                          </div>
+                          {item.cancellation_reason && (
+                            <p className="text-rose-900">
+                              <span className="font-bold">علت حذف: </span>
+                              <span>{item.cancellation_reason}</span>
+                            </p>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     <div className="space-y-2 pt-2 border-t border-slate-200/60">
@@ -421,14 +478,16 @@ export default function ProjectNextActionsModal({
                       </div>
 
                       <div className="flex items-center justify-between gap-2 pt-1">
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteAction(item.id)}
-                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
-                          title="حذف اقدام"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        {!item.is_cancelled && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteAction(item.id)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer mr-auto"
+                            title="حذف/لغو اقدام با ذکر دلیل"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>

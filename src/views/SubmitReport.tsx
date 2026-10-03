@@ -17,7 +17,8 @@ import {
   Square, 
   Crown, 
   Calendar, 
-  FileCheck2
+  FileCheck2,
+  Trash2
 } from "lucide-react";
 import { Project, ReportPeriod, User, Report } from "../types";
 import { CustomSelect, ShamsiDatePicker } from "../components";
@@ -230,6 +231,34 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
     setSelectedActionIds((prev) =>
       prev.includes(actionId) ? prev.filter((id) => id !== actionId) : [...prev, actionId]
     );
+  };
+
+  const handleCancelAction = async (actionId: number) => {
+    const reason = prompt("لطفاً دلیل حذف یا لغو این اقدام را بنویسید (الزامی جهت درج در گزارش رسمی PDF):");
+    if (reason === null) return;
+    const trimmedReason = reason.trim();
+    if (!trimmedReason) {
+      alert("ثبت دلیل برای حذف اقدام الزامی است.");
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/next-actions/${actionId}/cancel`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: trimmedReason }),
+      });
+      if (res.ok) {
+        setPendingActions((prev) => prev.filter((a) => a.id !== actionId));
+        setSelectedActionIds((prev) => prev.filter((id) => id !== actionId));
+        flashSuccess("اقدام با موفقیت لغو شد و در گزارش رسمی با ذکر دلیل مستند گردید.");
+      } else {
+        const data = await res.json();
+        alert(data.error || "خطا در لغو اقدام.");
+      }
+    } catch (err) {
+      alert("خطا در برقراری ارتباط با سرور جهت لغو اقدام.");
+    }
   };
 
   // بررسی تکمیل بودن تمام شاخص‌های اعمال‌شده
@@ -653,14 +682,16 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
                       return (
                         <div
                           key={action.id}
-                          onClick={() => toggleActionSelected(action.id)}
-                          className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex items-start justify-between gap-3 ${
+                          className={`p-3.5 rounded-2xl border transition-all flex items-start justify-between gap-3 ${
                             isSelected
                               ? "bg-emerald-50/90 border-emerald-400 shadow-xs ring-1 ring-emerald-400"
                               : "bg-white hover:bg-slate-50 border-slate-200/80 shadow-2xs"
                           }`}
                         >
-                          <div className="flex items-start gap-3 flex-1 min-w-0">
+                          <div
+                            onClick={() => toggleActionSelected(action.id)}
+                            className="flex items-start gap-3 flex-1 min-w-0 cursor-pointer"
+                          >
                             <div className="pt-0.5 shrink-0">
                               {isSelected ? (
                                 <CheckSquare className="w-5 h-5 text-emerald-600" />
@@ -695,6 +726,19 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
                               </div>
                             </div>
                           </div>
+
+                          {/* دکمه لغو یا حذف اقدام با ثبت دلیل اجباری */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCancelAction(action.id);
+                            }}
+                            className="p-1.5 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer shrink-0"
+                            title="لغو یا حذف اقدام با ذکر دلیل الزامی"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       );
                     })}

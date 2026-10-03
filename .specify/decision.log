@@ -85,3 +85,14 @@
   3. **Auto-Increment Project Order Index:** In `POST /api/projects`, compute `nextOrderIndex = (maxOrderIndex ?? 0) + 1` to guarantee unique sequential priority ordering and prevent duplicate indexes on new creation.
   4. **Removal of Redundant Export Triggers:** Remove redundant PDF export buttons from inside project configuration forms to keep operational tools focused on data entry and administration.
 - **Rationale:** Auditing managers requiring executive PDF reports must have visibility into all active commitments of a strategic project regardless of which specific weekly period they were originally recorded under.
+
+### D18 — Audited Next Action Lifecycle & Mandatory Cancellation Justification in Official PDF
+- **Decision:** Establish rigorous audit trails for next actions across user workflows and executive print artifacts:
+  1. **Mandatory Justification for Action Cancellation:** Enable staff and managers to cancel actions from reporting forms (`SubmitReport.tsx`, `MyReports.tsx`) and project action drawer (`ProjectNextActionsDrawer.tsx`) via `PATCH /api/next-actions/:id/cancel` and `DELETE /api/next-actions/:id`. Rejection of empty reasons enforces accountable cancellation.
+  2. **Comprehensive 4-State PDF Action Surface:** In Section 2 of `ReportsPdfDocument.tsx`, render all actions classified into 4 distinct semantic states:
+     - **Completed (`✓ تکمیل‌شده`):** Green badge with target date.
+     - **Overdue / Past Deadline (`⚠️ گذشته از موعد`):** Amber/rose badge indicating delay.
+     - **Upcoming / In Progress:** Regular bullet with target date.
+     - **Cancelled (`✕ حذف‌شده`):** Struck-through text with explicit display of cancellation reason (`علت حذف: ...`) so executives and auditors maintain full operational context.
+  3. **Unconditional Data Hydration in PDF:** Ensure `ReportsPdfDocument.tsx` unconditionally fetches `/api/next-actions` and `/api/project-kpis` on modal open regardless of passed props, preventing sparse or stale local state.
+- **Rationale:** Eliminates data loss from unrecorded cancellations, informs executives of abandoned project commitments, and guarantees complete accountability in printed audits.

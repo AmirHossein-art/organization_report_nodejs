@@ -57,13 +57,17 @@ interface ReportsPdfDocumentProps {
   defaultPeriodId?: number;
 }
 
+export interface PageSectionItem {
+  text: string;
+  date?: string | null;
+  status?: "completed" | "overdue" | "upcoming" | "cancelled";
+  cancellationReason?: string | null;
+}
+
 interface PageSection {
   heading: string;
   type?: "bullets" | "kpi_table";
-  items: Array<{
-    text: string;
-    date?: string | null;
-  }>;
+  items: Array<PageSectionItem>;
   kpiValues?: any[];
   kpiText?: string | null;
 }
@@ -150,47 +154,50 @@ export default function ReportsPdfDocument({
       setSelectedPeriodId(defaultPeriodId);
     }
 
-    if (isFetchingRef.current) return;
-    isFetchingRef.current = true;
+    // همگام‌سازی سریع داده‌های دریافت شده از طریق Props
+    if (reports && reports.length > 0) setLocalReports(reports);
+    if (periods && periods.length > 0) {
+      setLocalPeriods(periods);
+      if (defaultPeriodId === undefined) {
+        const openPeriod = periods.find((p: any) => p.is_open) || periods[0];
+        if (openPeriod) setSelectedPeriodId(openPeriod.id);
+      }
+    }
+    if (projects && projects.length > 0) setLocalProjects(projects);
+    if (users && users.length > 0) setLocalUsers(users);
 
     const needFetchReports = !reports || reports.length === 0;
     const needFetchPeriods = !periods || periods.length === 0;
     const needFetchProjects = !projects || projects.length === 0;
     const needFetchUsers = !users || users.length === 0;
 
-    if (reports && reports.length > 0) setLocalReports(reports);
-    if (periods && periods.length > 0) setLocalPeriods(periods);
-    if (projects && projects.length > 0) setLocalProjects(projects);
-    if (users && users.length > 0) setLocalUsers(users);
-
-    if (needFetchReports || needFetchPeriods || needFetchProjects || needFetchUsers) {
-      setLoading(true);
-      Promise.all([
-        needFetchReports ? fetch("/api/reports").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(reports || []),
-        needFetchPeriods ? fetch("/api/report-periods").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(periods || []),
-        needFetchProjects ? fetch("/api/projects").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(projects || []),
-        needFetchUsers ? fetch("/api/users").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(users || []),
-        fetch("/api/project-kpis").then((r) => (r.ok ? r.json() : [])).catch(() => []),
-        fetch("/api/next-actions").then((r) => (r.ok ? r.json() : [])).catch(() => []),
-      ])
-        .then(([reps, pers, projs, usrs, kps, acts]) => {
-          if (Array.isArray(reps)) setLocalReports(reps);
-          if (Array.isArray(pers)) {
-            setLocalPeriods(pers);
-            if (defaultPeriodId === undefined && pers.length > 0) {
-              const openPeriod = pers.find((p: any) => p.is_open) || pers[0];
-              setSelectedPeriodId(openPeriod.id);
-            }
+    // بارگذاری داده‌های مستقل و الزامی (اقدامات آتی و شاخص‌های پروژه) در هر بار باز شدن مودال
+    setLoading(true);
+    Promise.all([
+      needFetchReports ? fetch("/api/reports").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(reports || []),
+      needFetchPeriods ? fetch("/api/report-periods").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(periods || []),
+      needFetchProjects ? fetch("/api/projects").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(projects || []),
+      needFetchUsers ? fetch("/api/users").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(users || []),
+      fetch("/api/project-kpis").then((r) => (r.ok ? r.json() : [])).catch(() => []),
+      fetch("/api/next-actions").then((r) => (r.ok ? r.json() : [])).catch(() => []),
+    ])
+      .then(([reps, pers, projs, usrs, kps, acts]) => {
+        if (Array.isArray(reps)) setLocalReports(reps);
+        if (Array.isArray(pers) && pers.length > 0) {
+          setLocalPeriods(pers);
+          if (defaultPeriodId === undefined) {
+            const openPeriod = pers.find((p: any) => p.is_open) || pers[0];
+            if (openPeriod) setSelectedPeriodId(openPeriod.id);
           }
-          if (Array.isArray(projs)) setLocalProjects(projs);
-          if (Array.isArray(usrs)) setLocalUsers(usrs);
-          if (Array.isArray(kps)) setLocalKpis(kps);
-          if (Array.isArray(acts)) setLocalNextActions(acts);
-        })
-        .catch((err) => console.error("Error fetching data in PDF modal:", err))
-        .finally(() => setLoading(false));
-    }
-  }, [isOpen, defaultPeriodId]);
+        }
+        if (Array.isArray(projs)) setLocalProjects(projs);
+        if (Array.isArray(usrs)) setLocalUsers(usrs);
+        if (Array.isArray(kps)) setLocalKpis(kps);
+        if (Array.isArray(acts)) setLocalNextActions(acts);
+      })
+      .catch((err) => console.error("Error fetching data in PDF modal:", err))
+      .finally(() => setLoading(false));
+  }, [isOpen, defaultPeriodId, reports, periods, projects, users]);
 
   // نقشه‌بندی اقدامات آتی تعریف‌شده به تفکیک پروژه
   const projectActionsMap = useMemo(() => {
@@ -294,7 +301,7 @@ export default function ReportsPdfDocument({
           ? report.achievedActions.map((a) => a.action_text)
           : parseBulletPoints(report.results_achieved);
 
-      // جمع‌آوری تمامی اقدامات آتی تعریف‌شده برای این پروژه (شامل دوره‌های گذشته و جاری)
+      // جمع‌آوری تمامی اقدامات آتی تعریف‌شده برای این پروژه (شامل دوره‌های گذشته و جاری و لغوشده‌ها)
       const allProjectActions = [
         ...(projectActionsMap[report.project_id] || []),
         ...(report.nextActions || []),
@@ -303,7 +310,7 @@ export default function ReportsPdfDocument({
       const seenActionTexts = new Set<string>();
       const deduplicatedActions: any[] = [];
       allProjectActions.forEach((na: any) => {
-        if (!na || na.is_cancelled) return;
+        if (!na) return;
         const textKey = (na.action_text || "").trim();
         if (textKey && !seenActionTexts.has(textKey)) {
           seenActionTexts.add(textKey);
@@ -311,12 +318,38 @@ export default function ReportsPdfDocument({
         }
       });
 
-      const nextActionsList =
+      // اولویت‌بندی مرتب‌سازی:
+      // ۱. اقدامات در دست اقدام (آتی نرسیده)
+      // ۲. اقدامات گذشته از موعد / دارای تأخیر
+      // ۳. اقدامات تکمیل‌شده
+      // ۴. اقدامات لغو/حذف‌شده توسط پرسنل با ذکر دلیل
+      deduplicatedActions.sort((a, b) => {
+        const getPriority = (item: any) => {
+          if (item.is_cancelled) return 4;
+          if (item.is_completed) return 3;
+          const isOverdue = item.target_date && new Date(item.target_date).getTime() < Date.now();
+          if (isOverdue) return 2;
+          return 1;
+        };
+        return getPriority(a) - getPriority(b);
+      });
+
+      const nextActionsList: PageSectionItem[] =
         deduplicatedActions.length > 0
-          ? deduplicatedActions.map((na) => ({
-            text: na.is_completed ? `${na.action_text} (تکمیل‌شده)` : na.action_text,
-            date: na.target_date_raw || (na.target_date ? formatPersianDate(na.target_date) : null),
-          }))
+          ? deduplicatedActions.map((na) => {
+            let status: "completed" | "overdue" | "upcoming" | "cancelled" = "upcoming";
+            const isOverdue = !na.is_completed && !na.is_cancelled && na.target_date && new Date(na.target_date).getTime() < Date.now();
+            if (na.is_cancelled) status = "cancelled";
+            else if (na.is_completed) status = "completed";
+            else if (isOverdue) status = "overdue";
+
+            return {
+              text: na.action_text,
+              date: na.target_date_raw || (na.target_date ? formatPersianDate(na.target_date) : null),
+              status,
+              cancellationReason: na.cancellation_reason,
+            };
+          })
           : [];
 
       // ایجاد بخش‌های خام
@@ -1020,21 +1053,83 @@ export default function ReportsPdfDocument({
                                         compactForPrint={true}
                                       />
                                     ) : (
-                                      <ul className="bullet-list space-y-1 pr-1">
-                                        {sec.items.map((it, itIdx) => (
-                                          <li
-                                            key={itIdx}
-                                            className="bullet-item text-[10.8px] leading-relaxed text-slate-800 text-justify relative pr-3.5"
-                                          >
-                                            <span className="absolute right-0 top-0 font-bold">•</span>
-                                            <span>{it.text}</span>
-                                            {it.date && (
-                                              <span className="target-date-tag text-slate-700 font-bold mr-1">
-                                                ({toPersianDigits(it.date)})
-                                              </span>
-                                            )}
-                                          </li>
-                                        ))}
+                                      <ul className="bullet-list space-y-1.5 pr-1">
+                                        {sec.items.map((it, itIdx) => {
+                                          if (it.status === "cancelled") {
+                                            return (
+                                              <li
+                                                key={itIdx}
+                                                className="bullet-item text-[10.5px] leading-relaxed text-slate-500 text-justify relative pr-3.5"
+                                              >
+                                                <span className="absolute right-0 top-0 font-bold text-rose-500">•</span>
+                                                <span className="inline-block bg-rose-50 text-rose-700 border border-rose-200 text-[9px] font-bold px-1.5 py-0.5 rounded ml-1.5">
+                                                  ✕ حذف‌شده
+                                                </span>
+                                                <span className="line-through">{it.text}</span>
+                                                {it.cancellationReason && (
+                                                  <span className="text-rose-800 font-bold text-[10px] mr-1.5">
+                                                    (علت حذف: {it.cancellationReason})
+                                                  </span>
+                                                )}
+                                              </li>
+                                            );
+                                          }
+
+                                          if (it.status === "completed") {
+                                            return (
+                                              <li
+                                                key={itIdx}
+                                                className="bullet-item text-[10.5px] leading-relaxed text-slate-800 text-justify relative pr-3.5"
+                                              >
+                                                <span className="absolute right-0 top-0 font-bold text-emerald-600">•</span>
+                                                <span className="inline-block bg-emerald-50 text-emerald-800 border border-emerald-300 text-[9px] font-bold px-1.5 py-0.5 rounded ml-1.5">
+                                                  ✓ تکمیل‌شده
+                                                </span>
+                                                <span>{it.text}</span>
+                                                {it.date && (
+                                                  <span className="target-date-tag text-slate-600 font-bold mr-1">
+                                                    ({toPersianDigits(it.date)})
+                                                  </span>
+                                                )}
+                                              </li>
+                                            );
+                                          }
+
+                                          if (it.status === "overdue") {
+                                            return (
+                                              <li
+                                                key={itIdx}
+                                                className="bullet-item text-[10.5px] leading-relaxed text-slate-800 text-justify relative pr-3.5"
+                                              >
+                                                <span className="absolute right-0 top-0 font-bold text-amber-600">•</span>
+                                                <span className="inline-block bg-amber-50 text-amber-800 border border-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded ml-1.5">
+                                                  ⚠️ گذشته از موعد
+                                                </span>
+                                                <span>{it.text}</span>
+                                                {it.date && (
+                                                  <span className="target-date-tag text-amber-800 font-bold mr-1">
+                                                    ({toPersianDigits(it.date)})
+                                                  </span>
+                                                )}
+                                              </li>
+                                            );
+                                          }
+
+                                          return (
+                                            <li
+                                              key={itIdx}
+                                              className="bullet-item text-[10.8px] leading-relaxed text-slate-800 text-justify relative pr-3.5"
+                                            >
+                                              <span className="absolute right-0 top-0 font-bold">•</span>
+                                              <span>{it.text}</span>
+                                              {it.date && (
+                                                <span className="target-date-tag text-slate-700 font-bold mr-1">
+                                                  ({toPersianDigits(it.date)})
+                                                </span>
+                                              )}
+                                            </li>
+                                          );
+                                        })}
                                       </ul>
                                     )}
                                   </div>
