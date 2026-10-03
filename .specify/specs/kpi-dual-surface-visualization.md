@@ -8,7 +8,7 @@
 ## User Scenarios & Testing
 
 ### User Story 1 - Standardized A4 PDF & Raw Report KPI Presentation (Priority: P1)
-As an organizational executive or auditing manager, I want periodic reports and printed A4 PDFs to display project KPIs in a single, unified compact matrix table so that I can immediately evaluate achievement ratios without visual clutter or broken page breaks.
+As an organizational executive or auditing manager, I want periodic reports and printed A4 PDFs to display project KPIs in a single, unified compact matrix table focusing on cumulative physical progress and period growth, so that I can immediately evaluate real progress without confusing abstract ratios or broken page breaks.
 
 **Why this priority**:
 Currently, KPIs appear as unformatted text chunks that are hard to parse during formal executive reviews. A clean, unified A4 table ensures executive-ready documents.
@@ -17,25 +17,30 @@ Currently, KPIs appear as unformatted text chunks that are hard to parse during 
 Can be fully tested by generating raw report details and PDF exports for projects with varying numbers of KPIs and verifying that all KPI rows render inside a compact table fitting cleanly within A4 printable width.
 
 **Acceptance Scenarios**:
-1. **Given** a project has one or more defined KPIs, **When** viewing the raw report details or exporting to PDF, **Then** all KPIs are displayed in a unified compact RTL table with columns: `[نام شاخص, واحد, مقدار مبنا, مقدار دوره جاری, هدف, درصد تحقق و وضعیت]`.
-2. **Given** a KPI has recorded values, **When** rendered in the table, **Then** the final column shows the calculated achievement percentage alongside an inline micro-progress bar colored green (on/exceeding target), amber (near target), or rose (missed/off-track).
-3. **Given** a KPI is flagged as `not_measured`, **When** rendered in the table, **Then** the current value and progress bar display a clear muted note ("اندازه‌گیری نشده") along with the stated reason without breaking table alignment.
-4. **Given** a project has zero defined KPIs, **When** generating the report, **Then** a clean single-line notice indicates no KPIs are assigned.
+1. **Given** a project has one or more defined KPIs, **When** viewing the raw report details or exporting to PDF, **Then** all KPIs are displayed in a unified compact RTL table with columns: `[ردیف, عنوان شاخص, واحد, مبنا, عملکرد دوره, هدف, پیشرفت کل پروژه]`.
+2. **Given** a KPI has recorded cumulative progress, **When** rendered in the table, **Then** the final column shows the total progress percentage (e.g. `۷.۱۵٪`) alongside a segmented two-color micro-progress bar:
+   - **Segment 1 (Baseline / Prior Progress):** Dark slate (`#475569`) indicating previously accumulated progress.
+   - **Segment 2 (Period Growth):** Vibrant emerald (`#10b981`) indicating newly achieved progress in this reporting cycle (e.g. `+۲.۱۵٪`).
+3. **Given** a project made zero progress during a cycle, **When** rendered in the table, **Then** the progress bar retains the baseline width in slate, displays the total percentage, and indicates `(بدون رشد)`.
+4. **Given** a KPI is flagged as `not_measured`, **When** rendered in the table, **Then** the current value and progress bar display a clear muted note ("عدم پایش") along with the stated reason without breaking table alignment.
+5. **Given** a project has zero defined KPIs, **When** generating the report, **Then** a clean single-line notice indicates no KPIs are assigned.
 
 ---
 
-### User Story 2 - Lightweight Interactive Input with Live Visual Feedback (Priority: P2)
-As a reporting staff member entering weekly/monthly report data, I want real-time visual feedback (such as a responsive comparison bar or slider) when typing KPI values so that I can immediately perceive my entry relative to baseline and target values and avoid catastrophic typographical mistakes.
+### User Story 2 - Lightweight Interactive Input with Live Dual-Color Visual Feedback & Regression Guardrail (Priority: P2)
+As a reporting staff member entering weekly/monthly report data, I want real-time visual feedback with segmented colors (prior progress vs. period growth) when typing KPI values, and I want the system to strictly prevent entering a cumulative progress lower than the previous reporting period.
 
 **Why this priority**:
-Staff frequently type raw numbers into blank input boxes with no immediate frame of reference, risking magnitude errors (e.g., entering 750 instead of 75%).
+Staff frequently type raw numbers into blank input boxes with no immediate frame of reference, risking magnitude errors or accidentally entering a regressive cumulative progress number.
 
 **Independent Test**:
-Can be tested in `EditReportModal` / report submission by adjusting a KPI input and confirming that the comparison bar adjusts instantaneously with zero UI lag and no external heavy dependencies.
+Can be tested in `EditReportModal` / `SubmitReport` by adjusting a KPI input and confirming that:
+1. The comparison bar adjusts instantaneously with dual-color breakdown.
+2. Entering any value below the previous baseline triggers an immediate visual warning and blocks submission.
 
 **Acceptance Scenarios**:
 1. **Given** a staff member opens the report form, **When** entering or editing a numeric KPI value, **Then** a lightweight pure CSS/SVG gauge updates in real time to show current position relative to baseline (مبنا) and target (هدف).
-2. **Given** the entered value satisfies or exceeds the target direction, **When** viewing the live gauge, **Then** the indicator transitions to emerald green; if below threshold, it indicates deviation in amber or rose.
+2. **Given** the staff member enters a value less than the previous baseline, **When** typing, **Then** the input borders turn rose, an immediate Persian warning appears, and form submission is prevented.
 3. **Given** low-spec devices or slower connections, **When** interacting with the KPI inputs, **Then** the interface responds instantly with zero input stutter (Zero JS bundle weight addition).
 
 ---

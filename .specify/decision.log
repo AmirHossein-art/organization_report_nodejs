@@ -1,0 +1,67 @@
+# Architecture Decision Record (ADR) — Log of Decisions
+
+### D1 — Single-Repo Full-Stack Monolith
+- **Decision:** Bundle Express 4 API and React 18 Vite frontend into a single `dist/server.cjs` artifact.
+- **Rationale:** Minimizes operational complexity for deployment on Railway for a single client organization.
+
+### D2 — Denormalized Snapshot Fields on Report
+- **Decision:** Copy `user_full_name`, `project_title`, and `period_title` directly onto the `Report` record at creation.
+- **Rationale:** Guarantees historical audit integrity even if users, projects, or periods are later renamed or reassigned.
+
+### D3 — Standalone Shamsi & Tehran Timezone Engine
+- **Decision:** Implement date handling purely in `src/dateUtils.ts` and `src/deadline.ts` without external Jalali packages.
+- **Rationale:** Eliminates external bundle weight and allows direct, deterministic unit testing of submission windows.
+
+### D4 — Deadline System: Global Settings + Per-Period Overrides
+- **Decision:** Maintain global defaults in `DeadlineSetting` with explicit per-period override capabilities in `ReportPeriod`.
+- **Rationale:** Accommodates organizational holidays and custom reporting extensions without modifying global defaults.
+
+### D5 — Session Auth via HttpOnly Cookies + Forced Password Rotation
+- **Decision:** Use JWTs in secure HttpOnly cookies with RBAC (Admin, Manager, User) and require staff password rotation upon initial sign-in.
+- **Rationale:** Ensures session hygiene and mitigates token leakage via XSS.
+
+### D6 — Multi-Provider Fallback for AI Audits
+- **Decision:** Route LLM analysis through `callAiWithFallback` with sequential fallback (Gemini → Cerebras → SambaNova).
+- **Rationale:** Prevents single-provider outages or regional API throttling from degrading administrative review workflows.
+
+### D7 — Deduplicated Legacy Report Import Pipeline
+- **Decision:** Provide a dedicated import script with deterministic `import_key` deduplication.
+- **Rationale:** Prevents duplicate report insertions when synchronizing legacy data.
+
+### D8 — Local Disk Storage for Uploads
+- **Decision:** Store WBS Excel sheets and report attachments on disk using Multer.
+- **Rationale:** Keeps infrastructure lightweight, with persistence backed by Railway volumes.
+
+### D9 — Multi-Repo Scaling Strategy for Organizational Units
+- **Decision:** Scale new organizational branches as independent repositories and ports behind an Nginx reverse proxy.
+- **Rationale:** Maintains separation of concerns and data boundaries between distinct administrative entities.
+
+### D10 — 3D Visual Explorer Layer
+- **Decision:** Integrate React Three Fiber (`@react-three/fiber` + `@react-three/drei`) as an optional visual exploration layer.
+- **Rationale:** Provides an interactive 3D topology of organizational projects and related action satellites.
+
+### D11 — Deputy-Level AI Strategic Analysis
+- **Decision:** Implement `/api/reports/analyze-deputy` to cross-reference WBS activities with periodic submissions and extract unquantified achievements as candidate KPIs (`suggested_kpis_from_text`).
+- **Rationale:** Empowers deputy directors to uncover structural progress indicators directly from textual narrative reports.
+
+### D12 — Streamlined Action Completion Without Manager Approval
+- **Decision:** Automatically set `is_completed = true` for actions checked by personnel in their reports, eliminating the intermediate pending-approval step.
+- **Rationale:** Reduces bureaucratic overhead and administrative bottlenecks for routine milestones.
+
+### D13 — Harmonized Monthly Project Reporting
+- **Decision:** Align monthly project reporting deadlines to the final week of each Shamsi month (`isLastWeekOfShamsiMonth`), suppressing missing-report indicators during weeks 1 through 3.
+- **Rationale:** Avoids false delinquency warnings while maintaining a unified submission rhythm.
+
+### D14 — Dual-Surface Cumulative KPI Representation & Regression Guardrail
+- **Decision:** Standardize KPI rendering across reporting surfaces around physical cumulative progress rather than abstract achievement ratios:
+  1. A unified compact matrix table (`KpiMatrixTable.tsx`) with segmented two-color micro-progress bars (slate for prior baseline progress + vibrant emerald for period growth) across raw reports and printable A4 PDF exports (`ReportsPdfDocument.tsx`).
+  2. Live dual-color visual feedback gauges in staff entry forms (`KpiInteractiveInput.tsx`) across `MyReports.tsx` and `SubmitReport.tsx`.
+  3. Strict client-side validation guardrails blocking staff from entering cumulative progress lower than previously accumulated project milestones.
+  4. Semantically adapted Recharts views in the dedicated web analytics view (`ProjectKpiAnalytics.tsx`).
+- **Rationale:** Prevents confusing anomalies (e.g. labeling low progress as 100% achieved), preserves strict A4 printable geometry, and prevents erroneous regressions in cumulative progress reporting.
+
+### D15 — Relational Integrity & Performance over NoSQL / Streaming Over-Engineering
+- **Decision:** Retain PostgreSQL and Prisma as the single source of truth (leveraging Postgres `JSONB` if semi-structured flexibility is needed) and reject distributed stream processors (Kafka). Address report saving latency by:
+  1. Adopting optimistic UI confirmation in the browser.
+  2. Eliminating historical database re-fetch storms (`fetch("/api/reports")`) upon save, merging single updated records into local state instead.
+- **Rationale:** For 10–15 concurrent users, distributed brokers add unnecessary memory bloat and architectural fragility on cloud hosting; the actual bottleneck is client-side re-fetching and sequential network roundtrips.

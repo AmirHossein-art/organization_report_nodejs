@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { Project, ReportPeriod, User, Report } from "../types";
 import { CustomSelect, ShamsiDatePicker } from "../components";
+import { KpiInteractiveInput } from "../components/KpiInteractiveInput";
 import { isLastWeekOfShamsiMonth } from "../dateUtils";
 
 // 🌐 تبدیل اعداد به فارسی
@@ -285,6 +286,17 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
     const hasInvalidAction = nextActions.some(a => !a.action_text.trim() || !a.target_date);
     if (hasInvalidAction) {
       flashError("لطفاً شرح و تاریخ سررسید دقیق را برای تمامی اقدامات آتی مشخص کنید.");
+      return;
+    }
+
+    const hasRegressedKpi = kpis.some((k) => {
+      const v = kpiValues[k.id];
+      if (!v || v.not_measured) return false;
+      const bNum = (k.baseline_value !== null && k.baseline_value !== undefined) ? Number(k.baseline_value) : null;
+      return bNum !== null && v.current_value !== "" && !isNaN(Number(v.current_value)) && Number(v.current_value) < bNum;
+    });
+    if (hasRegressedKpi) {
+      flashError("درصد پیشرفت تجمیعی پروژه‌ها نمی‌تواند کمتر از پیشرفت قبلی ثبت‌شده باشد.");
       return;
     }
 
@@ -807,108 +819,16 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
                     {kpis
                       .filter((k) => selectedKpiFilter === 0 || k.id === selectedKpiFilter)
                       .map((k) => {
-                      const v = kpiValues[k.id] || { current_value: "", baseline_value: "", not_measured: false, missing_reason: "" };
-                      const disabled = v.not_measured;
-                      // پیش‌نمایش محاسبه درصد برای کلاینت (منبع حقیقت سرور است)
-                      let preview: string | null = null;
-                      if (k.input_type === "percentage_change" && !disabled && v.baseline_value && v.current_value &&
-                          Number(v.baseline_value) !== 0 && !isNaN(Number(v.current_value)) && !isNaN(Number(v.baseline_value))) {
-                        const pct = ((Number(v.current_value) - Number(v.baseline_value)) / Number(v.baseline_value)) * 100;
-                        preview = `${toPersianDigits(pct.toFixed(1))}٪`;
-                      }
-                      let directDiffPreview: string | null = null;
-                      if (k.input_type === "direct" && !disabled && k.baseline_value !== null && k.baseline_value !== undefined &&
-                          v.current_value && !isNaN(Number(v.current_value))) {
-                        const diff = Number(v.current_value) - Number(k.baseline_value);
-                        const sign = diff > 0 ? "+" : "";
-                        directDiffPreview = `${sign}${toPersianDigits(diff.toFixed(2))} ${k.unit}`;
-                      }
-                      return (
-                        <div key={k.id} className="bg-slate-50/50 p-4 rounded-2xl border border-slate-200/70 space-y-3">
-                          <div className="flex items-start justify-between gap-2">
-                            <div>
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <h5 className="text-sm font-bold text-slate-800">{k.name}</h5>
-                                {k.baseline_value !== null && k.baseline_value !== undefined && (
-                                  <span className="font-semibold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-200 text-[10px]">
-                                    مبنا: {toPersianDigits(k.baseline_value)} {k.unit}
-                                  </span>
-                                )}
-                              </div>
-                              {k.description && (
-                                <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">{k.description}</p>
-                              )}
-                              <p className="text-[11px] text-slate-600 mt-1">
-                                هدف: {k.target_direction === "minimum" ? "حداقل" : "حداکثر"} {toPersianDigits(k.target_value)} {k.unit}
-                              </p>
-                            </div>
-                            <label className="flex items-center gap-1.5 shrink-0 cursor-pointer text-[11px] text-slate-600">
-                              <input
-                                type="checkbox"
-                                checked={disabled}
-                                onChange={(e) => updateKpiValue(k.id, { not_measured: e.target.checked })}
-                                className="w-4 h-4 accent-rose-600"
-                              />
-                              اندازه‌گیری نشده
-                            </label>
-                          </div>
-
-                          {disabled ? (
-                            <div className="space-y-1.5">
-                              <label className="text-[11px] font-medium text-slate-500 block">
-                                دلیل عدم اندازه‌گیری شاخص *
-                              </label>
-                              <textarea
-                                value={v.missing_reason}
-                                onChange={(e) => updateKpiValue(k.id, { missing_reason: e.target.value })}
-                                rows={2}
-                                placeholder="دلیل عدم اندازه‌گیری شاخص را وارد کنید..."
-                                className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-rose-500"
-                              />
-                            </div>
-                          ) : (
-                            <div className={k.input_type === "percentage_change" ? "grid grid-cols-1 sm:grid-cols-2 gap-3" : ""}>
-                              {k.input_type === "percentage_change" && (
-                                <div className="space-y-1.5">
-                                  <label className="text-[11px] font-medium text-slate-500 block">مقدار مبنا *</label>
-                                  <input
-                                    type="number"
-                                    step="any"
-                                    value={v.baseline_value}
-                                    onChange={(e) => updateKpiValue(k.id, { baseline_value: e.target.value })}
-                                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:border-emerald-600"
-                                    placeholder="مقدار مبنا"
-                                  />
-                                </div>
-                              )}
-                              <div className="space-y-1.5">
-                                <label className="text-[11px] font-medium text-slate-500 block">
-                                  {k.input_type === "direct" ? "مقدار این دوره *" : "مقدار دوره جاری *"}
-                                </label>
-                                <input
-                                  type="number"
-                                  step="any"
-                                  value={v.current_value}
-                                  onChange={(e) => updateKpiValue(k.id, { current_value: e.target.value })}
-                                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:border-emerald-600"
-                                  placeholder="مقدار این دوره"
-                                />
-                              </div>
-                              {k.input_type === "percentage_change" && preview !== null && (
-                                <div className="sm:col-span-2 text-[11px] text-slate-500">
-                                  درصد تغییر (پیش‌نمایش): <span className="font-bold text-emerald-700">{preview}</span>
-                                </div>
-                              )}
-                              {k.input_type === "direct" && directDiffPreview !== null && (
-                                <div className="text-[11px] text-slate-500">
-                                  رشد نسبت به مبنا (پیش‌نمایش): <span className={`font-bold ${Number(v.current_value) >= Number(k.baseline_value) ? "text-emerald-700" : "text-rose-600"}`}>{directDiffPreview}</span>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
+                        const v = kpiValues[k.id] || { current_value: "", baseline_value: "", not_measured: false, missing_reason: "" };
+                        return (
+                          <KpiInteractiveInput
+                            key={k.id}
+                            kpi={k}
+                            value={v}
+                            onChange={(updated) => updateKpiValue(k.id, updated)}
+                          />
+                        );
+                      })}
                   </div>
                 )}
               </div>

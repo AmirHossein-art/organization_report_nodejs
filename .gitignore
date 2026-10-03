@@ -206,3 +206,6 @@ prisma/legacy-data/
 
 # Agent internal folder
 .hermes/
+
+# Allow Spec-Kit decision logs
+!.specify/**/*.log

@@ -9,6 +9,7 @@ import {
 import { Report, ReportPeriod, Project, User, ProjectKpi } from "../types";
 import { CustomSelect } from "../components";
 import { toPersianDigits } from "../dateUtils";
+import { KpiMatrixTable } from "./KpiMatrixTable";
 
 const formatPersianDate = (value: string | null | undefined): string => {
   if (!value) return "بدون تاریخ مشخص";
@@ -58,10 +59,13 @@ interface ReportsPdfDocumentProps {
 
 interface PageSection {
   heading: string;
+  type?: "bullets" | "kpi_table";
   items: Array<{
     text: string;
     date?: string | null;
   }>;
+  kpiValues?: any[];
+  kpiText?: string | null;
 }
 
 interface PageBlock {
@@ -280,65 +284,8 @@ export default function ReportsPdfDocument({
           }))
           : [];
 
-      // ایجاد بخش ۳: شاخص‌های کلیدی عملکرد (KPI)
-      const kpisList: Array<{ text: string }> = [];
-      if (report.kpiValues && report.kpiValues.length > 0) {
-        report.kpiValues.forEach((kv) => {
-          const kpiMeta = kv.name ? kv : (kpiMap[kv.project_kpi_id] || kv);
-          const kpiName = kpiMeta?.name || "شاخص";
-          const unit = kpiMeta?.unit ? ` ${kpiMeta.unit}` : "";
-          const targetVal = kpiMeta?.target_value;
-          const targetDir = kpiMeta?.target_direction;
-          const targetDirLabel = targetDir === "minimum" ? "حداقل" : "حداکثر";
-          const baselineVal = kv.baseline_value ?? kpiMeta?.baseline_value;
-          const inputType = kpiMeta?.input_type || "direct";
-
-          if (kv.not_measured) {
-            kpisList.push({
-              text: `${kpiName}: اندازه‌گیری نشده (${kv.missing_reason || "ثبت نشده در این دوره"})`,
-            });
-          } else if (inputType === "percentage_change") {
-            const calc = kv.calculated_value !== null && kv.calculated_value !== undefined
-              ? `${toPersianDigits(Number(kv.calculated_value).toFixed(1))}٪`
-              : "—";
-            const base = baselineVal !== null && baselineVal !== undefined
-              ? `مبنا: ${toPersianDigits(baselineVal)}٪`
-              : null;
-            const target = targetVal !== null && targetVal !== undefined
-              ? `هدف: ${targetDirLabel} ${toPersianDigits(targetVal)}٪`
-              : null;
-            const metaParts = [base, target].filter(Boolean).join(" | ");
-            kpisList.push({
-              text: `${kpiName}: ${calc}${metaParts ? ` (${metaParts})` : ""}`,
-            });
-          } else {
-            const current = kv.current_value !== null && kv.current_value !== undefined
-              ? `${toPersianDigits(kv.current_value)}${unit}`
-              : "—";
-            const base = baselineVal !== null && baselineVal !== undefined
-              ? `مبنا: ${toPersianDigits(baselineVal)}${unit}`
-              : null;
-            const target = targetVal !== null && targetVal !== undefined
-              ? `هدف: ${targetDirLabel} ${toPersianDigits(targetVal)}${unit}`
-              : null;
-            let growthStr = "";
-            if (kv.current_value !== null && kv.current_value !== undefined && baselineVal !== null && baselineVal !== undefined) {
-              const diff = Number(kv.current_value) - Number(baselineVal);
-              const sign = diff > 0 ? "+" : "";
-              growthStr = ` [رشد: ${sign}${toPersianDigits(diff.toFixed(2))}${unit}]`;
-            }
-            const metaParts = [base, target].filter(Boolean).join(" | ");
-            kpisList.push({
-              text: `${kpiName}: ${current}${metaParts ? ` (${metaParts})` : ""}${growthStr}`,
-            });
-          }
-        });
-      } else if (report.kpi_text && report.kpi_text.trim()) {
-        kpisList.push({ text: report.kpi_text.trim() });
-      }
-
       // ایجاد بخش‌های خام
-      const rawSections: Array<{ heading: string; items: Array<{ text: string; date?: string | null }> }> = [];
+      const rawSections: Array<PageSection> = [];
 
       if (activitiesList.length > 0) {
         rawSections.push({
@@ -366,25 +313,37 @@ export default function ReportsPdfDocument({
         });
       }
 
-      // بخش ۳: شاخص‌های کلیدی عملکرد (اگر ثبت شده بود نمایش مقادیر، اگر ثبت نشده بود درج پیام شفاف)
-      if (kpisList.length > 0) {
+      // بخش ۳: شاخص‌های کلیدی عملکرد (KPI) با جدول ماتریسی فشرده
+      const hasStructuredKpis = Array.isArray(report.kpiValues) && report.kpiValues.length > 0;
+      const hasKpiText = Boolean(report.kpi_text && report.kpi_text.trim());
+
+      if (hasStructuredKpis || hasKpiText) {
         rawSections.push({
           heading: ".۳ شاخص‌های کلیدی عملکرد (KPI):",
-          items: kpisList,
+          type: "kpi_table",
+          items: [],
+          kpiValues: report.kpiValues || [],
+          kpiText: report.kpi_text,
         });
       } else {
         rawSections.push({
           heading: ".۳ شاخص‌های کلیدی عملکرد (KPI):",
-          items: [{ text: "شاخص‌های عملکردی برای این دوره ثبت نشده است." }],
+          type: "bullets",
+          items: [{ text: "شاخص عملکردی برای این دوره ثبت نشده است." }],
         });
       }
 
       let totalLinesInReport = 0;
       rawSections.forEach((sec) => {
         totalLinesInReport += 1.4; // عنوان بخش
-        sec.items.forEach((item) => {
-          totalLinesInReport += estimateItemLines(item.text);
-        });
+        if (sec.type === "kpi_table") {
+          const rowCount = sec.kpiValues && sec.kpiValues.length > 0 ? sec.kpiValues.length : 1;
+          totalLinesInReport += 1.2 + (rowCount * 1.3);
+        } else {
+          sec.items.forEach((item) => {
+            totalLinesInReport += estimateItemLines(item.text);
+          });
+        }
       });
 
       return { rawSections, totalLinesInReport };
@@ -393,7 +352,7 @@ export default function ReportsPdfDocument({
     // ساخت بلوک‌های صفحات یک گزارش طولانی
     const splitLongReport = (
       report: Report,
-      rawSections: Array<{ heading: string; items: Array<{ text: string; date?: string | null }> }>
+      rawSections: PageSection[]
     ): PageBlock[] => {
       const blocks: PageBlock[] = [];
       let currentPageSections: PageSection[] = [];
@@ -401,9 +360,39 @@ export default function ReportsPdfDocument({
       let isContinuation = false;
 
       rawSections.forEach((section) => {
-        if (section.items.length === 0) return;
-
         const headingLines = 1.4;
+
+        if (section.type === "kpi_table") {
+          const rowCount = section.kpiValues && section.kpiValues.length > 0 ? section.kpiValues.length : 1;
+          const tableLines = 1.2 + (rowCount * 1.3);
+
+          if (
+            currentLines + headingLines + tableLines > MAX_PAGE_CONTENT_LINES &&
+            currentPageSections.length > 0
+          ) {
+            blocks.push({
+              reportId: report.id,
+              projectTitle: report.project_title,
+              isContinuation,
+              sections: currentPageSections,
+            });
+            currentPageSections = [];
+            currentLines = 0;
+            isContinuation = true;
+          }
+
+          currentPageSections.push({
+            heading: isContinuation && currentPageSections.length === 0 ? `${section.heading} (ادامه)` : section.heading,
+            type: "kpi_table",
+            items: [],
+            kpiValues: section.kpiValues,
+            kpiText: section.kpiText,
+          });
+          currentLines += headingLines + tableLines;
+          return;
+        }
+
+        if (section.items.length === 0) return;
 
         if (
           currentLines + headingLines + estimateItemLines(section.items[0].text) > MAX_PAGE_CONTENT_LINES &&
@@ -988,22 +977,31 @@ export default function ReportsPdfDocument({
                                       {sec.heading}
                                     </div>
 
-                                    <ul className="bullet-list space-y-1 pr-1">
-                                      {sec.items.map((it, itIdx) => (
-                                        <li
-                                          key={itIdx}
-                                          className="bullet-item text-[10.8px] leading-relaxed text-slate-800 text-justify relative pr-3.5"
-                                        >
-                                          <span className="absolute right-0 top-0 font-bold">•</span>
-                                          <span>{it.text}</span>
-                                          {it.date && (
-                                            <span className="target-date-tag text-slate-700 font-bold mr-1">
-                                              ({toPersianDigits(it.date)})
-                                            </span>
-                                          )}
-                                        </li>
-                                      ))}
-                                    </ul>
+                                    {sec.type === "kpi_table" ? (
+                                      <KpiMatrixTable
+                                        kpiValues={sec.kpiValues}
+                                        kpiMap={kpiMap}
+                                        kpiText={sec.kpiText}
+                                        compactForPrint={true}
+                                      />
+                                    ) : (
+                                      <ul className="bullet-list space-y-1 pr-1">
+                                        {sec.items.map((it, itIdx) => (
+                                          <li
+                                            key={itIdx}
+                                            className="bullet-item text-[10.8px] leading-relaxed text-slate-800 text-justify relative pr-3.5"
+                                          >
+                                            <span className="absolute right-0 top-0 font-bold">•</span>
+                                            <span>{it.text}</span>
+                                            {it.date && (
+                                              <span className="target-date-tag text-slate-700 font-bold mr-1">
+                                                ({toPersianDigits(it.date)})
+                                              </span>
+                                            )}
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    )}
                                   </div>
                                 ))
                               )}

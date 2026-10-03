@@ -23,22 +23,21 @@ Transform project KPI presentation into two specialized surfaces:
 
 ## Component Architecture & Changes
 
-### 1. Compact A4 Matrix Table (`src/components/ReportsPdfDocument.tsx`)
-- Replace the current raw text list (`kpisList`) with an HTML table:
-  - Table class: `w-full text-right border-collapse border border-slate-200 text-[11px]`
-  - Headers: `ردیف | عنوان شاخص | واحد | مبنا | مقدار این دوره | هدف | درصد تحقق و وضعیت`
-  - Inline Micro-Progress Bar: A compact 48px width bar embedded inside the final table cell using pure CSS `background` and `border-radius`.
-  - Muted row rendering when `not_measured` is true.
+### 1. Compact A4 Matrix Table (`src/components/KpiMatrixTable.tsx` & `ReportsPdfDocument.tsx`)
+- Standardized 7-column table: `ردیف | عنوان شاخص | واحد | مبنا | عملکرد دوره | هدف | پیشرفت کل پروژه`
+- Embedded Segmented Micro-Progress Bar:
+  - Width: 100px with print-safe CSS (`print-color-adjust: exact`).
+  - Segment 1: Prior accumulated baseline in dark slate (`#475569`).
+  - Segment 2: Period growth newly added in vibrant emerald (`#10b981`).
+  - Remaining: Clean gray track.
+- Direct status indicators: Total progress percentage (e.g. `۷.۱۵٪`) and growth badge (e.g. `+۲.۱۵٪`).
 
-### 2. Live Interactive Visual Gauge in Staff Entry (`src/views/MyReports.tsx`)
-- In `ReportEditModal`:
-  - Enhance KPI row inputs: Keep the numeric text box for exact typing, and add a lightweight real-time comparison track below it.
-  - Track shows:
-    - Min/Max bounds.
-    - Marker for baseline (مبنا).
-    - Marker for target (هدف).
-    - Current filled bar transitioning from rose/amber to emerald green as target is reached.
-  - Pure SVG/CSS (0 KB bundle addition, 0ms render latency).
+### 2. Live Interactive Input with Regression Guardrail (`src/components/KpiInteractiveInput.tsx`)
+- Reusable component deployed across `MyReports.tsx` and `SubmitReport.tsx`:
+  - Enforces `min={baseline}` to block regression of cumulative progress.
+  - Immediate visual warning when value drops below previous baseline.
+  - Live dual-color progress gauge directly beneath the input with Persian legend.
+  - Zero heavy charting dependencies (pure lightweight HTML/CSS/SVG).
 
 ### 3. Save Latency & State Merge Optimization (`src/views/MyReports.tsx` & `src/App.tsx`)
 - Modify `handleSave`:
