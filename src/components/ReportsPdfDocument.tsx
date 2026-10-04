@@ -287,19 +287,17 @@ export default function ReportsPdfDocument({
 
   // الگوریتم صفحه‌بندی هوشمند: چند گزارش کوتاه در یک صفحه، گزارش‌های بلند به چند صفحه
   const paginatedReportPages = useMemo(() => {
+    // 📏 محاسبات استاندارد طلایی صفحه A4 (فونت ۱۲ و فاصله‌بندی متوازن)
     const pages: ReportPageData[] = [];
-    const MAX_PAGE_LINES = 38; // گنجایش کاملاً استاندارد و بدون سرریز در هر برگ A4
-    const BLOCK_OVERHEAD_LINES = 5; // هزینه عنوان پروژه، کادر و حاشیه‌ها
-    const BLOCK_GAP_LINES = 2; // فاصله بین دو گزارش در یک صفحه مشترک
-    const MAX_PAGE_CONTENT_LINES = MAX_PAGE_LINES - BLOCK_OVERHEAD_LINES; // گنجایش محتوای متنی در هر صفحه (۳۳ خط)
+    const MAX_PAGE_LINES = 44; // گنجایش ایمن و استاندارد صفحه A4
+    const BLOCK_OVERHEAD_LINES = 3.5; // هزینه عنوان پروژه، کادر و حاشیه‌ها
+    const BLOCK_GAP_LINES = 1.5; // فاصله بین دو گزارش در یک صفحه مشترک
+    const MAX_PAGE_CONTENT_LINES = MAX_PAGE_LINES - BLOCK_OVERHEAD_LINES; // گنجایش محتوای مفید (۴۰.۵ خط)
 
     const estimateItemLines = (text: string): number => {
       if (!text) return 1;
-      const len = text.length;
-      // هر خط استاندارد در عرض کارت A4 حدود ۷۵ کاراکتر است
-      // به همراه فاصله عمودی هر آیتم
-      const lines = Math.max(1, Math.ceil(len / 75));
-      return lines + 0.35;
+      const lines = Math.max(1, Math.ceil(text.length / 95));
+      return lines + 0.2;
     };
 
     // هزینه هر گزارش به خطوط معادل صفحه‌ای
@@ -423,10 +421,10 @@ export default function ReportsPdfDocument({
 
       let totalLinesInReport = 0;
       rawSections.forEach((sec) => {
-        totalLinesInReport += 1.4; // عنوان بخش
+        totalLinesInReport += 1.3; // عنوان بخش
         if (sec.type === "kpi_table") {
           const rowCount = sec.kpiValues && sec.kpiValues.length > 0 ? sec.kpiValues.length : 1;
-          totalLinesInReport += 1.2 + (rowCount * 1.3);
+          totalLinesInReport += 2.5 + (rowCount * 1.85);
         } else {
           sec.items.forEach((item) => {
             totalLinesInReport += estimateItemLines(item.text);
@@ -448,11 +446,11 @@ export default function ReportsPdfDocument({
       let isContinuation = false;
 
       rawSections.forEach((section) => {
-        const headingLines = 1.4;
+        const headingLines = 1.3;
 
         if (section.type === "kpi_table") {
           const rowCount = section.kpiValues && section.kpiValues.length > 0 ? section.kpiValues.length : 1;
-          const tableLines = 1.2 + (rowCount * 1.3);
+          const tableLines = 2.5 + (rowCount * 1.85);
 
           if (
             currentLines + headingLines + tableLines > MAX_PAGE_CONTENT_LINES &&
@@ -688,8 +686,8 @@ export default function ReportsPdfDocument({
           }
 
           @page {
-            size: A4 portrait;
-            margin: 0 !important;
+            size: A4;
+            margin: 8mm 12mm 8mm 12mm !important;
           }
 
           html, body {
@@ -701,7 +699,7 @@ export default function ReportsPdfDocument({
             direction: rtl !important;
             text-align: right !important;
             color: #0f172a !important;
-            font-size: 10.5px !important;
+            font-size: 12px !important;
             line-height: 1.45 !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
@@ -718,22 +716,18 @@ export default function ReportsPdfDocument({
             margin-bottom: 0 !important;
           }
 
-          /* هر صفحه A4 با ارتفاع ایمن ۲۷۸ میلی‌متر:
-             تضمین می‌کند حتی با مارجین‌های سخت‌افزاری پرینتر یا هدر/فوتر مرورگر،
-             ارتفاع از ۲۹۷ میلی‌متر تجاوز نکند و هیچ صفحه سفیدی تولید نشود */
+          /* هر صفحه A4 با ابعاد و مارجین ایمن از اطراف و هدر/فوتر */
           .pdf-page-container {
             width: 100% !important;
-            max-width: 210mm !important;
-            height: 278mm !important;
-            min-height: 278mm !important;
-            max-height: 278mm !important;
-            padding: 8mm 12mm 6mm 12mm !important;
+            max-width: 100% !important;
+            min-height: 265mm !important;
+            padding: 3mm 4mm !important;
             margin: 0 auto !important;
             position: relative !important;
             display: flex !important;
             flex-direction: column !important;
             justify-content: space-between !important;
-            overflow: hidden !important;
+            overflow: visible !important;
             border: none !important;
             border-radius: 0 !important;
             box-shadow: none !important;
@@ -765,14 +759,20 @@ export default function ReportsPdfDocument({
             width: 100% !important;
             border-collapse: collapse !important;
             border: 1px solid #cbd5e1 !important;
-            font-size: 9.5px !important;
+            font-size: 10.5px !important;
             line-height: 1.25 !important;
+            page-break-inside: auto !important;
+            break-inside: auto !important;
           }
           .kpi-matrix-table th, .kpi-matrix-table td {
             border: 1px solid #cbd5e1 !important;
             padding: 3.5px 5px !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
+          }
+          .kpi-matrix-table tr {
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
           }
           .kpi-matrix-table thead tr {
             background-color: #f1f5f9 !important;
@@ -786,7 +786,8 @@ export default function ReportsPdfDocument({
             border-radius: 16px !important;
             width: 100% !important;
             height: 100% !important;
-            padding: 28px 24px !important;
+            min-height: 255mm !important;
+            padding: 32px 28px !important;
             display: flex !important;
             flex-direction: column !important;
             justify-content: space-between !important;
@@ -815,7 +816,7 @@ export default function ReportsPdfDocument({
             width: 100% !important;
             height: 2px !important;
             background-color: rgba(255, 255, 255, 0.85) !important;
-            margin-bottom: 24px !important;
+            margin-bottom: 20px !important;
           }
 
           .cover-center {
@@ -830,8 +831,8 @@ export default function ReportsPdfDocument({
           .cover-logo-circle {
             background-color: #ffffff !important;
             border-radius: 50% !important;
-            width: 120px !important;
-            height: 120px !important;
+            width: 115px !important;
+            height: 115px !important;
             display: flex !important;
             align-items: center !important;
             justify-content: center !important;
@@ -840,8 +841,8 @@ export default function ReportsPdfDocument({
           }
 
           .cover-logo-circle img {
-            width: 80px !important;
-            height: 80px !important;
+            width: 78px !important;
+            height: 78px !important;
             object-fit: contain !important;
           }
 
@@ -863,7 +864,7 @@ export default function ReportsPdfDocument({
             background-color: #4a8b38 !important;
             color: #ffffff !important;
             font-weight: 800 !important;
-            font-size: 12.5px !important;
+            font-size: 13.5px !important;
             text-align: center !important;
             padding: 5px 12px !important;
             border-radius: 4px !important;
@@ -874,7 +875,7 @@ export default function ReportsPdfDocument({
           }
 
           .page-project-title {
-            font-size: 13.5px !important;
+            font-size: 15.5px !important;
             font-weight: 900 !important;
             color: #0f172a !important;
             margin: 0 0 6px 0 !important;
@@ -890,6 +891,7 @@ export default function ReportsPdfDocument({
             flex-direction: column !important;
             gap: 8px !important;
             background-color: #ffffff !important;
+            overflow: visible !important;
           }
 
           .section-block {
@@ -897,10 +899,10 @@ export default function ReportsPdfDocument({
           }
 
           .section-heading {
-            font-size: 11px !important;
-            font-weight: 900 !important;
+            font-size: 13px !important;
+            font-weight: 800 !important;
             color: #0f172a !important;
-            margin-bottom: 3px !important;
+            margin-bottom: 3.5px !important;
           }
 
           .bullet-list {
@@ -912,8 +914,8 @@ export default function ReportsPdfDocument({
           .bullet-item {
             position: relative !important;
             padding-right: 14px !important;
-            margin-bottom: 4px !important;
-            font-size: 10px !important;
+            margin-bottom: 3.5px !important;
+            font-size: 12px !important;
             line-height: 1.45 !important;
             color: #1e293b !important;
             text-align: justify !important;
@@ -924,7 +926,7 @@ export default function ReportsPdfDocument({
             position: absolute !important;
             right: 0 !important;
             top: -1px !important;
-            font-size: 12px !important;
+            font-size: 13px !important;
             font-weight: bold !important;
             color: #0f172a !important;
           }
@@ -935,6 +937,7 @@ export default function ReportsPdfDocument({
             font-weight: bold !important;
             color: #334155 !important;
             margin-right: 4px !important;
+            font-size: 11px !important;
           }
 
           /* شماره صفحه در پایین */
@@ -1081,8 +1084,10 @@ export default function ReportsPdfDocument({
               className="space-y-6"
             >
               {/* ۱. صفحه کاور و شروع گزارش (Starter Page) با سایز A4 */}
-              <div className="pdf-page-container w-[210mm] h-[297mm] min-h-[297mm] max-h-[297mm] bg-white p-[12mm_14mm_10mm_14mm] rounded-2xl shadow-xl border border-slate-300 overflow-hidden box-border">
-                <div className="cover-page-box bg-[#55913e] rounded-3xl p-10 flex flex-col justify-between text-white h-full box-border">
+              <div
+                className="pdf-page-container w-[210mm] h-[297mm] min-h-[297mm] max-h-[297mm] bg-white p-[10mm_14mm_10mm_14mm] rounded-2xl shadow-xl border border-slate-300 overflow-hidden box-border flex flex-col justify-between"
+              >
+                <div className="cover-page-box bg-[#55913e] rounded-3xl p-10 flex flex-col justify-between text-white w-full h-full box-border">
                   {/* بخش بالا */}
                   <div>
                     <div className="cover-subtitle text-xl font-bold opacity-95">
@@ -1126,12 +1131,12 @@ export default function ReportsPdfDocument({
                   return (
                     <div
                       key={`page-${pageIdx}`}
-                      className="pdf-page-container w-[210mm] h-[297mm] min-h-[297mm] max-h-[297mm] bg-white p-[12mm_14mm_10mm_14mm] rounded-2xl shadow-xl border border-slate-300 flex flex-col justify-between overflow-hidden box-border"
+                      className="pdf-page-container w-[210mm] h-[297mm] min-h-[297mm] max-h-[297mm] bg-white p-[10mm_14mm_10mm_14mm] rounded-2xl shadow-xl border border-slate-300 flex flex-col justify-between overflow-hidden box-border"
                     >
                       {/* محتوای بالا و اصلی صفحه */}
                       <div className="w-full space-y-4">
                         {/* نوار هدر سبز سراسری */}
-                        <div className="page-header-banner bg-[#4a8b38] text-white font-extrabold text-xs sm:text-sm text-center py-2 px-4 rounded mb-2.5 shadow-2xs shrink-0">
+                        <div className="page-header-banner bg-[#4a8b38] text-white font-extrabold text-sm sm:text-base text-center py-2 px-4 rounded mb-2.5 shadow-2xs shrink-0">
                           گزارش پروژه‌های استراتژیک سازمان حمل‌و‌نقل وترافیک شهرداری تهران
                         </div>
 
@@ -1139,10 +1144,10 @@ export default function ReportsPdfDocument({
                         {pageData.blocks.map((block, bIdx) => (
                           <div key={`p${pageIdx}-b${bIdx}`}>
                             {/* عنوان پروژه */}
-                            <h2 className="page-project-title text-sm sm:text-base font-black text-slate-900 mb-2 text-right shrink-0">
+                            <h2 className="page-project-title text-base sm:text-lg font-black text-slate-900 mb-2 text-right shrink-0">
                               {block.projectTitle}
                               {block.isContinuation && (
-                                <span className="text-xs font-bold text-slate-500 mr-2">
+                                <span className="text-sm font-bold text-slate-500 mr-2">
                                   (ادامه)
                                 </span>
                               )}
@@ -1151,13 +1156,13 @@ export default function ReportsPdfDocument({
                             {/* کادر احاطه‌کننده محتوای پروژه متناسب با حجم متن */}
                             <div className="project-main-card border-[1.5px] border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3 bg-white">
                               {block.sections.length === 0 ? (
-                                <p className="text-[11px] text-slate-400 italic">
+                                <p className="text-xs text-slate-400 italic">
                                   موردی برای این پروژه ثبت نشده است.
                                 </p>
                               ) : (
                                 block.sections.map((sec, sIdx) => (
                                   <div key={sIdx} className="section-block space-y-1">
-                                    <div className="section-heading text-xs font-black text-slate-900">
+                                    <div className="section-heading text-sm sm:text-base font-extrabold text-slate-900">
                                       {sec.heading}
                                     </div>
 
@@ -1175,7 +1180,7 @@ export default function ReportsPdfDocument({
                                             return (
                                               <li
                                                 key={itIdx}
-                                                className="bullet-item text-[10.5px] leading-relaxed text-slate-500 text-justify relative pr-3.5"
+                                                className="bullet-item text-[13px] sm:text-sm leading-relaxed text-slate-500 text-justify relative pr-3.5"
                                               >
                                                 <span className="absolute right-0 top-0 font-bold text-rose-500">•</span>
                                                 <span
@@ -1185,7 +1190,7 @@ export default function ReportsPdfDocument({
                                                     border: "1px solid #cbd5e1",
                                                     padding: "1px 6px",
                                                     borderRadius: "4px",
-                                                    fontSize: "9px",
+                                                    fontSize: "11px",
                                                     fontWeight: "bold",
                                                     marginLeft: "6px",
                                                     display: "inline-block",
@@ -1201,7 +1206,7 @@ export default function ReportsPdfDocument({
                                                     style={{
                                                       color: "#9f1239",
                                                       fontWeight: "bold",
-                                                      fontSize: "10px",
+                                                      fontSize: "11px",
                                                       marginRight: "6px",
                                                     }}
                                                   >
@@ -1216,7 +1221,7 @@ export default function ReportsPdfDocument({
                                             return (
                                               <li
                                                 key={itIdx}
-                                                className="bullet-item text-[10.5px] leading-relaxed text-slate-800 text-justify relative pr-3.5"
+                                                className="bullet-item text-[13px] sm:text-sm leading-relaxed text-slate-800 text-justify relative pr-3.5"
                                               >
                                                 <span className="absolute right-0 top-0 font-bold text-emerald-600">•</span>
                                                 <span
@@ -1226,7 +1231,7 @@ export default function ReportsPdfDocument({
                                                     border: "1px solid #6ee7b7",
                                                     padding: "1px 6px",
                                                     borderRadius: "4px",
-                                                    fontSize: "9px",
+                                                    fontSize: "11px",
                                                     fontWeight: "bold",
                                                     marginLeft: "6px",
                                                     display: "inline-block",
@@ -1245,6 +1250,7 @@ export default function ReportsPdfDocument({
                                                       fontWeight: "bold",
                                                       color: "#475569",
                                                       marginRight: "6px",
+                                                      fontSize: "12px",
                                                     }}
                                                   >
                                                     ({toPersianDigits(it.date)})
@@ -1258,7 +1264,7 @@ export default function ReportsPdfDocument({
                                             return (
                                               <li
                                                 key={itIdx}
-                                                className="bullet-item text-[10.5px] leading-relaxed text-slate-800 text-justify relative pr-3.5"
+                                                className="bullet-item text-[13px] sm:text-sm leading-relaxed text-slate-800 text-justify relative pr-3.5"
                                               >
                                                 <span className="absolute right-0 top-0 font-bold text-amber-600">•</span>
                                                 <span
@@ -1268,7 +1274,7 @@ export default function ReportsPdfDocument({
                                                     border: "1px solid #fecdd3",
                                                     padding: "1px 6px",
                                                     borderRadius: "4px",
-                                                    fontSize: "9px",
+                                                    fontSize: "11px",
                                                     fontWeight: "bold",
                                                     marginLeft: "6px",
                                                     display: "inline-block",
@@ -1287,6 +1293,7 @@ export default function ReportsPdfDocument({
                                                       fontWeight: "bold",
                                                       color: "#be123c",
                                                       marginRight: "6px",
+                                                      fontSize: "12px",
                                                     }}
                                                   >
                                                     ({toPersianDigits(it.date)})
@@ -1299,7 +1306,7 @@ export default function ReportsPdfDocument({
                                           return (
                                             <li
                                               key={itIdx}
-                                              className="bullet-item text-[10.8px] leading-relaxed text-slate-800 text-justify relative pr-3.5"
+                                              className="bullet-item text-[13px] sm:text-sm leading-relaxed text-slate-800 text-justify relative pr-3.5"
                                             >
                                               <span className="absolute right-0 top-0 font-bold">•</span>
                                               <span>{it.text}</span>
@@ -1311,6 +1318,7 @@ export default function ReportsPdfDocument({
                                                     fontWeight: "bold",
                                                     color: "#334155",
                                                     marginRight: "6px",
+                                                    fontSize: "12px",
                                                   }}
                                                 >
                                                   ({toPersianDigits(it.date)})

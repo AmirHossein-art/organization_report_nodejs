@@ -378,6 +378,7 @@ function DeputyAiAnalysisModal({
   const [managerComment, setManagerComment] = useState<string>("");
   const [revisionLoading, setRevisionLoading] = useState<boolean>(false);
   const [revisionSuccessMsg, setRevisionSuccessMsg] = useState<string>("");
+  const [printOrientation, setPrintOrientation] = useState<"portrait" | "landscape">("portrait");
 
   const runAnalysis = async (forceRefresh = false) => {
     if (!periodId || (!deputyName && !userId)) return;
@@ -467,7 +468,8 @@ function DeputyAiAnalysisModal({
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;600;700;800;900&display=swap');
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-    body { font-family: 'Vazirmatn', system-ui, sans-serif; background: #fff; color: #1e293b; padding: 12mm; line-height: 1.6; }
+    @page { size: A4 ${printOrientation}; margin: 8mm 10mm; }
+    body { font-family: 'Vazirmatn', system-ui, sans-serif; background: #fff; color: #1e293b; padding: 10mm; line-height: 1.6; }
     h1 { font-size: 16pt; font-weight: 900; margin-bottom: 6px; color: #0f172a; }
     .meta { font-size: 10pt; color: #64748b; margin-bottom: 16px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; }
     .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; margin-bottom: 12px; }
@@ -550,6 +552,34 @@ function DeputyAiAnalysisModal({
           </div>
 
           <div className="flex items-center gap-2">
+            {analysis && (
+              <div className="flex items-center bg-slate-800 p-0.5 rounded-xl border border-slate-700">
+                <button
+                  type="button"
+                  onClick={() => setPrintOrientation("portrait")}
+                  className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-all cursor-pointer ${
+                    printOrientation === "portrait"
+                      ? "bg-amber-400 text-slate-950 shadow-xs"
+                      : "text-slate-300 hover:text-white"
+                  }`}
+                  title="چاپ عمودی"
+                >
+                  عمودی
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPrintOrientation("landscape")}
+                  className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-all cursor-pointer ${
+                    printOrientation === "landscape"
+                      ? "bg-amber-400 text-slate-950 shadow-xs"
+                      : "text-slate-300 hover:text-white"
+                  }`}
+                  title="چاپ افقی"
+                >
+                  افقی
+                </button>
+              </div>
+            )}
             {analysis && (
               <button
                 type="button"
