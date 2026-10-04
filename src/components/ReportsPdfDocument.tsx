@@ -83,6 +83,367 @@ interface ReportPageData {
   blocks: PageBlock[];
 }
 
+const PDF_DOCUMENT_STYLES = `
+  /* ==========================================================================
+     گزارش جامع عملکرد - استایل‌های استاندارد مشترک بین وب و پرینت کروم
+     Single Source of Truth: Web Preview & Chrome Print
+     ========================================================================== */
+
+  * {
+    box-sizing: border-box !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  #printable-pdf-document {
+    direction: rtl !important;
+    text-align: right !important;
+    font-family: 'Vazirmatn', Sahel, Vazir, Shabnam, Tahoma, system-ui, -apple-system, sans-serif !important;
+    color: #0f172a !important;
+    -webkit-font-smoothing: antialiased !important;
+  }
+
+  /* ۱. ابعاد و کانتینر استاندارد برگه A4 */
+  .pdf-page-container {
+    width: 210mm !important;
+    max-width: 210mm !important;
+    height: 296.5mm !important;
+    min-height: 296.5mm !important;
+    max-height: 296.5mm !important;
+    padding: 10mm 14mm 10mm 14mm !important;
+    box-sizing: border-box !important;
+    background-color: #ffffff !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+    position: relative !important;
+    overflow: hidden !important;
+    direction: rtl !important;
+  }
+
+  /* استایل اختصاصی پیش‌نمایش در وب (داخل مودال سایت) */
+  @media screen {
+    .pdf-page-container {
+      margin: 0 auto 28px auto !important;
+      border-radius: 20px !important;
+      border: 1px solid #cbd5e1 !important;
+      box-shadow: 0 12px 30px -6px rgba(15, 23, 42, 0.15), 0 4px 12px -2px rgba(15, 23, 42, 0.08) !important;
+    }
+  }
+
+  /* استایل اختصاصی چاپ در کروم (Print / Save as PDF) */
+  @media print {
+    @page {
+      size: A4;
+      margin: 0;
+    }
+
+    html, body {
+      width: 210mm !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      background-color: #ffffff !important;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+
+    #printable-pdf-document {
+      width: 210mm !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+
+    .pdf-page-container {
+      width: 210mm !important;
+      max-width: 210mm !important;
+      height: 296.5mm !important;
+      min-height: 296.5mm !important;
+      max-height: 296.5mm !important;
+      padding: 10mm 14mm 10mm 14mm !important;
+      margin: 0 auto !important;
+      border: none !important;
+      border-radius: 0 !important;
+      box-shadow: none !important;
+      box-sizing: border-box !important;
+      page-break-after: always !important;
+      break-after: page !important;
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+    }
+
+    .pdf-page-container:first-child {
+      page-break-before: avoid !important;
+      break-before: avoid !important;
+      margin-top: 0 !important;
+    }
+
+    .pdf-page-container:last-child {
+      page-break-after: auto !important;
+      break-after: auto !important;
+    }
+  }
+
+  /* ۲. استایل‌های صفحه کاور اول */
+  .cover-page-box {
+    background-color: #55913e !important;
+    border-radius: 20px !important;
+    width: 100% !important;
+    height: 100% !important;
+    padding: 36px 32px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+    color: #ffffff !important;
+    box-sizing: border-box !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .cover-subtitle {
+    font-size: 20px !important;
+    font-weight: 700 !important;
+    color: #ffffff !important;
+    opacity: 0.95 !important;
+    margin-bottom: 6px !important;
+  }
+
+  .cover-title {
+    font-size: 28px !important;
+    font-weight: 900 !important;
+    color: #ffffff !important;
+    letter-spacing: -0.5px !important;
+    margin-bottom: 16px !important;
+  }
+
+  .cover-divider {
+    width: 100% !important;
+    height: 2px !important;
+    background-color: rgba(255, 255, 255, 0.85) !important;
+    margin-bottom: 24px !important;
+  }
+
+  .cover-center {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    text-align: center !important;
+    margin: auto 0 !important;
+  }
+
+  .cover-logo-circle {
+    background-color: #ffffff !important;
+    border-radius: 50% !important;
+    width: 120px !important;
+    height: 120px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    margin-bottom: 20px !important;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.12) !important;
+  }
+
+  .cover-logo-circle img {
+    width: 82px !important;
+    height: 82px !important;
+    object-fit: contain !important;
+  }
+
+  .cover-org-title {
+    font-size: 20px !important;
+    font-weight: 800 !important;
+    color: #ffffff !important;
+  }
+
+  .cover-bottom-date {
+    font-size: 15px !important;
+    font-weight: 700 !important;
+    color: #ffffff !important;
+    text-align: right !important;
+  }
+
+  /* ۳. استایل‌های صفحات گزارش */
+  .page-top-content {
+    width: 100% !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 10px !important;
+    flex: 1 1 auto !important;
+  }
+
+  .page-header-banner {
+    background-color: #4a8b38 !important;
+    color: #ffffff !important;
+    font-weight: 800 !important;
+    font-size: 14.5px !important;
+    text-align: center !important;
+    padding: 6px 14px !important;
+    border-radius: 6px !important;
+    margin-bottom: 8px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .page-project-title {
+    font-size: 17px !important;
+    font-weight: 900 !important;
+    color: #0f172a !important;
+    margin: 0 0 8px 0 !important;
+    text-align: right !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+  }
+
+  .page-project-title .continuation-tag {
+    font-size: 13.5px !important;
+    font-weight: 700 !important;
+    color: #64748b !important;
+  }
+
+  .project-main-card {
+    border: 1.5px solid #1e293b !important;
+    border-radius: 16px !important;
+    padding: 14px 18px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 10px !important;
+    background-color: #ffffff !important;
+    box-sizing: border-box !important;
+  }
+
+  .section-block {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 4px !important;
+  }
+
+  .section-heading {
+    font-size: 14.5px !important;
+    font-weight: 800 !important;
+    color: #0f172a !important;
+    margin-bottom: 4px !important;
+  }
+
+  .bullet-list {
+    list-style: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 5px !important;
+  }
+
+  .bullet-item {
+    position: relative !important;
+    padding-right: 16px !important;
+    font-size: 14px !important;
+    line-height: 1.5 !important;
+    color: #1e293b !important;
+    text-align: justify !important;
+    word-break: break-word !important;
+  }
+
+  .bullet-item .bullet-dot {
+    position: absolute !important;
+    right: 0 !important;
+    top: 0px !important;
+    font-size: 15px !important;
+    font-weight: bold !important;
+    line-height: 1 !important;
+  }
+
+  .action-status-badge {
+    display: inline-block !important;
+    padding: 2px 7px !important;
+    border-radius: 4px !important;
+    font-size: 11.5px !important;
+    font-weight: 700 !important;
+    margin-left: 8px !important;
+    vertical-align: middle !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .action-status-badge.completed {
+    background-color: #ecfdf5 !important;
+    color: #065f46 !important;
+    border: 1px solid #6ee7b7 !important;
+  }
+
+  .action-status-badge.overdue {
+    background-color: #fff1f2 !important;
+    color: #be123c !important;
+    border: 1px solid #fecdd3 !important;
+  }
+
+  .action-status-badge.cancelled {
+    background-color: #f8fafc !important;
+    color: #475569 !important;
+    border: 1px solid #cbd5e1 !important;
+  }
+
+  .action-target-date {
+    display: inline-block !important;
+    direction: ltr !important;
+    font-weight: 700 !important;
+    color: #475569 !important;
+    margin-right: 6px !important;
+    font-size: 12.5px !important;
+  }
+
+  .action-cancellation-reason {
+    color: #9f1239 !important;
+    font-weight: 700 !important;
+    font-size: 12px !important;
+    margin-right: 6px !important;
+  }
+
+  .kpi-matrix-table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    border: 1px solid #cbd5e1 !important;
+    font-size: 11.5px !important;
+    line-height: 1.35 !important;
+  }
+
+  .kpi-matrix-table th, .kpi-matrix-table td {
+    border: 1px solid #cbd5e1 !important;
+    padding: 4px 6px !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .kpi-matrix-table thead tr {
+    background-color: #f1f5f9 !important;
+    color: #1e293b !important;
+    font-weight: bold !important;
+  }
+
+  /* ۴. نوار فوتر امن در پایین برگه A4 */
+  .page-footer-bar {
+    width: 100% !important;
+    height: 24px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border-top: 1px solid #e2e8f0 !important;
+    padding-top: 4px !important;
+    margin-top: auto !important;
+    flex-shrink: 0 !important;
+    box-sizing: border-box !important;
+  }
+
+  .page-footer-text {
+    font-size: 12px !important;
+    font-weight: 700 !important;
+    color: #64748b !important;
+    letter-spacing: -0.2px !important;
+  }
+`;
+
 export default function ReportsPdfDocument({
   isOpen,
   onClose,
@@ -271,9 +632,9 @@ export default function ReportsPdfDocument({
 
     const result: string[] = [];
     lines.forEach((line) => {
-      // اگر یک پاراگراف بدون اینتر طولانی باشد (بیش از ۴۲۰ کاراکتر)，
+      // اگر یک پاراگراف بدون اینتر طولانی باشد (بیش از ۱۸۰ کاراکتر)،
       // آن را بر اساس علائم نگارشی به جملات کوچکتر تفکیک کن تا در صورت لزوم بین صفحات بشکند
-      if (line.length > 220) {
+      if (line.length > 180) {
         const sentences = line.split(/(?<=[.!?؛؟\n])\s+/).filter((s) => s.trim().length > 0);
         if (sentences.length > 1) {
           result.push(...sentences);
@@ -287,17 +648,17 @@ export default function ReportsPdfDocument({
 
   // الگوریتم صفحه‌بندی هوشمند: چند گزارش کوتاه در یک صفحه، گزارش‌های بلند به چند صفحه
   const paginatedReportPages = useMemo(() => {
-    // 📏 محاسبات استاندارد طلایی صفحه A4 (فونت ۱۲ و فاصله‌بندی متوازن)
+    // 📏 محاسبات استاندارد صفحه A4 (فونت ۱۴ و فاصله‌بندی متوازن)
     const pages: ReportPageData[] = [];
-    const MAX_PAGE_LINES = 44; // گنجایش ایمن و استاندارد صفحه A4
+    const MAX_PAGE_LINES = 38; // گنجایش ایمن و استاندارد صفحه A4 با فونت ۱۴
     const BLOCK_OVERHEAD_LINES = 3.5; // هزینه عنوان پروژه، کادر و حاشیه‌ها
     const BLOCK_GAP_LINES = 1.5; // فاصله بین دو گزارش در یک صفحه مشترک
-    const MAX_PAGE_CONTENT_LINES = MAX_PAGE_LINES - BLOCK_OVERHEAD_LINES; // گنجایش محتوای مفید (۴۰.۵ خط)
+    const MAX_PAGE_CONTENT_LINES = MAX_PAGE_LINES - BLOCK_OVERHEAD_LINES; // گنجایش محتوای مفید (۳۴.۵ خط)
 
     const estimateItemLines = (text: string): number => {
       if (!text) return 1;
-      const lines = Math.max(1, Math.ceil(text.length / 95));
-      return lines + 0.2;
+      const lines = Math.max(1, Math.ceil(text.length / 80));
+      return lines + 0.25;
     };
 
     // هزینه هر گزارش به خطوط معادل صفحه‌ای
@@ -421,10 +782,10 @@ export default function ReportsPdfDocument({
 
       let totalLinesInReport = 0;
       rawSections.forEach((sec) => {
-        totalLinesInReport += 1.3; // عنوان بخش
+        totalLinesInReport += 1.4; // عنوان بخش
         if (sec.type === "kpi_table") {
           const rowCount = sec.kpiValues && sec.kpiValues.length > 0 ? sec.kpiValues.length : 1;
-          totalLinesInReport += 2.5 + (rowCount * 1.85);
+          totalLinesInReport += 3.0 + (rowCount * 2.1);
         } else {
           sec.items.forEach((item) => {
             totalLinesInReport += estimateItemLines(item.text);
@@ -446,11 +807,11 @@ export default function ReportsPdfDocument({
       let isContinuation = false;
 
       rawSections.forEach((section) => {
-        const headingLines = 1.3;
+        const headingLines = 1.4;
 
         if (section.type === "kpi_table") {
           const rowCount = section.kpiValues && section.kpiValues.length > 0 ? section.kpiValues.length : 1;
-          const tableLines = 2.5 + (rowCount * 1.85);
+          const tableLines = 3.0 + (rowCount * 2.1);
 
           if (
             currentLines + headingLines + tableLines > MAX_PAGE_CONTENT_LINES &&
@@ -676,283 +1037,13 @@ export default function ReportsPdfDocument({
         <title>گزارش پروژه‌های استراتژیک - ${formatPersianDateTime(new Date())}</title>
         <style>
           ${combinedCss}
-
-          /* تنظیمات قطعی پرینتر مرورگر بدون ایجاد صفحات سفید مازاد */
-          * {
-            box-sizing: border-box !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
-            color-adjust: exact !important;
-          }
-
-          @page {
-            size: A4;
-            margin: 8mm 12mm 8mm 12mm !important;
-          }
-
-          html, body {
-            width: 100% !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            background-color: #ffffff !important;
-            font-family: 'Vazirmatn', Sahel, Vazir, Shabnam, Tahoma, system-ui, -apple-system, sans-serif !important;
-            direction: rtl !important;
-            text-align: right !important;
-            color: #0f172a !important;
-            font-size: 12px !important;
-            line-height: 1.45 !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
-          }
-
-          /* حذف مارجین‌های space-y-6 در هنگام چاپ */
-          #printable-pdf-document, .space-y-6 {
-            margin: 0 !important;
-            padding: 0 !important;
-          }
-          #printable-pdf-document > :not([hidden]) ~ :not([hidden]),
-          .space-y-6 > :not([hidden]) ~ :not([hidden]) {
-            margin-top: 0 !important;
-            margin-bottom: 0 !important;
-          }
-
-          /* هر صفحه A4 با ابعاد و مارجین ایمن از اطراف و هدر/فوتر */
-          .pdf-page-container {
-            width: 100% !important;
-            max-width: 100% !important;
-            min-height: 265mm !important;
-            padding: 3mm 4mm !important;
-            margin: 0 auto !important;
-            position: relative !important;
-            display: flex !important;
-            flex-direction: column !important;
-            justify-content: space-between !important;
-            overflow: visible !important;
-            border: none !important;
-            border-radius: 0 !important;
-            box-shadow: none !important;
-            background-color: #ffffff !important;
-            box-sizing: border-box !important;
-            page-break-before: auto !important;
-            break-before: auto !important;
-            page-break-after: always !important;
-            break-after: page !important;
-            page-break-inside: avoid !important;
-            break-inside: avoid !important;
-          }
-
-          /* صفحه اول هرگز صفحه سفید قبل از خود نخواهد داشت */
-          .pdf-page-container:first-child {
-            page-break-before: avoid !important;
-            break-before: avoid !important;
-            margin-top: 0 !important;
-          }
-
-          /* صفحه آخر هرگز برگه سفید مازاد بعد از خود ایجاد نمی‌کند */
-          .pdf-page-container:last-child {
-            page-break-after: auto !important;
-            break-after: auto !important;
-          }
-
-          /* استایل‌های قطعی جدول شاخص‌ها */
-          .kpi-matrix-table {
-            width: 100% !important;
-            border-collapse: collapse !important;
-            border: 1px solid #cbd5e1 !important;
-            font-size: 10.5px !important;
-            line-height: 1.25 !important;
-            page-break-inside: auto !important;
-            break-inside: auto !important;
-          }
-          .kpi-matrix-table th, .kpi-matrix-table td {
-            border: 1px solid #cbd5e1 !important;
-            padding: 3.5px 5px !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
-          }
-          .kpi-matrix-table tr {
-            page-break-inside: avoid !important;
-            break-inside: avoid !important;
-          }
-          .kpi-matrix-table thead tr {
-            background-color: #f1f5f9 !important;
-            color: #1e293b !important;
-            font-weight: bold !important;
-          }
-
-          /* صفحه کاور اول با پس‌زمینه سبز تیره و تناسب ابعاد */
-          .cover-page-box {
-            background-color: #55913e !important;
-            border-radius: 16px !important;
-            width: 100% !important;
-            height: 100% !important;
-            min-height: 255mm !important;
-            padding: 32px 28px !important;
-            display: flex !important;
-            flex-direction: column !important;
-            justify-content: space-between !important;
-            color: #ffffff !important;
-            box-sizing: border-box !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
-          }
-
-          .cover-subtitle {
-            font-size: 18px !important;
-            font-weight: 700 !important;
-            color: #ffffff !important;
-            margin-bottom: 4px !important;
-          }
-
-          .cover-title {
-            font-size: 26px !important;
-            font-weight: 900 !important;
-            color: #ffffff !important;
-            letter-spacing: -0.5px !important;
-            margin-bottom: 14px !important;
-          }
-
-          .cover-divider {
-            width: 100% !important;
-            height: 2px !important;
-            background-color: rgba(255, 255, 255, 0.85) !important;
-            margin-bottom: 20px !important;
-          }
-
-          .cover-center {
-            display: flex !important;
-            flex-direction: column !important;
-            align-items: center !important;
-            justify-content: center !important;
-            text-align: center !important;
-            margin: auto 0 !important;
-          }
-
-          .cover-logo-circle {
-            background-color: #ffffff !important;
-            border-radius: 50% !important;
-            width: 115px !important;
-            height: 115px !important;
-            display: flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-            margin-bottom: 18px !important;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1) !important;
-          }
-
-          .cover-logo-circle img {
-            width: 78px !important;
-            height: 78px !important;
-            object-fit: contain !important;
-          }
-
-          .cover-org-title {
-            font-size: 18px !important;
-            font-weight: 800 !important;
-            color: #ffffff !important;
-          }
-
-          .cover-bottom-date {
-            font-size: 14px !important;
-            font-weight: 700 !important;
-            color: #ffffff !important;
-            text-align: right !important;
-          }
-
-          /* هدر سبز بالای صفحات گزارش */
-          .page-header-banner {
-            background-color: #4a8b38 !important;
-            color: #ffffff !important;
-            font-weight: 800 !important;
-            font-size: 13.5px !important;
-            text-align: center !important;
-            padding: 5px 12px !important;
-            border-radius: 4px !important;
-            margin-bottom: 6px !important;
-            width: 100% !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
-          }
-
-          .page-project-title {
-            font-size: 15.5px !important;
-            font-weight: 900 !important;
-            color: #0f172a !important;
-            margin: 0 0 6px 0 !important;
-            text-align: right !important;
-          }
-
-          /* باکس دور پروژه */
-          .project-main-card {
-            border: 1.5px solid #1e293b !important;
-            border-radius: 14px !important;
-            padding: 12px 16px !important;
-            display: flex !important;
-            flex-direction: column !important;
-            gap: 8px !important;
-            background-color: #ffffff !important;
-            overflow: visible !important;
-          }
-
-          .section-block {
-            margin-bottom: 3px !important;
-          }
-
-          .section-heading {
-            font-size: 13px !important;
-            font-weight: 800 !important;
-            color: #0f172a !important;
-            margin-bottom: 3.5px !important;
-          }
-
-          .bullet-list {
-            list-style: none !important;
-            padding: 0 !important;
-            margin: 0 !important;
-          }
-
-          .bullet-item {
-            position: relative !important;
-            padding-right: 14px !important;
-            margin-bottom: 3.5px !important;
-            font-size: 12px !important;
-            line-height: 1.45 !important;
-            color: #1e293b !important;
-            text-align: justify !important;
-          }
-
-          .bullet-item::before {
-            content: "•" !important;
-            position: absolute !important;
-            right: 0 !important;
-            top: -1px !important;
-            font-size: 13px !important;
-            font-weight: bold !important;
-            color: #0f172a !important;
-          }
-
-          .target-date-tag {
-            display: inline-block !important;
-            direction: ltr !important;
-            font-weight: bold !important;
-            color: #334155 !important;
-            margin-right: 4px !important;
-            font-size: 11px !important;
-          }
-
-          /* شماره صفحه در پایین */
-          .page-bottom-number {
-            text-align: center !important;
-            font-size: 12px !important;
-            font-weight: 800 !important;
-            color: #0f172a !important;
-            padding-top: 4px !important;
-            margin-top: auto !important;
-          }
+          ${PDF_DOCUMENT_STYLES}
         </style>
       </head>
       <body>
-        ${content}
+        <div id="printable-pdf-document">
+          ${content}
+        </div>
       </body>
       </html>
     `);
@@ -1072,6 +1163,9 @@ export default function ReportsPdfDocument({
 
         {/* بدنه پیش‌نمایش سند PDF با ابعاد استاندارد A4 */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-slate-300/80 space-y-6 flex flex-col items-center">
+          {/* استایل‌های جامع مشترک خروجی و پیش‌نمایش A4 */}
+          <style dangerouslySetInnerHTML={{ __html: PDF_DOCUMENT_STYLES }} />
+
           {loading ? (
             <div className="py-20 text-center text-slate-500 text-xs flex items-center justify-center gap-2">
               <RefreshCw className="w-6 h-6 animate-spin text-emerald-700" />
@@ -1081,40 +1175,36 @@ export default function ReportsPdfDocument({
             <div
               id="printable-pdf-document"
               ref={printAreaRef}
-              className="space-y-6"
             >
               {/* ۱. صفحه کاور و شروع گزارش (Starter Page) با سایز A4 */}
-              <div
-                className="pdf-page-container w-[210mm] h-[297mm] min-h-[297mm] max-h-[297mm] bg-white p-[10mm_14mm_10mm_14mm] rounded-2xl shadow-xl border border-slate-300 overflow-hidden box-border flex flex-col justify-between"
-              >
-                <div className="cover-page-box bg-[#55913e] rounded-3xl p-10 flex flex-col justify-between text-white w-full h-full box-border">
+              <div className="pdf-page-container">
+                <div className="cover-page-box">
                   {/* بخش بالا */}
                   <div>
-                    <div className="cover-subtitle text-xl font-bold opacity-95">
+                    <div className="cover-subtitle">
                       {reportTypeName}
                     </div>
-                    <div className="cover-title text-3xl font-black mt-1 mb-4">
+                    <div className="cover-title">
                       پروژه‌های استراتژیک
                     </div>
-                    <div className="cover-divider w-full h-[2px] bg-white/80 my-4" />
+                    <div className="cover-divider" />
                   </div>
 
                   {/* بخش میانی با لوگوی رسمی سازمان */}
-                  <div className="cover-center flex flex-col items-center justify-center text-center my-auto">
-                    <div className="cover-logo-circle bg-white rounded-full p-4 w-36 h-36 flex items-center justify-center shadow-xl mb-6">
+                  <div className="cover-center">
+                    <div className="cover-logo-circle">
                       <img
                         src="/logo.png"
                         alt="سازمان حمل و نقل و ترافیک شهرداری تهران"
-                        className="w-24 h-24 object-contain"
                       />
                     </div>
-                    <div className="cover-org-title text-xl font-extrabold text-white">
+                    <div className="cover-org-title">
                       سازمان حمل‌و‌نقل و ترافیک شهرداری تهران
                     </div>
                   </div>
 
                   {/* تاریخ پایین صفحه */}
-                  <div className="cover-bottom-date text-base font-bold text-white text-right">
+                  <div className="cover-bottom-date">
                     {coverDate}
                   </div>
                 </div>
@@ -1131,12 +1221,12 @@ export default function ReportsPdfDocument({
                   return (
                     <div
                       key={`page-${pageIdx}`}
-                      className="pdf-page-container w-[210mm] h-[297mm] min-h-[297mm] max-h-[297mm] bg-white p-[10mm_14mm_10mm_14mm] rounded-2xl shadow-xl border border-slate-300 flex flex-col justify-between overflow-hidden box-border"
+                      className="pdf-page-container"
                     >
                       {/* محتوای بالا و اصلی صفحه */}
-                      <div className="w-full space-y-4">
+                      <div className="page-top-content">
                         {/* نوار هدر سبز سراسری */}
-                        <div className="page-header-banner bg-[#4a8b38] text-white font-extrabold text-sm sm:text-base text-center py-2 px-4 rounded mb-2.5 shadow-2xs shrink-0">
+                        <div className="page-header-banner">
                           گزارش پروژه‌های استراتژیک سازمان حمل‌و‌نقل وترافیک شهرداری تهران
                         </div>
 
@@ -1144,25 +1234,25 @@ export default function ReportsPdfDocument({
                         {pageData.blocks.map((block, bIdx) => (
                           <div key={`p${pageIdx}-b${bIdx}`}>
                             {/* عنوان پروژه */}
-                            <h2 className="page-project-title text-base sm:text-lg font-black text-slate-900 mb-2 text-right shrink-0">
-                              {block.projectTitle}
+                            <h2 className="page-project-title">
+                              <span>{block.projectTitle}</span>
                               {block.isContinuation && (
-                                <span className="text-sm font-bold text-slate-500 mr-2">
+                                <span className="continuation-tag">
                                   (ادامه)
                                 </span>
                               )}
                             </h2>
 
-                            {/* کادر احاطه‌کننده محتوای پروژه متناسب با حجم متن */}
-                            <div className="project-main-card border-[1.5px] border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3 bg-white">
+                            {/* کادر احاطه‌کننده محتوای پروژه */}
+                            <div className="project-main-card">
                               {block.sections.length === 0 ? (
-                                <p className="text-xs text-slate-400 italic">
+                                <p style={{ fontSize: "13px", color: "#94a3b8", fontStyle: "italic" }}>
                                   موردی برای این پروژه ثبت نشده است.
                                 </p>
                               ) : (
                                 block.sections.map((sec, sIdx) => (
-                                  <div key={sIdx} className="section-block space-y-1">
-                                    <div className="section-heading text-sm sm:text-base font-extrabold text-slate-900">
+                                  <div key={sIdx} className="section-block">
+                                    <div className="section-heading">
                                       {sec.heading}
                                     </div>
 
@@ -1174,42 +1264,18 @@ export default function ReportsPdfDocument({
                                         compactForPrint={true}
                                       />
                                     ) : (
-                                      <ul className="bullet-list space-y-1.5 pr-1">
+                                      <ul className="bullet-list">
                                         {sec.items.map((it, itIdx) => {
                                           if (it.status === "cancelled") {
                                             return (
-                                              <li
-                                                key={itIdx}
-                                                className="bullet-item text-[13px] sm:text-sm leading-relaxed text-slate-500 text-justify relative pr-3.5"
-                                              >
-                                                <span className="absolute right-0 top-0 font-bold text-rose-500">•</span>
-                                                <span
-                                                  style={{
-                                                    backgroundColor: "#f8fafc",
-                                                    color: "#475569",
-                                                    border: "1px solid #cbd5e1",
-                                                    padding: "1px 6px",
-                                                    borderRadius: "4px",
-                                                    fontSize: "11px",
-                                                    fontWeight: "bold",
-                                                    marginLeft: "6px",
-                                                    display: "inline-block",
-                                                    printColorAdjust: "exact",
-                                                    WebkitPrintColorAdjust: "exact",
-                                                  }}
-                                                >
+                                              <li key={itIdx} className="bullet-item">
+                                                <span className="bullet-dot" style={{ color: "#f43f5e" }}>•</span>
+                                                <span className="action-status-badge cancelled">
                                                   ✕ حذف‌شده
                                                 </span>
-                                                <span className="line-through">{it.text}</span>
+                                                <span style={{ textDecoration: "line-through", color: "#64748b" }}>{it.text}</span>
                                                 {it.cancellationReason && (
-                                                  <span
-                                                    style={{
-                                                      color: "#9f1239",
-                                                      fontWeight: "bold",
-                                                      fontSize: "11px",
-                                                      marginRight: "6px",
-                                                    }}
-                                                  >
+                                                  <span className="action-cancellation-reason">
                                                     (علت حذف: {it.cancellationReason})
                                                   </span>
                                                 )}
@@ -1219,40 +1285,14 @@ export default function ReportsPdfDocument({
 
                                           if (it.status === "completed") {
                                             return (
-                                              <li
-                                                key={itIdx}
-                                                className="bullet-item text-[13px] sm:text-sm leading-relaxed text-slate-800 text-justify relative pr-3.5"
-                                              >
-                                                <span className="absolute right-0 top-0 font-bold text-emerald-600">•</span>
-                                                <span
-                                                  style={{
-                                                    backgroundColor: "#ecfdf5",
-                                                    color: "#065f46",
-                                                    border: "1px solid #6ee7b7",
-                                                    padding: "1px 6px",
-                                                    borderRadius: "4px",
-                                                    fontSize: "11px",
-                                                    fontWeight: "bold",
-                                                    marginLeft: "6px",
-                                                    display: "inline-block",
-                                                    printColorAdjust: "exact",
-                                                    WebkitPrintColorAdjust: "exact",
-                                                  }}
-                                                >
+                                              <li key={itIdx} className="bullet-item">
+                                                <span className="bullet-dot" style={{ color: "#059669" }}>•</span>
+                                                <span className="action-status-badge completed">
                                                   ✓ تکمیل‌شده
                                                 </span>
                                                 <span>{it.text}</span>
                                                 {it.date && (
-                                                  <span
-                                                    style={{
-                                                      display: "inline-block",
-                                                      direction: "ltr",
-                                                      fontWeight: "bold",
-                                                      color: "#475569",
-                                                      marginRight: "6px",
-                                                      fontSize: "12px",
-                                                    }}
-                                                  >
+                                                  <span className="action-target-date">
                                                     ({toPersianDigits(it.date)})
                                                   </span>
                                                 )}
@@ -1262,40 +1302,14 @@ export default function ReportsPdfDocument({
 
                                           if (it.status === "overdue") {
                                             return (
-                                              <li
-                                                key={itIdx}
-                                                className="bullet-item text-[13px] sm:text-sm leading-relaxed text-slate-800 text-justify relative pr-3.5"
-                                              >
-                                                <span className="absolute right-0 top-0 font-bold text-amber-600">•</span>
-                                                <span
-                                                  style={{
-                                                    backgroundColor: "#fff1f2",
-                                                    color: "#be123c",
-                                                    border: "1px solid #fecdd3",
-                                                    padding: "1px 6px",
-                                                    borderRadius: "4px",
-                                                    fontSize: "11px",
-                                                    fontWeight: "bold",
-                                                    marginLeft: "6px",
-                                                    display: "inline-block",
-                                                    printColorAdjust: "exact",
-                                                    WebkitPrintColorAdjust: "exact",
-                                                  }}
-                                                >
+                                              <li key={itIdx} className="bullet-item">
+                                                <span className="bullet-dot" style={{ color: "#d97706" }}>•</span>
+                                                <span className="action-status-badge overdue">
                                                   ⚠️ گذشته از موعد
                                                 </span>
                                                 <span>{it.text}</span>
                                                 {it.date && (
-                                                  <span
-                                                    style={{
-                                                      display: "inline-block",
-                                                      direction: "ltr",
-                                                      fontWeight: "bold",
-                                                      color: "#be123c",
-                                                      marginRight: "6px",
-                                                      fontSize: "12px",
-                                                    }}
-                                                  >
+                                                  <span className="action-target-date" style={{ color: "#be123c" }}>
                                                     ({toPersianDigits(it.date)})
                                                   </span>
                                                 )}
@@ -1304,23 +1318,11 @@ export default function ReportsPdfDocument({
                                           }
 
                                           return (
-                                            <li
-                                              key={itIdx}
-                                              className="bullet-item text-[13px] sm:text-sm leading-relaxed text-slate-800 text-justify relative pr-3.5"
-                                            >
-                                              <span className="absolute right-0 top-0 font-bold">•</span>
+                                            <li key={itIdx} className="bullet-item">
+                                              <span className="bullet-dot" style={{ color: "#0f172a" }}>•</span>
                                               <span>{it.text}</span>
                                               {it.date && (
-                                                <span
-                                                  style={{
-                                                    display: "inline-block",
-                                                    direction: "ltr",
-                                                    fontWeight: "bold",
-                                                    color: "#334155",
-                                                    marginRight: "6px",
-                                                    fontSize: "12px",
-                                                  }}
-                                                >
+                                                <span className="action-target-date">
                                                   ({toPersianDigits(it.date)})
                                                 </span>
                                               )}
@@ -1337,9 +1339,11 @@ export default function ReportsPdfDocument({
                         ))}
                       </div>
 
-                      {/* ۳. شماره صفحه به اعداد فارسی در وسط و پایین صفحه */}
-                      <div className="page-bottom-number text-center font-bold text-sm text-slate-900 pt-2 shrink-0">
-                        {toPersianDigits(pageIdx + 1)}
+                      {/* ۳. نوار فوتر امن در پایین برگه A4 */}
+                      <div className="page-footer-bar">
+                        <span className="page-footer-text">
+                          صفحه {toPersianDigits(pageIdx + 1)} از {toPersianDigits(paginatedReportPages.length)}
+                        </span>
                       </div>
                     </div>
                   );
