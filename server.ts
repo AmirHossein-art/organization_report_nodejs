@@ -2576,6 +2576,7 @@ app.get("/api/next-actions", authenticate, async (req: any, res) => {
       cancellation_reason: a.cancellation_reason || null,
       cancelled_by_user_id: a.cancelled_by_user_id || null,
       cancelled_by_user_name: a.cancelled_by_user_name || null,
+      canelled_period_id: a.canelled_period_id || null,
       project: a.project || a.report?.project,
       user: a.user || a.report?.user,
     }));
@@ -2744,6 +2745,11 @@ app.patch("/api/next-actions/:id/cancel", authenticate, async (req: any, res) =>
       }
     }
 
+    const activePeriod = await prisma.reportPeriod.findFirst({
+      where: { is_open: true },
+      orderBy: { period_end: "desc" },
+    });
+
     const updated = await prisma.nextAction.update({
       where: { id: actionId },
       data: {
@@ -2752,6 +2758,7 @@ app.patch("/api/next-actions/:id/cancel", authenticate, async (req: any, res) =>
         cancellation_reason: trimmedReason,
         cancelled_by_user_id: req.user.id,
         cancelled_by_user_name: req.user.full_name || req.user.username,
+        canelled_period_id: activePeriod?.id || action.report?.period_id || null,
       },
     });
 
@@ -2801,6 +2808,11 @@ app.delete("/api/next-actions/:id", authenticate, async (req: any, res) => {
       }
     }
 
+    const activePeriod = await prisma.reportPeriod.findFirst({
+      where: { is_open: true },
+      orderBy: { period_end: "desc" },
+    });
+
     const updated = await prisma.nextAction.update({
       where: { id: actionId },
       data: {
@@ -2809,6 +2821,7 @@ app.delete("/api/next-actions/:id", authenticate, async (req: any, res) => {
         cancellation_reason: trimmedReason,
         cancelled_by_user_id: req.user.id,
         cancelled_by_user_name: req.user.full_name || req.user.username,
+        canelled_period_id: activePeriod?.id || action.report?.period_id || null,
       },
     });
 

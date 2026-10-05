@@ -127,3 +127,16 @@
   3. **Period-Keyed In-Memory Cache Replacement:** Key strategic analysis caching by `strategic-analysis:period:${period_id}` (and deputy analysis by `deputy-analysis:period:${period_id}:deputy:${deputy_name}`) instead of a volatile prompt hash. When managers submit revisions via "ویرایش و بازنگری با AI", overwrite the period cache entry with the revised output, ensuring repeated views throughout the 1-week TTL reliably serve the revised analysis without re-generating from scratch.
 - **Rationale:** Ensures strategic managerial reports reflect true period delinquencies rather than future commitments, and preserves managerial review feedback across session revisits.
 
+### D25 — 2-Week Performance Tracking, Overdue Warning Badges & Cancelled Action Attribution in Executive PDF
+- **Decision:** Restructure executive periodic PDF reporting (`ReportsPdfDocument.tsx`) and action cancellation audits:
+  1. **Consolidated Results Section (2-Week Performance Tracking):** In section "۱-۱. نتایج اقدامات", aggregate:
+     - Actions completed and reported in the current reporting period.
+     - Actions completed in the previous period's report for the project, prefixed with the prominent tag `[اقدامات هفته قبل]` and green completion badge (`✓ تکمیل‌شده`).
+     - Actions cancelled during the reporting period, appended at the end with a red status badge (`✕ حذف‌شده`) and explicit display of `(علت حذف: ...)`.
+  2. **De-cluttered Future Actions Section:** Remove historical completed and cancelled actions entirely from section "۲. اقدامات آتی". Render exclusively active commitments:
+     - Overdue actions (`target_date < now`): Highlighted with an amber/yellow warning badge (`⚠️ گذشته از موعد`).
+     - Upcoming actions: Rendered with a clean, unified bullet and Persian target date.
+  3. **Removal of Redundant Header Filter:** Eliminate the obsolete 4th dropdown filter ("همه اقدامات تعریف‌شده / فقط اقدامات آینده") from the PDF modal toolbar.
+  4. **Database-Backed Period Attribution for Cancellations:** In `PATCH /api/next-actions/:id/cancel` and `DELETE /api/next-actions/:id`, persist `canelled_period_id` alongside timestamp, reason, and user identity to support retrospective auditing.
+- **Rationale:** Prevents historical action accumulation from cluttering future commitments, provides comprehensive multi-week progress tracking, and ensures rigorous auditability for cancelled operational milestones.
+

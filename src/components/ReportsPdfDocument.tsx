@@ -62,6 +62,7 @@ export interface PageSectionItem {
   date?: string | null;
   status?: "completed" | "overdue" | "upcoming" | "cancelled";
   cancellationReason?: string | null;
+  badgeTag?: string | null;
 }
 
 interface PageSection {
@@ -338,9 +339,9 @@ const PDF_DOCUMENT_STYLES = `
 
   .bullet-item {
     position: relative !important;
-    padding-right: 16px !important;
+    padding-right: 18px !important;
     font-size: 14px !important;
-    line-height: 1.5 !important;
+    line-height: 1.55 !important;
     color: #1e293b !important;
     text-align: justify !important;
     word-break: break-word !important;
@@ -349,8 +350,8 @@ const PDF_DOCUMENT_STYLES = `
   .bullet-item .bullet-dot {
     position: absolute !important;
     right: 0 !important;
-    top: 0px !important;
-    font-size: 15px !important;
+    top: 1px !important;
+    font-size: 14px !important;
     font-weight: bold !important;
     line-height: 1 !important;
   }
@@ -374,15 +375,22 @@ const PDF_DOCUMENT_STYLES = `
   }
 
   .action-status-badge.overdue {
+    background-color: #fefce8 !important;
+    color: #b45309 !important;
+    border: 1px solid #fde047 !important;
+  }
+
+  .action-status-badge.cancelled {
     background-color: #fff1f2 !important;
     color: #be123c !important;
     border: 1px solid #fecdd3 !important;
   }
 
-  .action-status-badge.cancelled {
-    background-color: #f8fafc !important;
-    color: #475569 !important;
+  .action-status-badge.prev-week {
+    background-color: #f1f5f9 !important;
+    color: #334155 !important;
     border: 1px solid #cbd5e1 !important;
+    font-weight: 800 !important;
   }
 
   .action-target-date {
@@ -457,7 +465,6 @@ export default function ReportsPdfDocument({
   const [selectedPeriodId, setSelectedPeriodId] = useState<number>(defaultPeriodId);
   const [selectedProjectId, setSelectedProjectId] = useState<number>(0);
   const [selectedDeputy, setSelectedDeputy] = useState<string>("");
-  const [actionsFilter, setActionsFilter] = useState<"all" | "future_only">("all");
 
   const [localReports, setLocalReports] = useState<Report[]>([]);
   const [localPeriods, setLocalPeriods] = useState<ReportPeriod[]>([]);
@@ -569,16 +576,14 @@ export default function ReportsPdfDocument({
       .finally(() => setLoading(false));
   }, [isOpen, defaultPeriodId]);
 
-  // نقشه‌بندی اقدامات آتی تعریف‌شده به تفکیک پروژه
+  // نقشه‌بندی اقدامات آتی تعریف‌شده به تفکیک پروژه (شامل تمام اقدامات فعال، گذشته و لغوشده)
   const projectActionsMap = useMemo(() => {
     const map: Record<number, any[]> = {};
     (localNextActions || []).forEach((action: any) => {
       const pid = action.project_id || action.report?.project_id;
       if (pid) {
         if (!map[pid]) map[pid] = [];
-        if (!action.is_cancelled) {
-          map[pid].push(action);
-        }
+        map[pid].push(action);
       }
     });
     return map;
@@ -664,72 +669,142 @@ export default function ReportsPdfDocument({
     // هزینه هر گزارش به خطوط معادل صفحه‌ای
     const measureReport = (report: Report) => {
       const activitiesList = parseBulletPoints(report.activities_done);
-      const resultsList =
-        report.achievedActions && report.achievedActions.length > 0
-          ? report.achievedActions.map((a) => a.action_text)
-          : parseBulletPoints(report.results_achieved);
 
-      // جمع‌آوری تمامی اقدامات آتی تعریف‌شده برای این پروژه (شامل دوره‌های گذشته و جاری و لغوشده‌ها)
+      // ۱. جمع‌آوری تمامی اقدامات مرتبط با پروژه (شامل دوره‌های گذشته و جاری و لغوشده‌ها)
       const allProjectActions = [
         ...(projectActionsMap[report.project_id] || []),
         ...(report.nextActions || []),
       ];
 
-      const seenActionTexts = new Set<string>();
-      const deduplicatedActions: any[] = [];
-      allProjectActions.forEach((na: any) => {
-        if (!na) return;
-        const textKey = (na.action_text || "").trim();
-        if (textKey && !seenActionTexts.has(textKey)) {
-          seenActionTexts.add(textKey);
-          deduplicatedActions.push(na);
-        }
-      });
-
-      // اعمال فیلتر اقدامات آتی در صورت انتخاب کاربر (فقط اقدامات آینده که تاریخشان نرسیده است)
-      let filteredActions = deduplicatedActions;
-      if (actionsFilter === "future_only") {
-        const nowTime = Date.now();
-        filteredActions = deduplicatedActions.filter((item: any) => {
-          if (item.is_completed || item.is_cancelled) return false;
-          if (!item.target_date) return true;
-          return new Date(item.target_date).getTime() >= nowTime;
+      // ۱-۱. نتایج اقدامات:
+      // الف) دستاوردهای هفته جاری (ثبت‌شده در همین گزارش)
+      const currentWeekItems: PageSectionItem[] = [];
+      if (report.achievedActions && report.achievedActions.length > 0) {
+        report.achievedActions.forEach((act: any) => {
+          currentWeekItems.push({
+            text: act.action_text,
+            status: "completed",
+            date: act.target_date_raw || (act.target_date ? formatPersianDate(act.target_date) : null),
+          });
+        });
+      } else if (report.results_achieved) {
+        const lines = parseBulletPoints(report.results_achieved);
+        lines.forEach((text) => {
+          currentWeekItems.push({ text });
         });
       }
 
-      // اولویت‌بندی مرتب‌سازی:
-      // ۱. اقدامات در دست اقدام (آتی نرسیده)
-      // ۲. اقدامات گذشته از موعد / دارای تأخیر
-      // ۳. اقدامات تکمیل‌شده
-      // ۴. اقدامات لغو/حذف‌شده توسط پرسنل با ذکر دلیل
-      filteredActions.sort((a, b) => {
-        const getPriority = (item: any) => {
-          if (item.is_cancelled) return 4;
-          if (item.is_completed) return 3;
-          const isOverdue = item.target_date && new Date(item.target_date).getTime() < Date.now();
-          if (isOverdue) return 2;
-          return 1;
-        };
-        return getPriority(a) - getPriority(b);
+      // در صورت وجود یادداشت‌های تکمیلی علاوه بر چک‌لیست اقدامات
+      if (
+        report.achievedActions &&
+        report.achievedActions.length > 0 &&
+        report.results_achieved &&
+        !report.results_achieved.startsWith("•")
+      ) {
+        const extraLines = parseBulletPoints(report.results_achieved.replace(/^توضیحات تکمیلی:\s*/, ""));
+        extraLines.forEach((text) => {
+          currentWeekItems.push({ text: `توضیحات تکمیلی: ${text}` });
+        });
+      }
+
+      // ب) اقدامات تکمیل‌شده هفته گذشته (دوره قبل همین پروژه) با تگ «اقدامات هفته قبل»
+      const prevWeekItems: PageSectionItem[] = [];
+      const projectReports = localReports.filter((r) => r.project_id === report.project_id);
+      const sortedProjectReports = [...projectReports].sort(
+        (a, b) => new Date(a.period_end || a.submitted_at).getTime() - new Date(b.period_end || b.submitted_at).getTime()
+      );
+      const currIdx = sortedProjectReports.findIndex((r) => r.id === report.id);
+      const prevReport = currIdx > 0 ? sortedProjectReports[currIdx - 1] : null;
+
+      if (prevReport) {
+        if (prevReport.achievedActions && prevReport.achievedActions.length > 0) {
+          prevReport.achievedActions.forEach((act: any) => {
+            prevWeekItems.push({
+              text: act.action_text,
+              status: "completed",
+              badgeTag: "اقدامات هفته قبل",
+              date: act.target_date_raw || (act.target_date ? formatPersianDate(act.target_date) : null),
+            });
+          });
+        } else if (prevReport.results_achieved) {
+          const lines = parseBulletPoints(prevReport.results_achieved);
+          lines.forEach((text) => {
+            prevWeekItems.push({
+              text,
+              badgeTag: "اقدامات هفته قبل",
+            });
+          });
+        }
+      }
+
+      // ج) اقدامات لغوشده این هفته / دوره (با باکس قرمز ✕ حذف‌شده در انتها)
+      const cancelledItems: PageSectionItem[] = [];
+      const seenCancelled = new Set<string>();
+
+      allProjectActions.forEach((act: any) => {
+        if (!act || !act.is_cancelled) return;
+        const key = `${act.id || act.action_text}`;
+        if (seenCancelled.has(key)) return;
+
+        let isCurrentPeriodCancel = false;
+        if (act.canelled_period_id && act.canelled_period_id === report.period_id) {
+          isCurrentPeriodCancel = true;
+        } else if (act.cancelled_at && report.period_start && report.period_end) {
+          const cancelTime = new Date(act.cancelled_at).getTime();
+          const pStartTime = new Date(report.period_start).getTime() - 24 * 3600 * 1000;
+          const pEndTime = new Date(report.period_end).getTime() + 7 * 24 * 3600 * 1000;
+          if (cancelTime >= pStartTime && cancelTime <= pEndTime) {
+            isCurrentPeriodCancel = true;
+          }
+        } else if (act.report_id === report.id) {
+          isCurrentPeriodCancel = true;
+        }
+
+        if (isCurrentPeriodCancel) {
+          seenCancelled.add(key);
+          cancelledItems.push({
+            text: act.action_text,
+            status: "cancelled",
+            cancellationReason: act.cancellation_reason,
+          });
+        }
       });
 
-      const nextActionsList: PageSectionItem[] =
-        filteredActions.length > 0
-          ? filteredActions.map((na) => {
-            let status: "completed" | "overdue" | "upcoming" | "cancelled" = "upcoming";
-            const isOverdue = !na.is_completed && !na.is_cancelled && na.target_date && new Date(na.target_date).getTime() < Date.now();
-            if (na.is_cancelled) status = "cancelled";
-            else if (na.is_completed) status = "completed";
-            else if (isOverdue) status = "overdue";
+      // ترکیب همه موارد در بخش نتایج اقدامات
+      const resultsSectionItems: PageSectionItem[] = [
+        ...currentWeekItems,
+        ...prevWeekItems,
+        ...cancelledItems,
+      ];
 
-            return {
-              text: na.action_text,
-              date: na.target_date_raw || (na.target_date ? formatPersianDate(na.target_date) : null),
-              status,
-              cancellationReason: na.cancellation_reason,
-            };
-          })
-          : [];
+      // ۲. اقدامات آتی (فقط مواردی که هنوز انجام‌نشده و لغونشده‌اند)
+      const nextActionsList: PageSectionItem[] = [];
+      const seenActionTexts = new Set<string>();
+
+      allProjectActions.forEach((na: any) => {
+        if (!na) return;
+        // حذف کامل تکمیل‌شده‌ها و لغوشده‌ها از این بخش
+        if (na.is_completed || na.is_cancelled) return;
+
+        const textKey = (na.action_text || "").trim();
+        if (!textKey || seenActionTexts.has(textKey)) return;
+        seenActionTexts.add(textKey);
+
+        const isOverdue = na.target_date && new Date(na.target_date).getTime() < Date.now();
+
+        nextActionsList.push({
+          text: na.action_text,
+          date: na.target_date_raw || (na.target_date ? formatPersianDate(na.target_date) : null),
+          status: isOverdue ? "overdue" : "upcoming",
+        });
+      });
+
+      // مرتب‌سازی: ابتدا هشدارهای ددلاین رد شده (باکس زرد)، سپس اقدامات دارای مهلت
+      nextActionsList.sort((a, b) => {
+        if (a.status === "overdue" && b.status !== "overdue") return -1;
+        if (a.status !== "overdue" && b.status === "overdue") return 1;
+        return 0;
+      });
 
       // ایجاد بخش‌های خام
       const rawSections: Array<PageSection> = [];
@@ -746,10 +821,10 @@ export default function ReportsPdfDocument({
         });
       }
 
-      if (resultsList.length > 0) {
+      if (resultsSectionItems.length > 0) {
         rawSections.push({
           heading: "۱-۱. نتایج اقدامات:",
-          items: resultsList.map((text) => ({ text })),
+          items: resultsSectionItems,
         });
       }
 
@@ -976,7 +1051,7 @@ export default function ReportsPdfDocument({
     flushPage();
 
     return pages;
-  }, [orderedReports, actionsFilter, projectActionsMap]);
+  }, [orderedReports, localReports, projectActionsMap]);
 
   if (!isOpen) return null;
 
@@ -1146,19 +1221,6 @@ export default function ReportsPdfDocument({
               />
             </div>
           )}
-
-          {/* فیلتر اقدامات آتی */}
-          <div className="w-56 sm:w-64">
-            <label className="text-[10px] text-slate-400 font-bold block mb-1">اقدامات آتی:</label>
-            <CustomSelect
-              value={actionsFilter}
-              onChange={(val) => setActionsFilter(String(val) as "all" | "future_only")}
-              options={[
-                { value: "all", label: "همه اقدامات تعریف‌شده (پایه)" },
-                { value: "future_only", label: "فقط اقدامات آینده (سررسید نرسیده)" },
-              ]}
-            />
-          </div>
         </div>
 
         {/* بدنه پیش‌نمایش سند PDF با ابعاد استاندارد A4 */}
@@ -1269,11 +1331,11 @@ export default function ReportsPdfDocument({
                                           if (it.status === "cancelled") {
                                             return (
                                               <li key={itIdx} className="bullet-item">
-                                                <span className="bullet-dot" style={{ color: "#f43f5e" }}>•</span>
+                                                <span className="bullet-dot" style={{ color: "#e11d48" }}>•</span>
                                                 <span className="action-status-badge cancelled">
                                                   ✕ حذف‌شده
                                                 </span>
-                                                <span style={{ textDecoration: "line-through", color: "#64748b" }}>{it.text}</span>
+                                                <span>{it.text}</span>
                                                 {it.cancellationReason && (
                                                   <span className="action-cancellation-reason">
                                                     (علت حذف: {it.cancellationReason})
@@ -1287,6 +1349,11 @@ export default function ReportsPdfDocument({
                                             return (
                                               <li key={itIdx} className="bullet-item">
                                                 <span className="bullet-dot" style={{ color: "#059669" }}>•</span>
+                                                {it.badgeTag && (
+                                                  <span className="action-status-badge prev-week">
+                                                    {it.badgeTag}
+                                                  </span>
+                                                )}
                                                 <span className="action-status-badge completed">
                                                   ✓ تکمیل‌شده
                                                 </span>
@@ -1309,7 +1376,7 @@ export default function ReportsPdfDocument({
                                                 </span>
                                                 <span>{it.text}</span>
                                                 {it.date && (
-                                                  <span className="action-target-date" style={{ color: "#be123c" }}>
+                                                  <span className="action-target-date" style={{ color: "#b45309" }}>
                                                     ({toPersianDigits(it.date)})
                                                   </span>
                                                 )}
@@ -1319,7 +1386,12 @@ export default function ReportsPdfDocument({
 
                                           return (
                                             <li key={itIdx} className="bullet-item">
-                                              <span className="bullet-dot" style={{ color: "#0f172a" }}>•</span>
+                                              <span className="bullet-dot" style={{ color: "#475569" }}>•</span>
+                                              {it.badgeTag && (
+                                                <span className="action-status-badge prev-week">
+                                                  {it.badgeTag}
+                                                </span>
+                                              )}
                                               <span>{it.text}</span>
                                               {it.date && (
                                                 <span className="action-target-date">
