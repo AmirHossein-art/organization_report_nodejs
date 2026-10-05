@@ -1058,7 +1058,7 @@ export default function ManagerDashboard({
     bubbleGroupBy,
   ]);
 
-  const handleRunAiAnalysis = async () => {
+  const handleRunAiAnalysis = async (forceRefresh = false) => {
     if (!summaryData || !summaryData.rows) return;
 
     const submittedReports = (summaryData.rows || [])
@@ -1080,8 +1080,11 @@ export default function ManagerDashboard({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          period_id: summaryData.period ? summaryData.period.id : selectedPeriodId,
           period_title: summaryData.period ? summaryData.period.title : "دوره جاری",
+          period_end: summaryData.period ? summaryData.period.period_end : undefined,
           reports: submittedReports,
+          force_refresh: forceRefresh,
         }),
       });
 
@@ -1122,7 +1125,9 @@ export default function ManagerDashboard({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          period_id: summaryData.period ? summaryData.period.id : selectedPeriodId,
           period_title: summaryData.period ? summaryData.period.title : "دوره جاری",
+          period_end: summaryData.period ? summaryData.period.period_end : undefined,
           reports: submittedReports,
           manager_comment: managerComment.trim(),
           previous_analysis: aiAnalysis,
@@ -1688,7 +1693,7 @@ export default function ManagerDashboard({
           </div>
 
           <button
-            onClick={handleRunAiAnalysis}
+            onClick={() => handleRunAiAnalysis(Boolean(aiAnalysis))}
             disabled={aiLoading || loading}
             className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold px-5 py-2.5 rounded-2xl transition-all cursor-pointer flex items-center gap-2 text-xs shadow-md disabled:opacity-50 shrink-0"
           >
@@ -1700,7 +1705,7 @@ export default function ManagerDashboard({
             ) : (
               <>
                 <Sparkles className="w-4 h-4" />
-                <span>تحلیل هوشمند کارهای این دوره</span>
+                <span>{aiAnalysis ? "تولید مجدد تحلیل از ابتدا" : "تحلیل هوشمند کارهای این دوره"}</span>
               </>
             )}
           </button>

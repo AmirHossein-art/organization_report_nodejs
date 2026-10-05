@@ -120,3 +120,10 @@
   4. **Anchored Safe Footer Bar:** Establish a dedicated, flex-pinned footer bar (`height: 24px; border-top: 1px solid #e2e8f0; margin-top: auto; flex-shrink: 0;`) displaying `صفحه X از Y` in Persian digits, immune to text overflow displacement.
 - **Rationale:** Guarantees 100% parity between what staff/managers see in the browser preview modal and the final exported PDF from Chrome, eliminating margin bleed, missing footers, and text overflow.
 
+### D24 — Defensive Overdue Action Filtering & Period-Bound AI Cache Persistence
+- **Decision:** Eliminate spurious overdue action warnings and preserve manager AI revisions:
+  1. **Strict Temporal Cutoff for Overdue Actions:** In `POST /api/reports/analyze` and `/api/ai/strategic-analysis`, evaluate the reporting period end date (`cutoffDate = period_end`). Constrain database action retrieval to `target_date <= cutoffDate` and `is_cancelled: false`, explicitly preventing future commitments (e.g. deadlines falling after the period cutoff) from entering the overdue list.
+  2. **Defensive Post-Processing Guardrail:** Apply dual-calendar date parsing and comparison (`shamsiToGregorian`) to post-process AI outputs, defensively filtering out any hallucinated actions whose deadlines exceed `cutoffDate`.
+  3. **Period-Keyed In-Memory Cache Replacement:** Key strategic analysis caching by `strategic-analysis:period:${period_id}` (and deputy analysis by `deputy-analysis:period:${period_id}:deputy:${deputy_name}`) instead of a volatile prompt hash. When managers submit revisions via "ویرایش و بازنگری با AI", overwrite the period cache entry with the revised output, ensuring repeated views throughout the 1-week TTL reliably serve the revised analysis without re-generating from scratch.
+- **Rationale:** Ensures strategic managerial reports reflect true period delinquencies rather than future commitments, and preserves managerial review feedback across session revisits.
+

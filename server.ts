@@ -19,7 +19,7 @@ import crypto from "node:crypto";
 import { config } from "./src/config/env";
 import { parseExcelWBS } from "./src/utils/wbsParser";
 import { getDeadlineState } from "./src/deadline";
-import { ensureShamsiDate, isLastWeekOfShamsiMonth } from "./src/dateUtils";
+import { ensureShamsiDate, isLastWeekOfShamsiMonth, shamsiToGregorian } from "./src/dateUtils";
 
 const SALT_ROUNDS = 10;
 const app = express();
@@ -2914,9 +2914,9 @@ async function discoverCandidateModels(provider: { id: string; label: string; ba
 async function callAiWithFallback(
   systemPrompt: string,
   userPrompt: string,
-  options: { forceRefresh?: boolean } = {}
+  options: { forceRefresh?: boolean; cacheKey?: string } = {}
 ) {
-  const cacheKey = generateAiCacheKey(systemPrompt, userPrompt);
+  const cacheKey = options.cacheKey || generateAiCacheKey(systemPrompt, userPrompt);
   const now = Date.now();
   // ۱. بررسی وجود در کش و معتبر بودن تاریخ انقضا
   if (!options.forceRefresh && aiResponseCache.has(cacheKey)) {
@@ -3096,7 +3096,7 @@ function formatKpiValuesForPrompt(kpiValues: any[] | undefined): string {
 // اندپوینت تحلیل استراتژیک کلان دوره (مدیریتی)
 app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, requireManager, aiLimiter, async (req, res) => {
   try {
-    const { period_title, reports, force_refresh, manager_comment, previous_analysis } = req.body;
+    const { period_id, period_title, period_end, reports, force_refresh, manager_comment, previous_analysis } = req.body;
     const submittedReports = Array.isArray(reports)
       ? reports.filter((r: any) => r.activities_done && r.activities_done.trim() !== "")
       : [];
@@ -3105,11 +3105,44 @@ app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, r
       return res.status(400).json({ error: "هیچ گزارش ثبت‌شده‌ای برای تحلیل در این دوره یافت نشد." });
     }
 
-    // استخراج لیست کلیه اقدامات تعریف‌شده و انجام‌نشده در پروژه‌ها از دیتابیس
+    // شناسایی دقیق بازه گزارش‌دهی و تاریخ پایان آن جهت تعیین اقدامات معوق واقعی
+    let resolvedPeriodId = period_id ? Number(period_id) : null;
+    let targetPeriod = null;
+    if (resolvedPeriodId) {
+      targetPeriod = await prisma.reportPeriod.findUnique({ where: { id: resolvedPeriodId } });
+    } else if (submittedReports[0]?.period_id) {
+      resolvedPeriodId = Number(submittedReports[0].period_id);
+      targetPeriod = await prisma.reportPeriod.findUnique({ where: { id: resolvedPeriodId } });
+    }
+
+    let cutoffDate: Date | null = null;
+    if (targetPeriod?.period_end) {
+      cutoffDate = new Date(targetPeriod.period_end);
+    } else if (period_end) {
+      cutoffDate = new Date(period_end);
+    }
+
+    if (cutoffDate) {
+      cutoffDate.setHours(23, 59, 59, 999);
+    }
+
+    const periodEndShamsi = cutoffDate
+      ? ensureShamsiDate(cutoffDate)
+      : (period_title || "پایان دوره");
+
+    // استخراج لیست کلیه اقدامات تعریف‌شده و انجام‌نشده در پروژه‌ها از دیتابیس (منحصراً موعدهای تا پایان این دوره)
+    const actionWhere: any = {
+      is_completed: false,
+      is_cancelled: false,
+    };
+    if (cutoffDate) {
+      actionWhere.target_date = {
+        lte: cutoffDate,
+      };
+    }
+
     const uncompletedDbActions = await prisma.nextAction.findMany({
-      where: {
-        is_completed: false,
-      },
+      where: actionWhere,
       include: {
         project: { select: { id: true, title: true, code: true } },
         user: { select: { id: true, full_name: true, job_title: true } },
@@ -3128,7 +3161,7 @@ app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, r
             return `${i + 1}. پروژه: «${projTitle}» | اقدام: ${act.action_text} | حوزه مسئول: ${deputy} | موعد اقدام: ${targetDate}${claimed}`;
           })
           .join("\n")
-      : "هیچ اقدام معوق یا انجام‌نشده‌ای برای پروژه‌ها در دیتابیس ثبت نشده است.";
+      : `هیچ اقدام معوق یا انجام‌نشده‌ای با موعد تا تاریخ ${periodEndShamsi} در دیتابیس ثبت نشده است.`;
 
     const reportsText = submittedReports
       .map((r, index) => {
@@ -3152,7 +3185,8 @@ app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, r
 
 دستورالعمل‌های حیاتی مدیریت ارشد:
 ۱. «خلاصه مدیریتی عملکرد سازمان» را حتماً و قطعاً **به تفکیک معاونت‌ها** (واحدهای سازمانی) ارائه دهید. برای هر معاونت، خلاصه‌ای تحلیلی از عملکرد، پیشرفت پروژه‌ها و تنگناها در این دوره بنویسید.
-۲. به جای پیشنهادات فرضی و کلی، **«اقدامات تعریف‌شده و انجام‌نشده پروژه‌ها»** (اقدامات و تعهداتی که برای تمامی پروژه‌ها تعریف شده و باید انجام می‌شدند اما انجام نشده یا بر زمین مانده‌اند) را استخراج و گزارش نمایید.
+۲. **اقدامات انجام‌نشده و معوق پروژه‌ها (uncompleted_actions):** صرفاً و اکیداً تعهداتی را در این بخش بیاورید که موعد مقرر (target_date) آن‌ها **تا پایان این دوره گزارش‌دهی (${periodEndShamsi}) یا پیش از آن** بوده و انجام نشده‌اند (دارای تاخیر زمانی هستند).
+⚠️ **قانون منع مطلق درج اقدامات آتی:** اقداماتی که موعد تحویل یا تاریخ ددلاین آنها **بعد از تاریخ پایان دوره (${periodEndShamsi})** است، تعهدات فعالِ دوره‌های بعد هستند و به هیچ عنوان نباید به عنوان تاخیری یا معوق ثبت شوند.
 ۳. **قانون اکید و بدون استثنای تاریخ‌ها:** تمامی تاریخ‌هایی که در تحلیل یا برای موعد اقدامات (target_date) ذکر می‌کنید حتماً و قطعاً باید به **تقویم هجری شمسی (مثلاً ۱۴۰۵/۰۵/۱۶)** باشند و تحت هیچ شرایطی نباید تاریخ یا سال میلادی (مانند 2026) در خروجی وجود داشته باشد.
 
 پاسخ شما باید حتماً و فقط یک جی‌سون معتبر با کلید ریشه "analysis" باشد. نمونه دقیق ساختار مورد انتظار:
@@ -3173,7 +3207,7 @@ app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, r
     "uncompleted_actions": [
       {
         "project_title": "عنوان پروژه",
-        "action_text": "شرح اقدام تعریف‌شده که باید انجام می‌شد اما انجام نشد",
+        "action_text": "شرح اقدام تعریف‌شده که موعدش تا پایان این دوره بوده اما انجام نشد",
         "deputy_name": "نام معاونت / واحد مسئول",
         "target_date": "تاریخ موعد به تقویم شمسی (مثلاً ۱۴۰۵/۰۵/۱۶)",
         "delay_status": "تحلیل وضعیت تاخیر یا موانع تحقق"
@@ -3183,7 +3217,7 @@ app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, r
 }
 نکته: هیچ متن اضافی قبل و بعد از JSON ننویسید.`;
 
-    let userPrompt = `گزارش‌های عملکرد بازه "${period_title}":\n\n${reportsText}\n\n========================================\n📋 لیست اقدامات و تعهداتی که برای تمامی پروژه‌ها در سیستم تعریف شده و تا این لحظه انجام/تایید نشده‌اند:\n${uncompletedActionsText}`;
+    let userPrompt = `گزارش‌های عملکرد بازه "${period_title}" (تاریخ پایان دوره: ${periodEndShamsi}):\n\n${reportsText}\n\n========================================\n📋 لیست اقدامات و تعهداتی که موعد مقرر آنها تا پایان این دوره (${periodEndShamsi}) بوده اما تا این لحظه انجام/تایید نشده‌اند:\n${uncompletedActionsText}`;
 
     if (manager_comment && typeof manager_comment === "string" && manager_comment.trim()) {
       userPrompt += `\n\n========================================
@@ -3198,7 +3232,14 @@ app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, r
     }
 
     const shouldForceRefresh = Boolean(force_refresh || (manager_comment && manager_comment.trim()));
-    const result: any = await callAiWithFallback(systemPrompt, userPrompt, { forceRefresh: shouldForceRefresh });
+    const strategicCacheKey = resolvedPeriodId
+      ? `strategic-analysis:period:${resolvedPeriodId}`
+      : undefined;
+
+    const result: any = await callAiWithFallback(systemPrompt, userPrompt, {
+      forceRefresh: shouldForceRefresh,
+      cacheKey: strategicCacheKey,
+    });
 
     // ایمن‌سازی: در صورتی که هوش مصنوعی لیست اقدامات انجام‌نشده را خالی برگرداند اما در دیتابیس موجود باشد، لیست دیتابیس را به عنوان پشتیبان درج کن
     if (result && result.analysis) {
@@ -3214,10 +3255,47 @@ app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, r
         }
       } else {
         // تبدیل تضمینی تاریخ‌های برگشتی از هوش مصنوعی به شمسی در صورت ارسال تاریخ میلادی
-        result.analysis.uncompleted_actions = result.analysis.uncompleted_actions.map((act: any) => ({
-          ...act,
-          target_date: act.target_date ? ensureShamsiDate(act.target_date) : undefined,
-        }));
+        // و فیلتر دفاعی مضاعف: اگر هوش مصنوعی اشتباهاً اقدامی با موعد بعد از پایان دوره آورده باشد، حذف گردد
+        result.analysis.uncompleted_actions = result.analysis.uncompleted_actions
+          .filter((act: any) => {
+            if (!cutoffDate || !act.target_date) return true;
+            try {
+              const eng = toEnglishDigits(String(act.target_date));
+              const match = eng.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+              if (match) {
+                const y = parseInt(match[1]);
+                const m = parseInt(match[2]);
+                const d = parseInt(match[3]);
+                let actDate: Date | null = null;
+                if (y < 1700) {
+                  // تاریخ هجری شمسی (مثلاً 1405/07/11)
+                  const gregStr = shamsiToGregorian(y, m, d);
+                  if (gregStr) {
+                    actDate = new Date(`${gregStr}T23:59:59.999`);
+                  }
+                } else {
+                  actDate = new Date(y, m - 1, d, 23, 59, 59, 999);
+                }
+                if (actDate && actDate.getTime() > cutoffDate.getTime()) {
+                  // موعد بعد از پایان دوره است — حذف از معوقات
+                  return false;
+                }
+              }
+            } catch (e) {
+              // در صورت خطا در تبدیل، داده حفظ شود
+            }
+            return true;
+          })
+          .map((act: any) => ({
+            ...act,
+            target_date: act.target_date ? ensureShamsiDate(act.target_date) : undefined,
+          }));
+      }
+
+      // به‌روزرسانی مقدار نهایی فیلتر و پالایش‌شده در کش سرور
+      if (strategicCacheKey && aiResponseCache.has(strategicCacheKey)) {
+        const cachedEntry = aiResponseCache.get(strategicCacheKey)!;
+        cachedEntry.data = result;
       }
     }
 
@@ -3599,7 +3677,11 @@ ${projectsDataForPrompt}`;
     }
 
     const shouldForceRefresh = Boolean(force_refresh || (manager_comment && manager_comment.trim()));
-    const result = await callAiWithFallback(systemPrompt, userPrompt, { forceRefresh: shouldForceRefresh });
+    const deputyCacheKey = `deputy-analysis:period:${period_id}:deputy:${resolvedDeputyName || deputy_name || user_id}`;
+    const result = await callAiWithFallback(systemPrompt, userPrompt, {
+      forceRefresh: shouldForceRefresh,
+      cacheKey: deputyCacheKey,
+    });
     res.json(result);
   } catch (err: any) {
     console.error("Deputy AI Analysis Error:", err);

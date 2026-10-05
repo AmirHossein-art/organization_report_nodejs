@@ -736,26 +736,26 @@ export default function ReportsPdfDocument({
 
       if (activitiesList.length > 0) {
         rawSections.push({
-          heading: ".۱ مهم‌ترین اقدامات انجام‌شده در هفته جاری:",
+          heading: "۱. مهم‌ترین اقدامات انجام‌شده در هفته جاری:",
           items: activitiesList.map((text) => ({ text })),
         });
       } else if (report.activities_done) {
         rawSections.push({
-          heading: ".۱ مهم‌ترین اقدامات انجام‌شده در هفته جاری:",
+          heading: "۱. مهم‌ترین اقدامات انجام‌شده در هفته جاری:",
           items: [{ text: report.activities_done }],
         });
       }
 
       if (resultsList.length > 0) {
         rawSections.push({
-          heading: "نتایج اقدامات:",
+          heading: "۱-۱. نتایج اقدامات:",
           items: resultsList.map((text) => ({ text })),
         });
       }
 
       if (nextActionsList.length > 0) {
         rawSections.push({
-          heading: ".۲ اقدامات آتی:",
+          heading: "۲. اقدامات آتی:",
           items: nextActionsList,
         });
       }
@@ -766,7 +766,7 @@ export default function ReportsPdfDocument({
 
       if (hasStructuredKpis || hasKpiText) {
         rawSections.push({
-          heading: ".۳ شاخص‌های کلیدی عملکرد (KPI):",
+          heading: "۳. شاخص‌های کلیدی عملکرد (KPI):",
           type: "kpi_table",
           items: [],
           kpiValues: report.kpiValues || [],
@@ -774,7 +774,7 @@ export default function ReportsPdfDocument({
         });
       } else {
         rawSections.push({
-          heading: ".۳ شاخص‌های کلیدی عملکرد (KPI):",
+          heading: "۳. شاخص‌های کلیدی عملکرد (KPI):",
           type: "bullets",
           items: [{ text: "شاخص عملکردی برای این دوره ثبت نشده است." }],
         });
