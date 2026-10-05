@@ -70,7 +70,7 @@ export default function ManageProjectsHub({
           onNavigateToAllocations={() => setActiveTab("allocations")}
         />
       ) : (
-        <ProjectAllocations users={users} projects={projects} />
+        <ProjectAllocations users={users} projects={projects.filter((p) => p.is_active !== false)} />
       )}
     </div>
   );

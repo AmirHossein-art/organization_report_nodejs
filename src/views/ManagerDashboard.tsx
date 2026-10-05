@@ -1601,6 +1601,7 @@ export default function ManagerDashboard({
               options={[
                 { value: 0, label: "همه پروژه‌ها" },
                 ...(projects || [])
+                  .filter((p) => p.is_active !== false)
                   .filter((p) => {
                     if (!currentPeriod) return true;
                     if (currentPeriod.report_type === "weekly" && !isLastWeek) {
@@ -2561,7 +2562,7 @@ export default function ManagerDashboard({
         isOpen={pdfModalOpen}
         onClose={() => setPdfModalOpen(false)}
         periods={periods}
-        projects={projects}
+        projects={(projects || []).filter((p) => p.is_active !== false)}
         users={users}
         defaultPeriodId={selectedPeriodId}
       />

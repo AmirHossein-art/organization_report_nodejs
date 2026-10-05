@@ -1,5 +1,5 @@
 // src/App.tsx
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { User, Project, ReportPeriod, Report, DeadlineSetting } from "./types";
 import Sidebar from "./components/sidebar";
 import Login from "./views/Login";
@@ -32,12 +32,15 @@ export default function App() {
   const [deadlineSettings, setDeadlineSettings] = useState<DeadlineSetting[]>([]);
   const [allReports, setAllReports] = useState<Report[]>([]);
 
+  // منحصراً پروژه‌های فعال برای کلیه فرم‌ها، داشبوردها و فیلترها
+  const activeProjects = useMemo(() => projects.filter((p) => p.is_active !== false), [projects]);
+
   // لود دیتای سراسری از بک‌اند
   const fetchData = async () => {
     try {
       const [uRes, pRes, peRes, dRes, rRes] = await Promise.all([
         fetch("/api/users"),
-        fetch("/api/projects"),
+        fetch("/api/projects?include_inactive=true"),
         fetch("/api/report-periods"),
         fetch("/api/deadline-settings"),
         fetch("/api/reports"),
@@ -151,7 +154,7 @@ export default function App() {
           <HomeDashboard
             user={user}
             users={users}
-            projects={projects}
+            projects={activeProjects}
             periods={periods}
             allReports={allReports}
           />
@@ -159,7 +162,7 @@ export default function App() {
 
         {currentView === "submit_report" && (
           <SubmitReport
-            projects={projects}
+            projects={activeProjects}
             periods={periods}
             user={user}
             allReports={allReports}
@@ -172,7 +175,7 @@ export default function App() {
           <MyReports
             currentUser={user}
             reports={allReports}
-            projects={projects}
+            projects={activeProjects}
             periods={periods}
             onRefresh={handleReportUpsert}
           />
@@ -182,7 +185,7 @@ export default function App() {
         {user.role === "manager" && (
           <>
             {currentView === "manager_dashboard" && (
-              <ManagerDashboard periods={periods} projects={projects} users={users} />
+              <ManagerDashboard periods={periods} projects={activeProjects} users={users} />
             )}
             {(currentView === "manage_projects" || currentView === "project_allocations") && (
               <ManageProjectsHub
@@ -204,7 +207,7 @@ export default function App() {
               currentView === "project_kpi_management" ||
               currentView === "project_kpi_analytics") && (
               <ProjectKpiHub
-                projects={projects}
+                projects={activeProjects}
                 onRefresh={fetchData}
                 initialTab={currentView === "project_kpi_management" ? "management" : "analytics"}
               />

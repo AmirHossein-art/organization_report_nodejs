@@ -230,7 +230,7 @@ export default function ProjectKpiAnalytics({ projects = [] }: ProjectKpiAnalyti
           <CustomSelect
             value={selectedProjectId}
             onChange={(val) => setSelectedProjectId(Number(val))}
-            options={projects.map((p) => ({ value: p.id, label: p.title }))}
+            options={projects.filter((p) => p.is_active !== false).map((p) => ({ value: p.id, label: p.title }))}
           />
         </div>
         <div>

@@ -140,3 +140,14 @@
   4. **Database-Backed Period Attribution for Cancellations:** In `PATCH /api/next-actions/:id/cancel` and `DELETE /api/next-actions/:id`, persist `canelled_period_id` alongside timestamp, reason, and user identity to support retrospective auditing.
 - **Rationale:** Prevents historical action accumulation from cluttering future commitments, provides comprehensive multi-week progress tracking, and ensures rigorous auditability for cancelled operational milestones.
 
+### D26 — Universal Inactive Project Isolation & Dedicated Archive View
+- **Decision:** Strictly isolate deactivated projects (`is_active: false`) across the application stack:
+  1. **Default Backend Active-Only Scoping:** In `GET /api/projects`, return exclusively active projects (`{ is_active: true }`) by default for all roles. Inactive projects are returned only when `?include_inactive=true` is explicitly requested by managers.
+  2. **AI Audit & Strategic Prompt Guardrail:** In `POST /api/reports/analyze` and `/api/ai/strategic-analysis`, bound overdue action retrieval strictly to active projects (`project: { is_active: true }`), preventing legacy milestones of disabled projects from surfacing in executive reviews.
+  3. **Reporting & PDF Generation Quarantine:** In `ReportsPdfDocument.tsx`, exclude inactive projects from the project dropdown filter and suppress their historical reports from periodic A4 PDF outputs.
+  4. **Administrative Tabs Partitioning in ManageProjects:** In `ManageProjects.tsx`, divide the project management view into two dedicated tabs:
+     - `پروژه‌های فعال`: Renders only active projects with continuous ordinal numbering, drag-and-drop ordering, and full CRUD.
+     - `غیرفعال / بایگانی`: Contains deactivated projects with a 1-click `فعال‌سازی مجدد` button and edit/delete actions, keeping inactive records fully recoverable without cluttering the primary operations grid.
+  5. **Operational Scoping across Modules:** Restrict project options in `ManagerDashboard.tsx`, `ProjectAllocations.tsx`, `ProjectKpiManagement.tsx`, `ProjectKpiAnalytics.tsx`, and `MyReports.tsx` to active projects.
+- **Rationale:** Prevents clutter from decommissioned projects, prevents false delinquency warnings for inactive initiatives, and ensures pristine executive reports while preserving historical data integrity in the database.
+

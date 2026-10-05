@@ -69,13 +69,13 @@ export default function ProjectAllocations({ users = [], projects = [] }: Projec
   const activeUser = users.find((u) => u.id === selectedUserId);
   const currentAllocatedProjectIds = selectedUserId ? (userProjectsMap[selectedUserId] || []) : [];
 
-  // تفکیک و اولویت‌دهی پروژه‌ها: پروژه‌های خود این مسئول در بالا قرار می‌گیرند
+  // تفکیک و اولویت‌دهی پروژه‌ها: منحصراً پروژه‌های فعال سازمانی
   const allocatedProjects = useMemo(() => {
-    return projects.filter((p) => currentAllocatedProjectIds.includes(p.id));
+    return projects.filter((p) => p.is_active !== false && currentAllocatedProjectIds.includes(p.id));
   }, [projects, currentAllocatedProjectIds]);
 
   const otherProjects = useMemo(() => {
-    return projects.filter((p) => !currentAllocatedProjectIds.includes(p.id));
+    return projects.filter((p) => p.is_active !== false && !currentAllocatedProjectIds.includes(p.id));
   }, [projects, currentAllocatedProjectIds]);
 
   // تغییر وضعیت تخصیص پروژه با کلیک روی کادر

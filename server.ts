@@ -865,7 +865,8 @@ app.delete("/api/users/:id", authenticate, requireManager, async (req: any, res)
 // -----------------------------
 app.get("/api/projects", authenticate, async (req: any, res) => {
   try {
-    const where = req.user.role === "manager" ? {} : { is_active: true };
+    const includeInactive = req.query.include_inactive === "true" || req.query.all === "true";
+    const where = includeInactive && req.user.role === "manager" ? {} : { is_active: true };
     const projects = await prisma.project.findMany({
       where,
       orderBy: [{ order_index: "asc" }, { id: "asc" }],
@@ -3143,10 +3144,11 @@ app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, r
       ? ensureShamsiDate(cutoffDate)
       : (period_title || "پایان دوره");
 
-    // استخراج لیست کلیه اقدامات تعریف‌شده و انجام‌نشده در پروژه‌ها از دیتابیس (منحصراً موعدهای تا پایان این دوره)
+    // استخراج لیست کلیه اقدامات تعریف‌شده و انجام‌نشده در پروژه‌های فعال از دیتابیس (منحصراً موعدهای تا پایان این دوره)
     const actionWhere: any = {
       is_completed: false,
       is_cancelled: false,
+      project: { is_active: true },
     };
     if (cutoffDate) {
       actionWhere.target_date = {

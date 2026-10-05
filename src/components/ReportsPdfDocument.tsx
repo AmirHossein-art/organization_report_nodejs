@@ -498,11 +498,12 @@ export default function ReportsPdfDocument({
     return Array.from(set);
   }, [localUsers, localReports, currentUser, isManager]);
 
-  // پروژه‌های در دسترس (برای پرسنل عادی فقط پروژه‌های مربوط به گزارش‌های خودش)
+  // پروژه‌های در دسترس (منحصراً پروژه‌های فعال)
   const availableProjects = useMemo(() => {
-    if (isManager) return localProjects;
+    const activeProjects = localProjects.filter((p) => p.is_active !== false);
+    if (isManager) return activeProjects;
     const projectIdsInReports = new Set(localReports.map((r) => r.project_id));
-    return localProjects.filter((p) => projectIdsInReports.has(p.id));
+    return activeProjects.filter((p) => projectIdsInReports.has(p.id));
   }, [localProjects, localReports, isManager]);
 
   // دوره‌های در دسترس (برای پرسنل عادی فقط دوره‌هایی که گزارش دارند)
@@ -601,6 +602,10 @@ export default function ReportsPdfDocument({
   // لیست فیلترشده و مرتب‌شده بر اساس اولویت پروژه‌ها
   const orderedReports = useMemo(() => {
     const filtered = localReports.filter((r) => {
+      // عدم نمایش گزارش‌های مربوط به پروژه‌های غیرفعال در خروجی PDF
+      const proj = localProjects.find((p) => p.id === r.project_id);
+      if (proj && proj.is_active === false) return false;
+
       if (selectedPeriodId > 0 && r.period_id !== selectedPeriodId) return false;
       if (selectedProjectId > 0 && r.project_id !== selectedProjectId) return false;
       if (selectedDeputy) {

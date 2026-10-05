@@ -1022,7 +1022,7 @@ function ManagerVisualBubbleExplorer({
         onClose={() => setPdfModalOpen(false)}
         reports={rawReports}
         periods={periodsList}
-        projects={projectsList}
+        projects={(projectsList || []).filter((p) => p.is_active !== false)}
         users={usersList}
         currentUser={currentUser}
       />
@@ -1894,7 +1894,7 @@ export default function MyReports({ currentUser, user, reports = [], allReports 
         }}
         reports={pdfSelectedReports}
         periods={periodsList}
-        projects={projects}
+        projects={(projects || []).filter((p) => p.is_active !== false)}
         currentUser={activeUser}
         defaultPeriodId={pdfDefaultPeriodId}
       />
