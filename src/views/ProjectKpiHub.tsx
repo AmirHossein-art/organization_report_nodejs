@@ -86,7 +86,9 @@ export default function ProjectKpiHub({
       </div>
 
       {/* محتوای زبانه فعال */}
-      {activeTab === "analytics" && <ProjectKpiAnalytics projects={projects} />}
+      {activeTab === "analytics" && (
+        <ProjectKpiAnalytics projects={projects} currentUser={currentUser} />
+      )}
       {activeTab === "composite" && isManager && <CompositeKpiManagement />}
       {activeTab === "management" && <ProjectKpiManagement projects={projects} onRefresh={onRefresh} />}
     </div>

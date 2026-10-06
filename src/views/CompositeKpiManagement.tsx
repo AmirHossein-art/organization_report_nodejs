@@ -9,6 +9,7 @@ import {
   RefreshCw,
   X,
   TrendingUp,
+  Edit2,
   GripVertical,
   ChevronDown,
   ChevronUp,
@@ -35,6 +36,7 @@ import {
   CompositeKpiValueDetail,
 } from "../types";
 import { toPersianDigits } from "../dateUtils";
+import { CustomSelect } from "../components";
 
 interface BaseKpiItem {
   id: number;
@@ -149,6 +151,18 @@ export default function CompositeKpiManagement() {
   const [trendDetail, setTrendDetail] = useState<any | null>(null);
   const [trendLoading, setTrendLoading] = useState<boolean>(false);
   const [expandedPeriodRowId, setExpandedPeriodRowId] = useState<number | null>(null);
+
+  // مودال ویرایش شاخص ترکیبی
+  const [editingComposite, setEditingComposite] = useState<CompositeKpi | null>(null);
+  const [editName, setEditName] = useState<string>("");
+  const [editUnit, setEditUnit] = useState<string>("درصد");
+  const [editTargetValue, setEditTargetValue] = useState<string>("");
+  const [editTargetDirection, setEditTargetDirection] = useState<"minimum" | "maximum">("minimum");
+  const [editDescription, setEditDescription] = useState<string>("");
+  const [editOperator, setEditOperator] = useState<CompositeOperator>("sum");
+  const [editItems, setEditItems] = useState<BaseKpiItem[]>([]);
+  const [isUpdating, setIsUpdating] = useState<boolean>(false);
+  const [editCandidateKpiId, setEditCandidateKpiId] = useState<number>(0);
 
   const flashSuccess = (msg: string) => {
     setSuccessMessage(msg);
@@ -455,6 +469,119 @@ export default function CompositeKpiManagement() {
       console.error("Error fetching trend data:", err);
     } finally {
       setTrendLoading(false);
+    }
+  };
+
+  // باز کردن مودال ویرایش
+  const openEditModal = (composite: CompositeKpi) => {
+    setEditingComposite(composite);
+    setEditName(composite.name);
+    setEditUnit(composite.unit);
+    setEditTargetValue(
+      composite.target_value !== null && composite.target_value !== undefined
+        ? String(composite.target_value)
+        : ""
+    );
+    setEditTargetDirection(composite.target_direction || "minimum");
+    setEditDescription(composite.description || "");
+    setEditOperator(composite.operator || "sum");
+    setEditCandidateKpiId(0);
+
+    const mappedItems: BaseKpiItem[] = composite.items.map((it) => {
+      const foundInAll = allKpis.find((k) => k.id === it.project_kpi_id);
+      if (foundInAll) return foundInAll;
+      return {
+        id: it.project_kpi_id,
+        name: it.projectKpi?.name || "شاخص",
+        unit: it.projectKpi?.unit || composite.unit,
+        input_type: it.projectKpi?.input_type || "direct",
+        baseline_value: null,
+        target_value: null,
+        target_direction: "minimum",
+        project_id: it.projectKpi?.project_id || 0,
+        project_title: it.projectKpi?.project?.title || "",
+        deputy_title: "سازمانی",
+      };
+    });
+    setEditItems(mappedItems);
+  };
+
+  const handleUpdateComposite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingComposite || isUpdating) return;
+
+    if (!editName.trim()) {
+      flashError("عنوان شاخص ترکیبی الزامی است.");
+      return;
+    }
+    if (!editUnit.trim()) {
+      flashError("واحد سنجش الزامی است.");
+      return;
+    }
+    if (editItems.length < 2) {
+      flashError("حداقل دو شاخص برای ترکیب الزامی است.");
+      return;
+    }
+    if (editTargetValue !== "" && isNaN(Number(editTargetValue))) {
+      flashError("مقدار هدف باید عددی معتبر باشد.");
+      return;
+    }
+
+    setIsUpdating(true);
+    try {
+      const payload = {
+        name: editName.trim(),
+        description: editDescription.trim() || null,
+        unit: editUnit.trim(),
+        operator: editOperator,
+        target_value: editTargetValue === "" ? null : Number(editTargetValue),
+        target_direction: editTargetDirection,
+        item_kpi_ids: editItems.map((k) => k.id),
+      };
+
+      const res = await fetch(`/api/composite-kpis/${editingComposite.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (res.ok) {
+        flashSuccess("شاخص ترکیبی با موفقیت ویرایش و مقادیر دوره‌ها بازسنجی شد.");
+        setEditingComposite(null);
+        fetchCompositeKpis();
+      } else {
+        const data = await res.json();
+        flashError(data.error || "خطا در ویرایش شاخص ترکیبی.");
+      }
+    } catch (err) {
+      flashError("ارتباط با سرور برقرار نشد.");
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const moveEditItem = (index: number, direction: "up" | "down") => {
+    setEditItems((prev) => {
+      const next = [...prev];
+      const targetIndex = direction === "up" ? index - 1 : index + 1;
+      if (targetIndex < 0 || targetIndex >= next.length) return prev;
+      const temp = next[index];
+      next[index] = next[targetIndex];
+      next[targetIndex] = temp;
+      return next;
+    });
+  };
+
+  const removeEditItem = (index: number) => {
+    setEditItems((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const addEditItem = (kpiId: number) => {
+    if (!kpiId) return;
+    const targetKpi = allKpis.find((k) => k.id === kpiId);
+    if (targetKpi) {
+      setEditItems((prev) => [...prev, targetKpi]);
+      setEditCandidateKpiId(0);
     }
   };
 
@@ -841,7 +968,7 @@ export default function CompositeKpiManagement() {
                     {/* نماد عملگر بین شاخص‌ها */}
                     {idx < selectedKpis.length - 1 && (
                       <div className="flex items-center justify-center -my-1">
-                        <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-200 shadow-2xs">
+                        <span className="w-8 h-8 rounded-full text-base font-black bg-emerald-600 text-white shadow-xs flex items-center justify-center">
                           {OPERATOR_CONFIG[operator].symbol}
                         </span>
                       </div>
@@ -879,17 +1006,25 @@ export default function CompositeKpiManagement() {
                     key={op}
                     type="button"
                     onClick={() => setOperator(op)}
-                    className={`p-3 rounded-2xl text-right border transition-all cursor-pointer flex flex-col justify-between ${
+                    className={`p-3.5 rounded-2xl text-right border transition-all cursor-pointer flex flex-col justify-between gap-2.5 ${
                       isSelected
-                        ? "bg-emerald-50/80 border-emerald-500 shadow-2xs text-emerald-950"
-                        : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100/70"
+                        ? "bg-emerald-50/90 border-emerald-500 shadow-sm text-emerald-950 ring-2 ring-emerald-500/20"
+                        : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100/80"
                     }`}
                   >
-                    <div className="flex items-center justify-between gap-1 w-full mb-1">
-                      <span className="font-extrabold text-xs">{conf.label}</span>
-                      <span className="font-black text-sm text-emerald-700">({conf.symbol})</span>
+                    <div className="flex items-center justify-between gap-2 w-full">
+                      <span className="font-black text-xs text-slate-900">{conf.label}</span>
+                      <span
+                        className={`w-9 h-9 rounded-xl flex items-center justify-center font-black text-lg transition-transform shrink-0 ${
+                          isSelected
+                            ? "bg-emerald-600 text-white scale-110 shadow-xs"
+                            : "bg-slate-200/80 text-slate-700"
+                        }`}
+                      >
+                        {conf.symbol}
+                      </span>
                     </div>
-                    <p className="text-[10px] text-slate-500 leading-relaxed">{conf.desc}</p>
+                    <p className="text-[10px] text-slate-500 leading-relaxed font-normal">{conf.desc}</p>
                   </button>
                 );
               })}
@@ -942,7 +1077,7 @@ export default function CompositeKpiManagement() {
 
             <div>
               <label className="block text-slate-700 font-bold text-xs mb-1">مقدار هدف (اختیاری)</label>
-              <div className="flex gap-2">
+              <div className="flex gap-2 items-center">
                 <input
                   type="number"
                   step="any"
@@ -951,14 +1086,17 @@ export default function CompositeKpiManagement() {
                   placeholder="اختیاری (مثال: ۱۰۰)"
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-right dir-rtl font-sans text-xs focus:outline-none focus:border-emerald-600"
                 />
-                <select
-                  value={targetDirection}
-                  onChange={(e) => setTargetDirection(e.target.value as "minimum" | "maximum")}
-                  className="bg-slate-50 border border-slate-200 rounded-xl px-2 py-2 text-xs text-slate-700 font-bold focus:outline-none"
-                >
-                  <option value="minimum">حداقل</option>
-                  <option value="maximum">حداکثر</option>
-                </select>
+                <div className="w-28 shrink-0">
+                  <CustomSelect
+                    value={targetDirection}
+                    onChange={(val) => setTargetDirection(val as "minimum" | "maximum")}
+                    options={[
+                      { value: "minimum", label: "حداقل" },
+                      { value: "maximum", label: "حداکثر" },
+                    ]}
+                    searchable={false}
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -1096,6 +1234,13 @@ export default function CompositeKpiManagement() {
                       >
                         <TrendingUp className="w-3.5 h-3.5" />
                         <span>روند و جزئیات</span>
+                      </button>
+                      <button
+                        onClick={() => openEditModal(composite)}
+                        className="p-1.5 text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 rounded-xl transition-colors cursor-pointer"
+                        title="ویرایش شاخص ترکیبی"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => handleRecalculate(composite.id)}
@@ -1319,6 +1464,225 @@ export default function CompositeKpiManagement() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* مودال ویرایش شاخص ترکیبی */}
+      {editingComposite && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-2xl shadow-2xl border border-slate-200 p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <Edit2 className="w-4 h-4 text-emerald-700" />
+                <h3 className="font-extrabold text-slate-900 text-sm">
+                  ویرایش شاخص ترکیبی «{editingComposite.name}»
+                </h3>
+              </div>
+              <button
+                onClick={() => setEditingComposite(null)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateComposite} className="space-y-4">
+              {/* انتخاب عملگر با دکمه‌های شکیل و فونت بزرگ */}
+              <div>
+                <label className="block text-slate-700 font-bold text-xs mb-2">عملگر ریاضی ترکیب شاخص‌ها *</label>
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                  {(Object.keys(OPERATOR_CONFIG) as CompositeOperator[]).map((op) => {
+                    const conf = OPERATOR_CONFIG[op];
+                    const isSelected = editOperator === op;
+                    return (
+                      <button
+                        key={`edit_op_${op}`}
+                        type="button"
+                        onClick={() => setEditOperator(op)}
+                        className={`p-2.5 rounded-xl text-right border transition-all cursor-pointer flex flex-col justify-between gap-1.5 ${
+                          isSelected
+                            ? "bg-emerald-50 border-emerald-500 shadow-2xs text-emerald-950 ring-1 ring-emerald-500"
+                            : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-1 w-full">
+                          <span className="font-bold text-[11px] truncate">{conf.label}</span>
+                          <span
+                            className={`w-7 h-7 rounded-lg flex items-center justify-center font-black text-sm shrink-0 ${
+                              isSelected ? "bg-emerald-600 text-white" : "bg-slate-200 text-slate-700"
+                            }`}
+                          >
+                            {conf.symbol}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-slate-700 font-bold text-xs mb-1">عنوان شاخص ترکیبی *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-right dir-rtl font-sans text-xs focus:outline-none focus:border-emerald-600"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-700 font-bold text-xs mb-1">واحد سنجش *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editUnit}
+                    onChange={(e) => setEditUnit(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-right dir-rtl font-sans text-xs focus:outline-none focus:border-emerald-600"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-700 font-bold text-xs mb-1">مقدار هدف (اختیاری)</label>
+                  <div className="flex gap-2 items-center">
+                    <input
+                      type="number"
+                      step="any"
+                      value={editTargetValue}
+                      onChange={(e) => setEditTargetValue(e.target.value)}
+                      placeholder="اختیاری"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-right dir-rtl font-sans text-xs focus:outline-none focus:border-emerald-600"
+                    />
+                    <div className="w-24 shrink-0">
+                      <CustomSelect
+                        value={editTargetDirection}
+                        onChange={(val) => setEditTargetDirection(val as "minimum" | "maximum")}
+                        options={[
+                          { value: "minimum", label: "حداقل" },
+                          { value: "maximum", label: "حداکثر" },
+                        ]}
+                        searchable={false}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-bold text-xs mb-1">توضیحات</label>
+                <textarea
+                  rows={2}
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-emerald-600 font-sans"
+                ></textarea>
+              </div>
+
+              {/* لیست اجزای شاخص با امکان مرتب‌سازی و حذف */}
+              <div className="space-y-2 pt-1 border-t border-slate-100">
+                <div className="flex justify-between items-center text-xs font-bold text-slate-700">
+                  <span>اجزای فرمول ({toPersianDigits(editItems.length)} شاخص):</span>
+                  <span className="text-[11px] text-slate-400">ترتیب قرارگیری برای تفریق و نسبت درصدی دارای اهمیت است</span>
+                </div>
+
+                <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                  {editItems.map((it, idx) => (
+                    <div
+                      key={`edit_it_${it.id}_${idx}`}
+                      className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-2"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="w-5 h-5 rounded-full bg-slate-800 text-white text-[10px] font-bold flex items-center justify-center shrink-0">
+                          {toPersianDigits(idx + 1)}
+                        </span>
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-slate-900 truncate">{it.name}</p>
+                          <p className="text-[10px] text-slate-400 truncate">
+                            {it.deputy_title} • {it.project_title}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          disabled={idx === 0}
+                          onClick={() => moveEditItem(idx, "up")}
+                          className="p-1 text-slate-500 hover:text-slate-800 disabled:opacity-30 bg-white border border-slate-200 rounded-lg cursor-pointer"
+                          title="بالا"
+                        >
+                          <ArrowUp className="w-3 h-3" />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={idx === editItems.length - 1}
+                          onClick={() => moveEditItem(idx, "down")}
+                          className="p-1 text-slate-500 hover:text-slate-800 disabled:opacity-30 bg-white border border-slate-200 rounded-lg cursor-pointer"
+                          title="پایین"
+                        >
+                          <ArrowDown className="w-3 h-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeEditItem(idx)}
+                          className="p-1 text-rose-600 hover:text-rose-800 bg-white border border-rose-200 rounded-lg cursor-pointer"
+                          title="حذف"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* افزودن شاخص جدید به این فرمول */}
+                <div className="pt-2">
+                  <label className="block text-[11px] font-bold text-slate-500 mb-1">افزودن شاخص جدید به این فرمول:</label>
+                  <div className="flex gap-2">
+                    <CustomSelect
+                      value={editCandidateKpiId}
+                      onChange={(val) => setEditCandidateKpiId(Number(val))}
+                      options={[
+                        { value: 0, label: "-- انتخاب شاخص برای افزودن --" },
+                        ...allKpis.map((k) => ({
+                          value: k.id,
+                          label: `${k.name} (${k.deputy_title} - ${k.project_title})`,
+                        })),
+                      ]}
+                      className="grow"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => addEditItem(editCandidateKpiId)}
+                      disabled={!editCandidateKpiId}
+                      className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer shrink-0"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>افزودن</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingComposite(null)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs cursor-pointer"
+                >
+                  انصراف
+                </button>
+                <button
+                  type="submit"
+                  disabled={isUpdating || editItems.length < 2}
+                  className="px-5 py-2 bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-300 text-white font-bold rounded-xl text-xs shadow-md cursor-pointer flex items-center gap-1.5"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>{isUpdating ? "در حال ذخیره و بازسنجی..." : "ذخیره تغییرات و بازسنجی"}</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
