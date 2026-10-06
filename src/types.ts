@@ -167,3 +167,73 @@ export interface DashboardRow {
   status_label: string;
   report?: Report | null;
 }
+
+export type CompositeOperator =
+  | "sum"
+  | "average"
+  | "difference"
+  | "multiply"
+  | "ratio_percentage";
+
+export interface CompositeKpiItem {
+  id: number;
+  composite_kpi_id: number;
+  project_kpi_id: number;
+  order_index: number;
+  projectKpi?: {
+    id: number;
+    name: string;
+    unit: string;
+    input_type: string;
+    project_id: number;
+    project?: {
+      id: number;
+      title: string;
+    };
+  };
+}
+
+export interface CompositeKpiValueDetail {
+  kpi_id: number;
+  kpi_name: string;
+  project_title: string;
+  deputy_name?: string;
+  value: number | null;
+  unit: string;
+  measured: boolean;
+}
+
+export interface CompositeKpiValue {
+  id: number;
+  composite_kpi_id: number;
+  period_id: number;
+  calculated_value: number | null;
+  status: "computed" | "partial" | "not_measured";
+  details?: CompositeKpiValueDetail[] | any;
+  created_at?: string;
+  updated_at?: string;
+  period?: {
+    id: number;
+    title: string;
+    period_start: string;
+    period_end: string;
+    report_type: string;
+  };
+}
+
+export interface CompositeKpi {
+  id: number;
+  name: string;
+  description: string | null;
+  unit: string;
+  target_value?: number | null;
+  target_direction: "minimum" | "maximum";
+  operator: CompositeOperator;
+  is_active: boolean;
+  sort_order: number;
+  created_at?: string;
+  items: CompositeKpiItem[];
+  values?: CompositeKpiValue[];
+  latest_value?: number | null;
+  latest_period_title?: string | null;
+}

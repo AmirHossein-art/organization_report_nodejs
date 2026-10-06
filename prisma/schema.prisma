@@ -32,6 +32,14 @@ enum KpiTargetDirection {
   maximum
 }
 
+enum CompositeOperator {
+  sum
+  average
+  difference
+  multiply
+  ratio_percentage
+}
+
 // ۱. جدول کاربران
 model User {
   id                   Int       @id @default(autoincrement())
@@ -82,6 +90,7 @@ model ReportPeriod {
   created_at           DateTime  @default(now())
 
   reports Report[]
+  compositeKpiValues CompositeKpiValue[]
 }
 
 // ۴. جدول رابط کاربری و پروژه‌ها (Many-to-Many)
@@ -201,6 +210,7 @@ model ProjectKpi {
 
   project Project          @relation(fields: [project_id], references: [id], onDelete: Cascade)
   values  ReportKpiValue[]
+  compositeItems CompositeKpiItem[]
 
   @@index([project_id, is_active])
 }
@@ -230,4 +240,53 @@ model DeadlineSetting {
   deadline_day  Int
   deadline_time String // ذخیره به صورت فرمت "HH:MM"
   grace_days    Int        @default(0)
+}
+
+// ۸. جداول شاخص‌های ترکیبی مدیریتی (Composite KPIs)
+model CompositeKpi {
+  id               Int                 @id @default(autoincrement())
+  name             String
+  description      String?             @db.Text
+  unit             String
+  target_value     Float?
+  target_direction KpiTargetDirection  @default(minimum)
+  operator         CompositeOperator   @default(sum)
+  is_active        Boolean             @default(true)
+  sort_order       Int                 @default(0)
+  created_at       DateTime            @default(now())
+
+  items            CompositeKpiItem[]
+  values           CompositeKpiValue[]
+}
+
+model CompositeKpiItem {
+  id               Int          @id @default(autoincrement())
+  composite_kpi_id Int
+  project_kpi_id   Int
+  order_index      Int          @default(0)
+
+  compositeKpi     CompositeKpi @relation(fields: [composite_kpi_id], references: [id], onDelete: Cascade)
+  projectKpi       ProjectKpi   @relation(fields: [project_kpi_id], references: [id], onDelete: Cascade)
+
+  @@unique([composite_kpi_id, project_kpi_id])
+  @@index([composite_kpi_id])
+  @@index([project_kpi_id])
+}
+
+model CompositeKpiValue {
+  id               Int          @id @default(autoincrement())
+  composite_kpi_id Int
+  period_id        Int
+  calculated_value Float?
+  status           String       @default("computed") // computed | partial | not_measured
+  details          Json?
+  created_at       DateTime     @default(now())
+  updated_at       DateTime     @updatedAt
+
+  compositeKpi     CompositeKpi @relation(fields: [composite_kpi_id], references: [id], onDelete: Cascade)
+  period           ReportPeriod @relation(fields: [period_id], references: [id], onDelete: Cascade)
+
+  @@unique([composite_kpi_id, period_id])
+  @@index([composite_kpi_id])
+  @@index([period_id])
 }

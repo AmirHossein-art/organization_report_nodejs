@@ -205,11 +205,19 @@ export default function App() {
             )}
             {(currentView === "project_kpis" ||
               currentView === "project_kpi_management" ||
-              currentView === "project_kpi_analytics") && (
+              currentView === "project_kpi_analytics" ||
+              currentView === "composite_kpis") && (
               <ProjectKpiHub
                 projects={activeProjects}
                 onRefresh={fetchData}
-                initialTab={currentView === "project_kpi_management" ? "management" : "analytics"}
+                currentUser={user}
+                initialTab={
+                  currentView === "project_kpi_management"
+                    ? "management"
+                    : currentView === "composite_kpis"
+                    ? "composite"
+                    : "analytics"
+                }
               />
             )}
             {currentView === "manage_users" && (

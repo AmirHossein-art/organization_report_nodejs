@@ -54,7 +54,8 @@ export default function Sidebar({ user, currentView, setCurrentView, onLogout }:
   const isKpiActive =
     currentView === "project_kpis" ||
     currentView === "project_kpi_management" ||
-    currentView === "project_kpi_analytics";
+    currentView === "project_kpi_analytics" ||
+    currentView === "composite_kpis";
 
   return (
     <>

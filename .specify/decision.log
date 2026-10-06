@@ -159,3 +159,12 @@
   4. **Visualization & Analytics:** Guard against null targets in `computeKpiVisual` (`kpiVisuals.ts`), `KpiMatrixTable.tsx`, `KpiInteractiveInput.tsx`, and `ProjectKpiAnalytics.tsx`, showing "فاقد هدف عددی" or "—" rather than arbitrary 0%/100% assumptions or broken reference lines.
 - **Rationale:** Allows defining directional or qualitative tracking indicators without forcing arbitrary target numbers on organizational projects.
 
+### D28 — Managerial Composite KPIs with Visual Drag & Drop Builder
+- **Decision:** Architect a dedicated managerial composite KPI engine enabling executives to aggregate cross-project and cross-deputy indicators with mathematical operators without exposing composite metrics to operational deputy reporting surfaces:
+  1. **Strict Role-Based Security & Confidentiality:** Every `/api/composite-kpis*` endpoint enforces `authenticate, requireManager`. The frontend "شاخص‌های ترکیبی مدیریتی" tab in `ProjectKpiHub.tsx` is strictly gated to `role === "manager"` and completely inaccessible to regular personnel/deputies.
+  2. **Relational Schema & Self-Healing Startup Migrations:** Implement `CompositeOperator` enum (`sum`, `average`, `difference`, `multiply`, `ratio_percentage`), `CompositeKpi`, `CompositeKpiItem`, and `CompositeKpiValue` models in Prisma and startup DDL in `server.ts` (`ensureDatabaseSchema`) with zero-touch Railway production migration capability.
+  3. **Visual Drag & Drop & Deputy Window Pods:** Support modular Deputy Window Pods displaying each deputy's KPIs with HTML5 drag-and-drop (`draggable={true}`) into a central formula drop zone alongside 1-click addition and an instant universal search bar filtering across all base KPIs.
+  4. **Multi-Operand Formulation & Order Governance:** Support 2 or more base KPIs with dynamic ordering (`order_index`, `ArrowUp`/`ArrowDown`) vital for directional operators (difference and percentage ratios) and safe zero-division handling.
+  5. **Durable Period Snapshots & Automatic Calculation:** Calculate composite periodic metrics and persist full constituent audits (`details` JSONB snapshot) automatically upon report submissions/updates (`syncAllCompositeKpisForPeriod`), with full manual recalculation (`/recalculate`) and chronological Recharts trend exploration.
+- **Rationale:** Empowers executive directors to evaluate cross-departmental macro progress and ratios while keeping operational reporting focused purely on departmental base KPIs.
+
