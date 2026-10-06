@@ -111,7 +111,7 @@ export interface ProjectKpi {
   unit: string;
   input_type: "direct" | "percentage_change";
   baseline_value?: number | null;
-  target_value: number;
+  target_value?: number | null;
   target_direction: "minimum" | "maximum";
   report_type: "weekly" | "monthly" | null;
   is_active: boolean;
@@ -126,7 +126,7 @@ export interface ReportKpiValue {
   project_kpi_id: number;
   name?: string;
   unit?: string;
-  target_value?: number;
+  target_value?: number | null;
   target_direction?: "minimum" | "maximum";
   input_type?: "direct" | "percentage_change";
   current_value: number | null;

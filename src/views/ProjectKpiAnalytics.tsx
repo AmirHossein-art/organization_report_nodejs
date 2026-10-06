@@ -59,7 +59,7 @@ interface Kpi {
   unit: string;
   input_type: "direct" | "percentage_change";
   baseline_value?: number | null;
-  target_value: number;
+  target_value?: number | null;
   target_direction: "minimum" | "maximum";
   report_type: "weekly" | "monthly" | null;
   is_active: boolean;
@@ -163,7 +163,7 @@ export default function ProjectKpiAnalytics({ projects = [] }: ProjectKpiAnalyti
 
   // منطق تحقق هدف
   const computeAchieved = (calc: number | null): "achieved" | "not_achieved" | null => {
-    if (calc === null || !kpiMeta) return null;
+    if (calc === null || !kpiMeta || kpiMeta.target_value === null || kpiMeta.target_value === undefined) return null;
     const target = kpiMeta.target_value;
     return kpiMeta.target_direction === "minimum"
       ? (calc >= target ? "achieved" : "not_achieved")
@@ -337,10 +337,16 @@ export default function ProjectKpiAnalytics({ projects = [] }: ProjectKpiAnalyti
                 ) : null}
               </div>
               <span className="text-2xl font-black text-indigo-700 mt-1 block">
-                {kpiMeta ? `${toPersianDigits(kpiMeta.target_value)} ${kpiMeta.unit}` : "—"}
+                {kpiMeta && kpiMeta.target_value !== null && kpiMeta.target_value !== undefined
+                  ? `${toPersianDigits(kpiMeta.target_value)} ${kpiMeta.unit}`
+                  : "تعیین‌نشده"}
               </span>
               <span className="text-[11px] text-slate-400 block mt-1">
-                {latestStatus === null ? "اندازه‌گیری نشده" : latestStatus === "achieved" ? "هدف دوره پوشش داده شد" : "نیاز به تلاش تا دستیابی به هدف"}
+                {latestStatus === null
+                  ? (kpiMeta?.target_value == null ? "شاخص فاقد مقدار هدف است" : "اندازه‌گیری نشده")
+                  : latestStatus === "achieved"
+                  ? "هدف دوره پوشش داده شد"
+                  : "نیاز به تلاش تا دستیابی به هدف"}
               </span>
             </div>
           </div>
@@ -392,12 +398,14 @@ export default function ProjectKpiAnalytics({ projects = [] }: ProjectKpiAnalyti
                         }}
                       />
                     )}
-                    <ReferenceLine
-                      y={kpiMeta?.target_value}
-                      stroke="#6366f1"
-                      strokeDasharray="5 4"
-                      label={{ value: `هدف: ${toPersianDigits(kpiMeta?.target_value)}`, position: "insideTopRight", fontSize: 11, fill: "#6366f1" }}
-                    />
+                    {kpiMeta?.target_value !== null && kpiMeta?.target_value !== undefined && (
+                      <ReferenceLine
+                        y={kpiMeta.target_value}
+                        stroke="#6366f1"
+                        strokeDasharray="5 4"
+                        label={{ value: `هدف: ${toPersianDigits(kpiMeta.target_value)}`, position: "insideTopRight", fontSize: 11, fill: "#6366f1" }}
+                      />
+                    )}
                     <Line
                       type="monotone"
                       dataKey="value"

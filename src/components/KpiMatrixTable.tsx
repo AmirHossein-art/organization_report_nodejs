@@ -170,6 +170,10 @@ export const KpiMatrixTable: React.FC<KpiMatrixTableProps> = ({
                         </span>
                       )}
                     </div>
+                  ) : !visual.hasTarget && !visual.isPercentageUnit ? (
+                    <div className="flex flex-col items-center justify-center">
+                      <span className="text-[10px] text-slate-400 font-medium">فاقد هدف عددی</span>
+                    </div>
                   ) : (
                     <div className="flex flex-col items-center justify-center gap-1">
                       <div className="flex items-center gap-1.5 flex-wrap justify-center">

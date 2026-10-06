@@ -212,6 +212,7 @@ async function ensureDatabaseSchema() {
 
     await prisma.$executeRawUnsafe(`
       ALTER TABLE "ProjectKpi" ADD COLUMN IF NOT EXISTS "baseline_value" DOUBLE PRECISION;
+      ALTER TABLE "ProjectKpi" ALTER COLUMN "target_value" DROP NOT NULL;
       ALTER TABLE "ReportKpiValue" ADD COLUMN IF NOT EXISTS "baseline_value" DOUBLE PRECISION;
       ALTER TABLE "ReportKpiValue" ADD COLUMN IF NOT EXISTS "calculated_value" DOUBLE PRECISION;
       ALTER TABLE "ReportKpiValue" ADD COLUMN IF NOT EXISTS "not_measured" BOOLEAN NOT NULL DEFAULT false;
@@ -1408,8 +1409,13 @@ app.post("/api/project-kpis", authenticate, requireManager, async (req, res) => 
       baselineVal = parsedBaseline;
     }
 
-    if (target_value === undefined || target_value === null || target_value === "" || isNaN(Number(target_value))) {
-      return res.status(400).json({ error: "مقدار هدف باید عددی معتبر باشد." });
+    let targetVal: number | null = null;
+    if (target_value !== undefined && target_value !== null && target_value !== "") {
+      const parsedTarget = Number(target_value);
+      if (isNaN(parsedTarget)) {
+        return res.status(400).json({ error: "مقدار هدف باید عددی معتبر باشد." });
+      }
+      targetVal = parsedTarget;
     }
 
     if (!KPI_TARGET_DIRECTIONS.includes(target_direction)) {
@@ -1443,7 +1449,7 @@ app.post("/api/project-kpis", authenticate, requireManager, async (req, res) => 
         unit: kpiUnit,
         input_type,
         baseline_value: baselineVal,
-        target_value: Number(target_value),
+        target_value: targetVal,
         target_direction,
         report_type: reportTypeVal,
         is_active: parsedIsActive !== undefined ? parsedIsActive : true,
@@ -1503,10 +1509,15 @@ app.patch("/api/project-kpis/:id", authenticate, requireManager, async (req, res
       }
     }
     if (target_value !== undefined) {
-      if (target_value === null || target_value === "" || isNaN(Number(target_value))) {
-        return res.status(400).json({ error: "مقدار هدف باید عددی معتبر باشد." });
+      if (target_value === null || target_value === "") {
+        data.target_value = null;
+      } else {
+        const parsedTarget = Number(target_value);
+        if (isNaN(parsedTarget)) {
+          return res.status(400).json({ error: "مقدار هدف باید عددی معتبر باشد." });
+        }
+        data.target_value = parsedTarget;
       }
-      data.target_value = Number(target_value);
     }
     if (target_direction !== undefined) {
       if (!KPI_TARGET_DIRECTIONS.includes(target_direction)) {
@@ -3095,13 +3106,17 @@ function formatKpiValuesForPrompt(kpiValues: any[] | undefined): string {
       if (!measured) {
         return `${idx + 1}. ${kv.name || "شاخص"} — اندازه‌گیری نشده (${kv.missing_reason || "دلیل مشخص نشده"})`;
       }
+      const targetPart = kv.target_value !== null && kv.target_value !== undefined
+        ? ` (هدف: ${directionLabel} ${kv.target_value}${kv.input_type === "percentage_change" ? "٪" : ""})`
+        : "";
+
       if (kv.input_type === "direct") {
         const baselinePart = kv.baseline_value !== null && kv.baseline_value !== undefined
           ? ` (مبنا: ${kv.baseline_value}، تغییر: ${kv.current_value - kv.baseline_value > 0 ? "+" : ""}${(kv.current_value - kv.baseline_value).toFixed(2)})`
           : "";
-        return `${idx + 1}. ${kv.name || "شاخص"} (${inputTypeLabel}) — ${kv.unit || ""}: ${kv.current_value}${baselinePart} (هدف: ${directionLabel} ${kv.target_value})`;
+        return `${idx + 1}. ${kv.name || "شاخص"} (${inputTypeLabel}) — ${kv.unit || ""}: ${kv.current_value}${baselinePart}${targetPart}`;
       } else {
-        return `${idx + 1}. ${kv.name || "شاخص"} (${inputTypeLabel}) — مبنا: ${kv.baseline_value}، جاری: ${kv.current_value}، محاسبه‌شده: ${kv.calculated_value}٪ (هدف: ${directionLabel} ${kv.target_value}٪)`;
+        return `${idx + 1}. ${kv.name || "شاخص"} (${inputTypeLabel}) — مبنا: ${kv.baseline_value}، جاری: ${kv.current_value}، محاسبه‌شده: ${kv.calculated_value}٪${targetPart}`;
       }
     })
     .join("\n");

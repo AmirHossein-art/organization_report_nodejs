@@ -10,7 +10,7 @@ export interface KpiInteractiveInputProps {
     unit: string;
     input_type: "direct" | "percentage_change" | string;
     baseline_value?: number | null;
-    target_value: number;
+    target_value?: number | null;
     target_direction: "minimum" | "maximum" | string;
   };
   value: {
@@ -61,7 +61,8 @@ export const KpiInteractiveInput: React.FC<KpiInteractiveInputProps> = ({
   }
 
   // محاسبه عرض قطعات نوار پیشرفت (0 تا 100)
-  const targetNum = Number(kpi.target_value) > 0 ? Number(kpi.target_value) : 100;
+  const hasTarget = kpi.target_value !== null && kpi.target_value !== undefined;
+  const targetNum = hasTarget && Number(kpi.target_value) > 0 ? Number(kpi.target_value) : 100;
   const isPercentageUnit =
     kpi.unit.includes("درصد") || kpi.unit.includes("%") || targetNum === 100;
 
@@ -98,9 +99,11 @@ export const KpiInteractiveInput: React.FC<KpiInteractiveInputProps> = ({
                 پیشرفت قبلی: {toPersianDigits(baselineNum)} {kpi.unit}
               </span>
             )}
-            <span className="text-[10px] text-slate-500 bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-lg">
-              هدف: {toPersianDigits(kpi.target_value)} {kpi.unit}
-            </span>
+            {hasTarget && (
+              <span className="text-[10px] text-slate-500 bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-lg">
+                هدف: {toPersianDigits(kpi.target_value!)} {kpi.unit}
+              </span>
+            )}
           </div>
           {kpi.description && (
             <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
@@ -254,7 +257,7 @@ export const KpiInteractiveInput: React.FC<KpiInteractiveInputProps> = ({
                 <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
                 <span>رشد جدید دوره</span>
               </span>
-              <span>هدف: {toPersianDigits(kpi.target_value)} {kpi.unit}</span>
+              {hasTarget && <span>هدف: {toPersianDigits(kpi.target_value!)} {kpi.unit}</span>}
             </div>
           </div>
         </div>

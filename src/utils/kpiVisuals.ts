@@ -19,6 +19,8 @@ export interface KpiVisualData {
   formattedTarget: string;
   formattedGrowth: string | null;
   growthPositive: boolean | null;
+  hasTarget: boolean;
+  isPercentageUnit: boolean;
 }
 
 interface ComputeKpiParams {
@@ -62,12 +64,16 @@ export function computeKpiVisual(
       formattedTarget: "—",
       formattedGrowth: null,
       growthPositive: null,
+      hasTarget: false,
+      isPercentageUnit: false,
     };
   }
 
   const unit = (kpiMeta?.unit || kpiValue?.unit || "").trim();
   const inputType = kpiMeta?.input_type || kpiValue?.input_type || "direct";
-  const targetVal = kpiMeta?.target_value ?? kpiValue?.target_value ?? 100;
+  const rawTarget = kpiMeta?.target_value !== undefined ? kpiMeta.target_value : kpiValue?.target_value;
+  const targetVal = rawTarget !== null && rawTarget !== undefined && !isNaN(Number(rawTarget)) ? Number(rawTarget) : null;
+  const hasTarget = targetVal !== null;
   const baselineVal = kpiValue?.baseline_value ?? kpiMeta?.baseline_value ?? null;
   const currentVal = kpiValue?.current_value ?? null;
 
@@ -81,7 +87,7 @@ export function computeKpiVisual(
   }
 
   const isPercentageUnit =
-    unit.includes("درصد") || unit.includes("%") || Number(targetVal) === 100;
+    unit.includes("درصد") || unit.includes("%") || (hasTarget && Number(targetVal) === 100);
 
   // Format strings
   const formattedBaseline =
@@ -90,7 +96,7 @@ export function computeKpiVisual(
       : "—";
 
   const formattedTarget =
-    targetVal !== null && targetVal !== undefined
+    hasTarget
       ? `${toPersianDigits(Number(targetVal).toFixed(2))} ${unit}`
       : "—";
 
@@ -117,12 +123,14 @@ export function computeKpiVisual(
       formattedTarget,
       formattedGrowth: null,
       growthPositive: null,
+      hasTarget,
+      isPercentageUnit,
     };
   }
 
   const numCurrent = Number(effectiveVal);
   const numBaseline = baselineVal !== null && baselineVal !== undefined ? Number(baselineVal) : 0;
-  const numTarget = targetVal !== null && targetVal !== undefined && Number(targetVal) > 0 ? Number(targetVal) : 100;
+  const numTarget = hasTarget && Number(targetVal) > 0 ? Number(targetVal) : 100;
 
   // Calculate percentage of journey (0 to 100%)
   let totalProgressPercent = 0;
@@ -131,9 +139,12 @@ export function computeKpiVisual(
   if (isPercentageUnit) {
     totalProgressPercent = Math.max(0, Math.min(100, numCurrent));
     baselinePercent = Math.max(0, Math.min(100, numBaseline));
-  } else {
+  } else if (hasTarget && numTarget > 0) {
     totalProgressPercent = Math.max(0, Math.min(100, (numCurrent / numTarget) * 100));
     baselinePercent = Math.max(0, Math.min(100, (numBaseline / numTarget) * 100));
+  } else {
+    totalProgressPercent = 0;
+    baselinePercent = 0;
   }
 
   // Ensure baseline does not exceed total
@@ -157,10 +168,14 @@ export function computeKpiVisual(
   let statusLabel = "در حال اجرا";
   let badgeClass = "bg-blue-50 text-blue-800 border-blue-200";
 
-  if (totalProgressPercent >= 100) {
+  if (hasTarget && totalProgressPercent >= 100) {
     status = "completed";
     statusLabel = "تکمیل شده";
     badgeClass = "bg-emerald-50 text-emerald-800 border-emerald-300 font-black";
+  } else if (!hasTarget && !isPercentageUnit) {
+    status = "in_progress";
+    statusLabel = "ثبت عملکرد";
+    badgeClass = "bg-slate-100 text-slate-700 border-slate-200";
   } else if (totalProgressPercent === 0) {
     status = "not_started";
     statusLabel = "شروع نشده";
@@ -192,5 +207,7 @@ export function computeKpiVisual(
     formattedTarget,
     formattedGrowth,
     growthPositive,
+    hasTarget,
+    isPercentageUnit,
   };
 }

@@ -52,7 +52,7 @@ interface Kpi {
   unit: string;
   input_type: "direct" | "percentage_change";
   baseline_value?: number | null;
-  target_value: number;
+  target_value?: number | null;
   target_direction: "minimum" | "maximum";
   report_type: "weekly" | "monthly" | null;
   is_active: boolean;
@@ -160,7 +160,7 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
       flashError("واحد سنجش نمی‌تواند خالی باشد.");
       return;
     }
-    if (targetValue === "" || isNaN(Number(targetValue))) {
+    if (targetValue !== "" && isNaN(Number(targetValue))) {
       flashError("مقدار هدف باید عددی معتبر باشد.");
       return;
     }
@@ -178,7 +178,7 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
         unit: unit.trim(),
         input_type: inputType,
         baseline_value: baselineValue === "" ? null : Number(baselineValue),
-        target_value: Number(targetValue),
+        target_value: targetValue === "" ? null : Number(targetValue),
         target_direction: targetDirection,
         is_active: isActive,
         sort_order: sortOrder === "" ? 0 : Number(sortOrder),
@@ -291,7 +291,7 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
     setEditInputType(kpi.input_type);
     setEditBaselineValue(kpi.baseline_value !== null && kpi.baseline_value !== undefined ? String(kpi.baseline_value) : "");
     setEditTargetDirection(kpi.target_direction);
-    setEditTargetValue(String(kpi.target_value));
+    setEditTargetValue(kpi.target_value !== null && kpi.target_value !== undefined ? String(kpi.target_value) : "");
     setEditReportType(kpi.report_type || "both");
     setEditSortOrder(String(kpi.sort_order));
     setEditIsActive(kpi.is_active);
@@ -309,7 +309,7 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
       flashError("واحد سنجش نمی‌تواند خالی باشد.");
       return;
     }
-    if (editTargetValue === "" || isNaN(Number(editTargetValue))) {
+    if (editTargetValue !== "" && isNaN(Number(editTargetValue))) {
       flashError("مقدار هدف باید عددی معتبر باشد.");
       return;
     }
@@ -326,7 +326,7 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
         unit: editUnit.trim(),
         input_type: editInputType,
         baseline_value: editBaselineValue === "" ? null : Number(editBaselineValue),
-        target_value: Number(editTargetValue),
+        target_value: editTargetValue === "" ? null : Number(editTargetValue),
         target_direction: editTargetDirection,
         is_active: editIsActive,
         sort_order: editSortOrder === "" ? 0 : Number(editSortOrder),
@@ -487,14 +487,13 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
                 />
               </div>
               <div>
-                <label className="block text-slate-600 font-bold mb-1">مقدار هدف *</label>
+                <label className="block text-slate-600 font-bold mb-1">مقدار هدف (اختیاری)</label>
                 <input
                   type="number"
                   step="any"
-                  required
                   value={targetValue}
                   onChange={(e) => setTargetValue(e.target.value)}
-                  placeholder="مثال: 3"
+                  placeholder="اختیاری (مثال: 3)"
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-right dir-rtl font-sans text-xs focus:outline-none focus:border-emerald-600"
                 />
               </div>
@@ -613,7 +612,11 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
                           {" • "}
                         </>
                       )}
-                      هدف: {TARGET_DIRECTION_LABELS[kpi.target_direction]} {toPersianDigits(kpi.target_value)} {kpi.unit}
+                      {kpi.target_value !== null && kpi.target_value !== undefined ? (
+                        <>هدف: {TARGET_DIRECTION_LABELS[kpi.target_direction]} {toPersianDigits(kpi.target_value)} {kpi.unit}</>
+                      ) : (
+                        <span className="text-slate-400">بدون مقدار هدف</span>
+                      )}
                       {" • "}ترتیب: {toPersianDigits(kpi.sort_order)}
                     </p>
                   </div>
@@ -735,13 +738,13 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 font-bold mb-1">مقدار هدف *</label>
+                  <label className="block text-slate-600 font-bold mb-1">مقدار هدف (اختیاری)</label>
                   <input
                     type="number"
                     step="any"
-                    required
                     value={editTargetValue}
                     onChange={(e) => setEditTargetValue(e.target.value)}
+                    placeholder="اختیاری (مثال: 3)"
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-right dir-rtl font-sans text-xs focus:outline-none focus:border-emerald-600"
                   />
                 </div>

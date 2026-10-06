@@ -151,3 +151,11 @@
   5. **Operational Scoping across Modules:** Restrict project options in `ManagerDashboard.tsx`, `ProjectAllocations.tsx`, `ProjectKpiManagement.tsx`, `ProjectKpiAnalytics.tsx`, and `MyReports.tsx` to active projects.
 - **Rationale:** Prevents clutter from decommissioned projects, prevents false delinquency warnings for inactive initiatives, and ensures pristine executive reports while preserving historical data integrity in the database.
 
+### D27 — Nullable KPI Target Values (آزاد کردن و اختیاری‌سازی مقدار هدف شاخص‌ها)
+- **Decision:** Make KPI `target_value` optional and nullable across the database schema, API contracts, forms, and visualization logic:
+  1. **Schema & Self-Healing Migration:** Change `target_value Float?` in `prisma/schema.prisma` and add `ALTER TABLE "ProjectKpi" ALTER COLUMN "target_value" DROP NOT NULL;` in `server.ts` startup migrations (`ensureDatabaseSchema`) for non-destructive deployment.
+  2. **API & Validation:** Update `POST /api/project-kpis` and `PATCH /api/project-kpis/:id` to accept null or omitted target values, and update AI prompt serialization (`formatKpiValuesForPrompt`) to gracefully omit missing targets.
+  3. **Form & Management UI:** Remove `required` constraint and `*` from KPI definition forms (`ProjectKpiManagement.tsx`), displaying `(اختیاری)` and handling null values in both create and update operations.
+  4. **Visualization & Analytics:** Guard against null targets in `computeKpiVisual` (`kpiVisuals.ts`), `KpiMatrixTable.tsx`, `KpiInteractiveInput.tsx`, and `ProjectKpiAnalytics.tsx`, showing "فاقد هدف عددی" or "—" rather than arbitrary 0%/100% assumptions or broken reference lines.
+- **Rationale:** Allows defining directional or qualitative tracking indicators without forcing arbitrary target numbers on organizational projects.
+
