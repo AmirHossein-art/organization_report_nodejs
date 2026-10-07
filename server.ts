@@ -2628,7 +2628,7 @@ app.post("/api/reports", authenticate, upload.array("files", 10), async (req: an
           }
           : undefined,
       },
-      include: { files: true, nextActions: true, achievedActions: true, kpiValues: true }
+      include: { files: true, nextActions: true, achievedActions: true, kpiValues: { include: { kpi: true } } }
     });
 
     if (parsedAchievedActionIds.length > 0) {
@@ -2845,7 +2845,7 @@ app.put("/api/reports/:id", authenticate, upload.array("files", 10), async (req:
           results_achieved: finalResultsAchieved !== undefined ? finalResultsAchieved : undefined,
           kpi_text: kpi_text !== undefined ? kpi_text : undefined,
         },
-        include: { files: true, nextActions: true, achievedActions: true, kpiValues: true }
+        include: { files: true, nextActions: true, achievedActions: true, kpiValues: { include: { kpi: true } } }
       });
     });
 
@@ -3792,24 +3792,32 @@ function formatKpiValuesForPrompt(kpiValues: any[] | undefined): string {
   if (!Array.isArray(kpiValues) || kpiValues.length === 0) return "بدون شاخص ساختاریافته";
   return kpiValues
     .map((kv, idx) => {
-      const measured = !kv.not_measured && kv.calculated_value !== null;
-      const inputTypeLabel = kv.input_type === "direct" ? "مقدار مستقیم" : "درصد تغییر";
-      const directionLabel = kv.target_direction === "minimum" ? "حداقل" : "حداکثر";
+      const kpi = kv.kpi || {};
+      const name = kv.name || kpi.name || "شاخص";
+      const unit = kv.unit || kpi.unit || "";
+      const inputType = kv.input_type || kpi.input_type || "direct";
+      const targetDirection = kv.target_direction || kpi.target_direction || "minimum";
+      const targetValue = kv.target_value !== undefined && kv.target_value !== null ? kv.target_value : kpi.target_value;
+      const baselineVal = kv.baseline_value !== undefined && kv.baseline_value !== null ? kv.baseline_value : kpi.baseline_value;
+
+      const measured = !kv.not_measured && kv.calculated_value !== null && kv.current_value !== null;
+      const inputTypeLabel = inputType === "direct" ? "مقدار مستقیم" : "درصد تغییر";
+      const directionLabel = targetDirection === "minimum" ? "حداقل" : "حداکثر";
 
       if (!measured) {
-        return `${idx + 1}. ${kv.name || "شاخص"} — اندازه‌گیری نشده (${kv.missing_reason || "دلیل مشخص نشده"})`;
+        return `${idx + 1}. ${name} — اندازه‌گیری نشده (${kv.missing_reason || "دلیل مشخص نشده"})`;
       }
-      const targetPart = kv.target_value !== null && kv.target_value !== undefined
-        ? ` (هدف: ${directionLabel} ${kv.target_value}${kv.input_type === "percentage_change" ? "٪" : ""})`
+      const targetPart = targetValue !== null && targetValue !== undefined
+        ? ` (هدف: ${directionLabel} ${targetValue}${inputType === "percentage_change" ? "٪" : ""})`
         : "";
 
-      if (kv.input_type === "direct") {
-        const baselinePart = kv.baseline_value !== null && kv.baseline_value !== undefined
-          ? ` (مبنا: ${kv.baseline_value}، تغییر: ${kv.current_value - kv.baseline_value > 0 ? "+" : ""}${(kv.current_value - kv.baseline_value).toFixed(2)})`
+      if (inputType === "direct") {
+        const baselinePart = baselineVal !== null && baselineVal !== undefined
+          ? ` (مبنا: ${baselineVal}، تغییر: ${kv.current_value - baselineVal > 0 ? "+" : ""}${(kv.current_value - baselineVal).toFixed(2)})`
           : "";
-        return `${idx + 1}. ${kv.name || "شاخص"} (${inputTypeLabel}) — ${kv.unit || ""}: ${kv.current_value}${baselinePart}${targetPart}`;
+        return `${idx + 1}. ${name} (${inputTypeLabel}) — ${unit ? `${unit}: ` : ""}${kv.current_value}${baselinePart}${targetPart}`;
       } else {
-        return `${idx + 1}. ${kv.name || "شاخص"} (${inputTypeLabel}) — مبنا: ${kv.baseline_value}، جاری: ${kv.current_value}، محاسبه‌شده: ${kv.calculated_value}٪${targetPart}`;
+        return `${idx + 1}. ${name} (${inputTypeLabel}) — مبنا: ${baselineVal ?? 0}، جاری: ${kv.current_value}، محاسبه‌شده: ${kv.calculated_value}٪${targetPart}`;
       }
     })
     .join("\n");
@@ -4046,7 +4054,9 @@ app.post("/api/reports/analyze-single", authenticate, aiLimiter, async (req: any
         user: true,
         project: true,
         nextActions: true,
-        kpiValues: true,
+        kpiValues: {
+          include: { kpi: true },
+        },
       },
     });
 
@@ -4266,7 +4276,16 @@ app.post(["/api/reports/analyze-deputy", "/api/ai/deputy-analysis"], authenticat
     const projectsList = Array.from(projectMap.values());
     const projectIds = projectsList.map((p) => p.id);
 
-    // ۳. دریافت گزارش‌های این دوره برای این پروژه‌ها و کاربران
+    // ۳. استخراج کلیه شاخص‌های مصوب و فعال این پروژه‌ها
+    const definedProjectKpis = await prisma.projectKpi.findMany({
+      where: {
+        project_id: { in: projectIds },
+        is_active: true,
+      },
+      orderBy: { sort_order: "asc" },
+    });
+
+    // ۴. دریافت گزارش‌های این دوره برای این پروژه‌ها و کاربران
     const reports = await prisma.report.findMany({
       where: {
         period_id: Number(period_id),
@@ -4276,15 +4295,18 @@ app.post(["/api/reports/analyze-deputy", "/api/ai/deputy-analysis"], authenticat
         user: true,
         project: true,
         nextActions: true,
-        kpiValues: true,
+        kpiValues: {
+          include: { kpi: true },
+        },
         files: true,
       },
       orderBy: { submitted_at: "desc" },
     });
 
-    // ۴. ساختاردهی اطلاعات پروژه به پروژه همراه با WBS و سابقه
+    // ۵. ساختاردهی اطلاعات پروژه به پروژه همراه با WBS و سابقه شاخص‌ها
     const projectsDataForPrompt = projectsList.map((project, idx) => {
       const report = reports.find((r) => r.project_id === project.id);
+      const projectKpis = definedProjectKpis.filter((pk) => pk.project_id === project.id);
 
       // استخراج WBS در صورت وجود
       let wbsContext = "فاقد سند مرجع WBS";
@@ -4298,16 +4320,35 @@ app.post(["/api/reports/analyze-deputy", "/api/ai/deputy-analysis"], authenticat
         }
       }
 
+      const definedKpisSummary = projectKpis.length > 0
+        ? `شاخص‌های مصوب پروژه در سامانه (${projectKpis.length} شاخص):\n` +
+          projectKpis
+            .map((pk, kIdx) => {
+              const targetStr = pk.target_value !== null && pk.target_value !== undefined
+                ? ` [هدف: ${pk.target_direction === "minimum" ? "حداقل" : "حداکثر"} ${pk.target_value}]`
+                : "";
+              return `  ${kIdx + 1}. ${pk.name} (واحد: ${pk.unit})${targetStr}`;
+            })
+            .join("\n")
+        : "فاقد شاخص مصوب در سامانه";
+
       if (!report) {
         return `=== پروژه ${idx + 1}: ${project.title} (مسئول: ${project.responsible_user || "مشخص نشده"}) ===
 وضعیت گزارش: ❌ فاقد گزارش در این دوره (عدم ثبت توسط کارشناس)
+شاخص‌های عملکردی مصوب:
+${definedKpisSummary}
 سند مرجع WBS:
 ${wbsContext}`;
       }
 
-      const kpiSection = (report.kpiValues && report.kpiValues.length > 0)
-        ? `شاخص‌های عملکردی ثبت‌شده:\n${formatKpiValuesForPrompt(report.kpiValues)}`
-        : `شاخص‌ها (متن آزاد): ${report.kpi_text || "ثبت نشده"}`;
+      let kpiSection = "";
+      if (report.kpiValues && report.kpiValues.length > 0) {
+        kpiSection = `شاخص‌های عملکردی ثبت‌شده توسط کارشناس:\n${formatKpiValuesForPrompt(report.kpiValues)}`;
+      } else if (projectKpis.length > 0) {
+        kpiSection = `شاخص‌های مصوب پروژه:\n${definedKpisSummary}\n⚠️ وضعیت مقادیر در این دوره: کارشناس در گزارش ارسالی هیچ مقداری برای این شاخص‌های مصوب ثبت نکرده است (نقص در تکمیل مقادیر شاخص‌ها).`;
+      } else {
+        kpiSection = `شاخص‌ها (متن آزاد): ${report.kpi_text || "ثبت نشده"} (پروژه فاقد شاخص مصوب در سامانه است)`;
+      }
 
       return `=== پروژه ${idx + 1}: ${project.title} (مسئول: ${report.user_full_name}) ===
 وضعیت گزارش: ✅ ${report.status === "late" ? "تأخیری" : "ثبت‌شده منظم"} (تاریخ ثبت: ${report.submitted_at.toISOString().split("T")[0]})
@@ -4326,13 +4367,16 @@ ${wbsContext}`;
     const submittedCount = reports.length;
     const missingCount = totalProjectsCount - submittedCount;
 
-    // ۵. تنظیم دستورات سیستم با الزام اکید به عدم توهم (Strict Grounding)
+    // ۶. تنظیم دستورات سیستم با الزام اکید به عدم توهم (Strict Grounding)
     const systemPrompt = `شما یک ارزیاب، ممیز ارشد مدیریت استراتژیک و کنترل پروژه در سازمان حمل‌ونقل و ترافیک هستید.
 وظیفه شما ارزیابی داده‌محور و دقیق عملکرد «معاونت سازمانی» مشخص‌شده در یک بازه زمانی معین، بر اساس تک‌تک پروژه‌های آن است.
 
 قوانین اکید و بدون استثنا:
 ۱. اصل استناد مستقیم (Strict Grounding): فقط و فقط بر اساس اطلاعات واقعی ارائه‌شده قضاوت کنید. از ذکر ادعاهای کلی، تعمیم‌های ساختگی یا حدسیات فنی خودداری نمایید.
-۲. صداقت در داده‌های ناقص: اگر پروژه‌ای گزارش ندارد یا سند WBS و KPI ندارد، صراحتاً در تحلیل پروژه بنویسید "فاقد گزارش" یا "فاقد WBS مرجع" و آن را به عنوان یک ریسک/نقطه کور در نظر بگیرید.
+۲. تمایز بین «فقدان شاخص» و «عدم ثبت مقدار توسط کارشناس»:
+   - اگر برای پروژه‌ای شاخص‌های مصوب تعریف شده اما کارشناس در گزارش خود مقداری وارد نکرده است، پروژه را فاقد شاخص ندانید؛ بلکه صراحتاً بنویسید که پروژه دارای شاخص مصوب است اما کارشناس اقدام به تکمیل و ثبت مقادیر نکرده است و این موضوع را به عنوان ضعف یا ریسک پایش ثبت کنید.
+   - تنها در صورتی عبارت "فاقد شاخص مصوب" را به کار ببرید که صراحتاً در اطلاعات پروژه ذکر شده باشد فاقد شاخص مصوب است.
+   - اگر پروژه‌ای گزارش ندارد یا سند WBS ندارد، صراحتاً بنویسید "فاقد گزارش" یا "فاقد WBS مرجع".
 ۳. استخراج هوشمند شاخص (KPI Extraction): متن فعالیت‌ها و نتایج پروژه‌ها را بررسی کنید و سنجه‌های عددی/کمی بالقوه‌ای که کارشناس در متن آورده اما به عنوان شاخص ساختاریافته تعریف نشده را استخراج کنید تا سازمان بتواند در آینده آن‌ها را به شاخص مصوب تبدیل کند.
 ۴. زبان خروجی: کاملاً فارسی، روان، اداری و بدون هرگونه تعارف یا اطناب.
 ۵. خروجی باید حتماً و فقط یک شیء JSON معتبر با کلید ریشه "analysis" باشد بدون هیچ کلمه، توضیح یا کاراکتر اضافی در ابتدا یا انتها.
@@ -4353,7 +4397,7 @@ ${wbsContext}`;
         "key_achievements": ["دستاورد ملموس ۱"],
         "risks_or_delays": ["موانع، تأخیرها یا ریسک‌ها"],
         "wbs_alignment": "وضعیت انطباق با سند WBS یا ذکر 'فاقد WBS مرجع'",
-        "kpi_evaluation": "بررسی مقادیر شاخص‌های ثبت‌شده یا ذکر 'فاقد شاخص ساختاریافته'"
+        "kpi_evaluation": "بررسی مقادیر شاخص‌های ثبت‌شده یا ذکر 'دارای شاخص مصوب ولی مقدار ثبت نشده' یا ذکر 'فاقد شاخص مصوب'"
       }
     ],
     "suggested_kpis_from_text": [

@@ -168,3 +168,10 @@
   5. **Durable Period Snapshots & Automatic Calculation:** Calculate composite periodic metrics and persist full constituent audits (`details` JSONB snapshot) automatically upon report submissions/updates (`syncAllCompositeKpisForPeriod`), with full manual recalculation (`/recalculate`) and chronological Recharts trend exploration.
 - **Rationale:** Empowers executive directors to evaluate cross-departmental macro progress and ratios while keeping operational reporting focused purely on departmental base KPIs.
 
+### D29 — Approved Project KPI Grounding & Attribution in Deputy AI Strategic Audits
+- **Decision:** Ground deputy-level AI strategic audits (`/api/reports/analyze-deputy`) in both approved organizational project KPIs (`ProjectKpi`) and periodic report submissions:
+  1. **Dual KPI Context Injection:** Query all active project KPIs (`prisma.projectKpi.findMany({ where: { is_active: true } })`) alongside report submissions. Provide the LLM with the full catalog of approved KPIs, units, and targets for each project.
+  2. **Defensive Differentiation between Missing KPIs vs Missing Submissions:** Differentiate between projects truly lacking defined KPIs ("فاقد شاخص مصوب") versus projects where KPIs exist but personnel failed to record periodic values ("دارای شاخص مصوب ولی مقدار ثبت نشده"). Prompt instructions strictly forbid labeling projects with approved KPIs as "فاقد شاخص ساختاریافته".
+  3. **Prisma Relation Hydration:** Ensure all report queries across creation, updates, and AI audits include `{ kpiValues: { include: { kpi: true } } }` so KPI names, units, and target metadata are never lost or rendered as anonymous placeholders.
+- **Rationale:** Eliminates false alarms in managerial reviews where executive directors defined project KPIs but AI erroneously reported projects as KPI-less due to report-submission desynchronization.
+
