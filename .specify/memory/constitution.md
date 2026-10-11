@@ -17,9 +17,15 @@ Automated report auditing and strategic deputy analyses (`/api/reports/analyze-d
 ### V. Additive Migrations & Strict Verification
 Database schema evolution via Prisma must remain strictly additive and non-destructive toward past periods and reports. Every functional change must pass full compilation and type-checking (`npm run build`) with zero errors prior to deployment.
 
+### VI. WBS Governance & Managerial Role-Based Access Control
+Work Breakdown Structure (WBS) file uploads, replacements, and deletions are strictly restricted to system managers (`requireManager`). Deputies and regular personnel cannot upload or modify project WBS spreadsheets. WBS management lives exclusively as a nested tab within the Project Management Hub (`ManageProjectsHub.tsx`).
+
+### VII. Hierarchical Tree-Table & RFC 6266 Download Integrity
+Activity lists in WBS views must render as interactive, full-width hierarchical tree-tables with accordion toggles, depth indentation, and explicit structural columns (code, title, level, deliverable, owner, duration, start date, KPI, prerequisite, notes). Excel download endpoints must adhere to RFC 6266 / RFC 5987 (`filename*=UTF-8''`) to prevent Mojibake encoding distortions for Persian filenames across all browsers.
+
 ## Governance & Operational Boundaries
 - **Local File Attachments:** Report attachments and WBS Excel spreadsheets are parsed and maintained locally under `uploads/` via Multer; persistent storage volumes must be provisioned during hosting deployments.
 - **Direct Action Completion:** Actions marked by personnel in periodic reports resolve immediately (`is_completed = true`) without requiring intermediate managerial gating.
 - **Harmonized Monthly Project Cycles:** Monthly-cadence projects are evaluated and reported concurrently with weekly projects during the final week of each Shamsi month (`isLastWeekOfShamsiMonth`) and are exempt from missing-report flags in earlier weeks.
 
-**Version**: 1.0.0 | **Ratified**: 2026-10-03 | **Status**: Active
+**Version**: 1.2.0 | **Ratified**: 2026-10-11 | **Status**: Active
