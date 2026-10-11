@@ -111,6 +111,11 @@ export function toEnglishDigits(str: string): string {
   return str.replace(/[۰-۹]/g, (w) => String(['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'].indexOf(w)));
 }
 
+export function normalizeDigits(str: string): string {
+  if (!str) return "";
+  return toEnglishDigits(String(str));
+}
+
 export function formatToShamsi(dateStr: string): string {
   if (!dateStr) return "";
   const shamsi = gregorianToShamsi(dateStr);

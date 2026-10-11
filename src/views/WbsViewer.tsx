@@ -24,11 +24,16 @@ import {
   MapPin,
   FileText,
   Sparkles,
+  Clock,
+  CheckCircle2,
+  ChevronDown,
+  Search,
+  GitBranch,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import WbsTreePane from "./WbsTree";
 import { CustomSelect } from "../components";
-import { toPersianDigits } from "../dateUtils";
+import { toPersianDigits, normalizeDigits } from "../dateUtils";
 import { Project } from "../types";
 
 interface WbsViewerProps {
@@ -62,6 +67,8 @@ interface WbsTask {
   duration: string;
   prerequisite: string;
   note: string;
+  phase?: string;
+  kpi?: string;
 }
 
 interface WbsKpi {
@@ -88,30 +95,6 @@ interface WbsData {
   kpis?: WbsKpi[];
   message?: string;
 }
-
-// ---------- اتریبیوت‌های کارت فعالیت (WBS) ----------
-interface AttrSpec {
-  key: keyof WbsTask;
-  label: string;
-  side: "right" | "left";
-  top: number; // درصد
-}
-
-const SIDE_ATTRS: AttrSpec[] = [
-  { key: "level", label: "سطح", side: "right", top: 24 },
-  { key: "owner", label: "مسئول", side: "right", top: 50 },
-  { key: "prerequisite", label: "پیش‌نیاز", side: "right", top: 76 },
-  { key: "start_date", label: "تاریخ شروع", side: "left", top: 24 },
-  { key: "duration", label: "مدت (روز کاری)", side: "left", top: 50 },
-  { key: "note", label: "توضیح", side: "left", top: 76 },
-];
-
-const BOTTOM_ATTR: AttrSpec = {
-  key: "deliverables",
-  label: "نتایج بسته‌های کاری",
-  side: "right",
-  top: 100,
-};
 
 function cleanDisplayFileName(name?: string | null): string {
   if (!name) return "";
@@ -154,12 +137,16 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // تگ‌های باز در نمای کارت‌ها
-  const [openAttrs, setOpenAttrs] = useState<string[]>([]);
-  const toggleAttr = (id: string) => {
-    setOpenAttrs((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  // وضعیت‌های فیلتر و جستجو در لیست فعالیت‌های WBS
+  const [taskSearch, setTaskSearch] = useState("");
+  const [levelFilter, setLevelFilter] = useState<"all" | "phases" | "workpackages">("all");
+  const [expandedNotes, setExpandedNotes] = useState<Record<string, boolean>>({});
+
+  const toggleExpandNote = (code: string) => {
+    setExpandedNotes((prev) => ({ ...prev, [code]: !prev[code] }));
   };
-  const closeAll = () => setOpenAttrs([]);
+
+  const closeAll = () => {};
 
   // فوکوس روی کد خاص هنگام هدایت از درخت
   const [focusCode, setFocusCode] = useState<string | null>(null);
@@ -253,6 +240,67 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
   const currentProjectSummary = useMemo(() => {
     return wbsProjectList.find((p) => String(p.project_id) === selectedProjectId);
   }, [wbsProjectList, selectedProjectId]);
+
+  // فیلتر و جستجوی لیست فعالیت‌های WBS
+  const filteredTasks = useMemo(() => {
+    if (!data?.tasks) return [];
+    return data.tasks.filter((t) => {
+      const cleanCode = normalizeDigits((t.wbs_code || "").trim());
+      const isPhaseOrL1 = t.level === "1" || cleanCode.split(".").length === 1;
+
+      if (levelFilter === "phases" && !isPhaseOrL1) return false;
+      if (levelFilter === "workpackages" && isPhaseOrL1) return false;
+
+      if (taskSearch.trim()) {
+        const q = taskSearch.trim().toLowerCase();
+        const normQ = normalizeDigits(q);
+        const nameMatch = (t.name || "").toLowerCase().includes(q);
+        const codeMatch = (t.wbs_code || "").toLowerCase().includes(q) || cleanCode.includes(normQ);
+        const delivMatch = (t.deliverables || "").toLowerCase().includes(q);
+        const ownerMatch = (t.owner || "").toLowerCase().includes(q);
+        const phaseMatch = (t.phase || "").toLowerCase().includes(q);
+        const kpiMatch = (t.kpi || "").toLowerCase().includes(q);
+        return nameMatch || codeMatch || delivMatch || ownerMatch || phaseMatch || kpiMatch;
+      }
+      return true;
+    });
+  }, [data?.tasks, taskSearch, levelFilter]);
+
+  const phaseCount = useMemo(() => {
+    if (!data?.tasks) return 0;
+    return data.tasks.filter((t) => {
+      const code = normalizeDigits((t.wbs_code || "").trim());
+      return t.level === "1" || code.split(".").length === 1 || (t.phase && t.name.includes("فاز"));
+    }).length;
+  }, [data?.tasks]);
+
+  const wpCount = useMemo(() => {
+    if (!data?.tasks) return 0;
+    return data.tasks.filter((t) => {
+      const code = normalizeDigits((t.wbs_code || "").trim());
+      return !(t.level === "1" || code.split(".").length === 1 || (t.phase && t.name.includes("فاز")));
+    }).length;
+  }, [data?.tasks]);
+
+  const allNotesExpanded = useMemo(() => {
+    if (!data?.tasks || data.tasks.length === 0) return false;
+    const tasksWithNotes = data.tasks.filter((t) => t.note && t.note.trim() !== "");
+    if (tasksWithNotes.length === 0) return false;
+    return tasksWithNotes.every((t) => expandedNotes[t.wbs_code || ""]);
+  }, [data?.tasks, expandedNotes]);
+
+  const toggleExpandAllNotes = () => {
+    if (!data?.tasks) return;
+    if (allNotesExpanded) {
+      setExpandedNotes({});
+    } else {
+      const newMap: Record<string, boolean> = {};
+      data.tasks.forEach((t) => {
+        if (t.note) newMap[t.wbs_code || ""] = true;
+      });
+      setExpandedNotes(newMap);
+    }
+  };
 
   // بارگذاری و جایگزینی فایل WBS
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -537,7 +585,7 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
                 }`}
               >
                 <ListTree className="w-3.5 h-3.5 text-emerald-600" />
-                <span>کارت‌های فعالیت (WBS)</span>
+                <span>لیست فعالیت‌ها (WBS)</span>
               </button>
 
               <button
@@ -642,7 +690,7 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
               </motion.div>
             )}
 
-            {/* ۲. کارت‌های فعالیت WBS با تگ‌های بازشونده */}
+            {/* ۲. لیست فعالیت‌ها و بسته‌های کاری WBS */}
             {subView === "cards" && (
               <motion.div
                 key="cards"
@@ -650,6 +698,7 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
                 transition={{ duration: 0.2 }}
+                className="space-y-3.5"
               >
                 {!data.tasks || data.tasks.length === 0 ? (
                   <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-12 text-center">
@@ -657,24 +706,104 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
                     <p className="text-xs text-slate-400">در این فایل، ردیف فعالیتی (WBS) یافت نشد.</p>
                   </div>
                 ) : (
-                  <div className="bg-slate-50/70 rounded-2xl border border-slate-200 p-4 sm:p-8 min-h-[460px] max-h-[75vh] overflow-y-auto">
-                    <div className="flex flex-col items-center py-6">
-                      {data.tasks.map((task, i) => {
-                        const code = task.wbs_code || `#${i + 1}`;
-                        return (
-                          <WbsTaskCard
-                            key={`${code}-${i}`}
-                            task={task}
-                            index={i}
-                            code={code}
-                            openAttrs={openAttrs}
-                            toggleAttr={toggleAttr}
-                            highlighted={focusCode === code}
-                          />
-                        );
-                      })}
+                  <>
+                    {/* نوار ابزار جستجو و فیلترهای لیست */}
+                    <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      {/* ورودی جستجوی متنی */}
+                      <div className="relative flex-1 min-w-0 max-w-md">
+                        <Search className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        <input
+                          type="text"
+                          value={taskSearch}
+                          onChange={(e) => setTaskSearch(e.target.value)}
+                          placeholder="جستجو در نام فعالیت، کد WBS، خروجی یا مسئول..."
+                          className="w-full pl-8 pr-9 py-2 text-xs rounded-xl bg-slate-50 border border-slate-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-sans"
+                        />
+                        {taskSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setTaskSearch("")}
+                            className="absolute left-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded-md hover:bg-slate-200 text-slate-400 hover:text-slate-600 cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* فیلترها و دکمه بازکردن یادداشت‌ها */}
+                      <div className="flex items-center gap-2 flex-wrap shrink-0">
+                        {phaseCount > 0 && (
+                          <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200 text-xs">
+                            <button
+                              type="button"
+                              onClick={() => setLevelFilter("all")}
+                              className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                                levelFilter === "all" ? "bg-white text-emerald-800 shadow-2xs" : "text-slate-600 hover:text-slate-900"
+                              }`}
+                            >
+                              همه ({toPersianDigits(data.tasks.length)})
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setLevelFilter("phases")}
+                              className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                                levelFilter === "phases" ? "bg-white text-emerald-800 shadow-2xs" : "text-slate-600 hover:text-slate-900"
+                              }`}
+                            >
+                              فازها ({toPersianDigits(phaseCount)})
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setLevelFilter("workpackages")}
+                              className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                                levelFilter === "workpackages" ? "bg-white text-emerald-800 shadow-2xs" : "text-slate-600 hover:text-slate-900"
+                              }`}
+                            >
+                              بسته‌های کاری ({toPersianDigits(wpCount)})
+                            </button>
+                          </div>
+                        )}
+
+                        <span className="text-[11px] font-semibold text-slate-400 hidden lg:inline">
+                          {toPersianDigits(filteredTasks.length)} از {toPersianDigits(data.tasks.length)} مورد
+                        </span>
+
+                        {data.tasks.some((t) => t.note) && (
+                          <button
+                            type="button"
+                            onClick={toggleExpandAllNotes}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-slate-600 bg-slate-50 hover:bg-slate-100 border border-slate-200 transition-colors cursor-pointer"
+                          >
+                            <span>{allNotesExpanded ? "بستن همه یادداشت‌ها" : "نمایش همه یادداشت‌ها"}</span>
+                            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${allNotesExpanded ? "rotate-180" : ""}`} />
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
+
+                    {/* لیست سطرهای فعالیت‌ها */}
+                    {filteredTasks.length === 0 ? (
+                      <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-xs text-slate-400">
+                        موردی منطبق با جستجوی شما یافت نشد.
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {filteredTasks.map((task, i) => {
+                          const code = task.wbs_code || `#${i + 1}`;
+                          return (
+                            <WbsTaskRow
+                              key={`${code}-${i}`}
+                              task={task}
+                              index={i}
+                              highlighted={focusCode === code}
+                              isExpanded={Boolean(expandedNotes[code])}
+                              onToggleExpand={() => toggleExpandNote(code)}
+                            />
+                          );
+                        })}
+                      </div>
+                    )}
+                  </>
                 )}
               </motion.div>
             )}
@@ -765,192 +894,188 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
 }
 
 // ============================================================
-// کارت تعاملی هر فعالیت در WBS با تگ‌های بازشونده
+// کامپوننت سطر فعالیت WBS در نمای لیستی (WBS Activity List Row)
 // ============================================================
-const SHORT_VALUE_LIMIT = 42;
-
-function WbsTaskCard({
+function WbsTaskRow({
   task,
   index,
-  code,
-  openAttrs,
-  toggleAttr,
   highlighted,
+  isExpanded,
+  onToggleExpand,
 }: {
   task: WbsTask;
   index: number;
-  code: string;
-  openAttrs: string[];
-  toggleAttr: (id: string) => void;
   highlighted?: boolean;
+  isExpanded?: boolean;
+  onToggleExpand: () => void;
 }) {
-  const hasRealValue = (v: string) => v && v.trim() !== "" && v !== "-" && v !== "---";
+  const code = (task.wbs_code || `#${index + 1}`).trim();
+  const cleanCode = normalizeDigits(code);
+  const isPhase = task.level === "1" || cleanCode.split(".").length === 1 || (task.phase && task.name.includes("فاز"));
+  const hasDeliverables = task.deliverables && task.deliverables.trim() !== "" && task.deliverables !== "-" && task.deliverables !== "---";
+  const hasNote = task.note && task.note.trim() !== "" && task.note !== "-" && task.note !== "---";
+  const hasKpi = task.kpi && task.kpi.trim() !== "" && task.kpi !== "-" && task.kpi !== "---";
 
-  const renderSideTag = (spec: AttrSpec) => {
-    const id = `${code}:side:${spec.key}`;
-    const value = (task[spec.key] as string) || "";
-    const hasValue = hasRealValue(value);
-    const isOpen = openAttrs.includes(id);
-    const isRight = spec.side === "right";
-    const recency = openAttrs.indexOf(id);
-    const popoverZ = 40 + Math.max(recency, 0);
-
-    const posStyle: React.CSSProperties = isRight
-      ? { top: `${spec.top}%`, left: "100%", transform: "translateY(-50%)" }
-      : { top: `${spec.top}%`, right: "100%", transform: "translateY(-50%)" };
-
-    const radius = isRight ? "rounded-r-xl" : "rounded-l-xl";
-
-    if (!hasValue) {
-      return (
-        <div key={spec.key} className="absolute z-10 select-none" style={posStyle}>
-          <div
-            className={`flex items-center gap-1.5 whitespace-nowrap border bg-slate-50 text-slate-400 border-slate-200 px-2 py-0.5 text-[10px] font-medium cursor-not-allowed opacity-80 ${radius}`}
-            title="این مورد ثبت نشده است"
-          >
-            <span className="w-1.5 h-1.5 rounded-full bg-slate-300 shrink-0" />
-            {spec.label}
-          </div>
-        </div>
-      );
-    }
-
+  if (isPhase) {
+    // نمای سربرگ فاز کلان
     return (
-      <div key={spec.key} className="absolute" style={posStyle}>
-        <motion.button
-          onClick={() => toggleAttr(id)}
-          whileHover={{ x: isRight ? 2 : -2 }}
-          whileTap={{ scale: 0.95 }}
-          className={`relative flex items-center gap-1.5 whitespace-nowrap border px-2.5 py-1 text-[11px] font-semibold cursor-pointer transition-colors shadow-xs ${radius} ${
-            isOpen
-              ? "bg-emerald-700 text-white border-emerald-700 z-20"
-              : "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100 z-10"
-          }`}
-        >
-          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isOpen ? "bg-white" : "bg-emerald-500"}`} />
-          {spec.label}
-        </motion.button>
-
-        <AnimatePresence>
-          {isOpen && (
-            <motion.div
-              initial={{ opacity: 0, x: isRight ? -6 : 6 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: isRight ? -6 : 6 }}
-              transition={{ duration: 0.18 }}
-              className={`absolute z-40 -top-1 ${isRight ? "left-[calc(100%+8px)]" : "right-[calc(100%+8px)]"}`}
-              style={{ zIndex: popoverZ }}
-            >
-              {value.length <= SHORT_VALUE_LIMIT && !value.includes("\n") ? (
-                <div className="flex items-center gap-2 whitespace-nowrap rounded-lg bg-slate-900 text-white text-[11px] px-3 py-1.5 border border-slate-700 shadow-xl ring-2 ring-white/90">
-                  <span className="text-emerald-400 font-bold shrink-0">{spec.label}:</span>
-                  <span>{toPersianDigits(value)}</span>
-                </div>
-              ) : (
-                <div className="w-64 max-w-[70vw] rounded-xl bg-slate-900 text-white px-3.5 py-2.5 border border-slate-700 shadow-2xl ring-2 ring-white/90">
-                  <span className="text-emerald-400 text-[10px] font-bold block mb-1">{spec.label}</span>
-                  <p className="text-[11px] leading-5 break-words whitespace-pre-wrap">{toPersianDigits(value)}</p>
-                </div>
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-    );
-  };
-
-  const renderBottomTag = () => {
-    const spec = BOTTOM_ATTR;
-    const id = `${code}:bottom:deliverables`;
-    const value = task.deliverables || "";
-    const hasValue = hasRealValue(value);
-    const isOpen = openAttrs.includes(id);
-    const recency = openAttrs.indexOf(id);
-    const popoverZ = 40 + Math.max(recency, 0);
-
-    if (!hasValue) {
-      return (
-        <div className="absolute top-full left-1/2 -translate-x-1/2 z-10 select-none cursor-not-allowed" title="این مورد ثبت نشده است">
-          <div className="flex items-center gap-1.5 whitespace-nowrap border bg-slate-50 text-slate-400 border-slate-200 px-2 py-0.5 text-[10px] font-medium opacity-80 rounded-b-xl">
-            <span className="w-1.5 h-1.5 rounded-full bg-slate-300 shrink-0" />
-            {spec.label}
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div className="absolute top-full left-1/2 -translate-x-1/2 z-10">
-        <motion.button
-          onClick={() => toggleAttr(id)}
-          whileTap={{ scale: 0.95 }}
-          className={`flex items-center gap-1.5 whitespace-nowrap border px-2.5 py-1 text-[11px] font-semibold cursor-pointer transition-colors shadow-xs rounded-b-xl ${
-            isOpen
-              ? "bg-emerald-700 text-white border-emerald-700 z-20"
-              : "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100 z-10"
-          }`}
-        >
-          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isOpen ? "bg-white" : "bg-emerald-500"}`} />
-          {spec.label}
-        </motion.button>
-
-        <AnimatePresence>
-          {isOpen && (
-            <motion.div
-              initial={{ opacity: 0, y: -6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              transition={{ duration: 0.18 }}
-              className="absolute z-40 top-full left-1/2 -translate-x-1/2 mt-1"
-              style={{ zIndex: popoverZ }}
-            >
-              {value.length <= SHORT_VALUE_LIMIT && !value.includes("\n") ? (
-                <div className="flex items-center gap-2 whitespace-nowrap rounded-lg bg-slate-900 text-white text-[11px] px-3 py-1.5 border border-slate-700 shadow-xl ring-2 ring-white/90">
-                  <span className="text-emerald-400 font-bold shrink-0">{spec.label}:</span>
-                  <span>{toPersianDigits(value)}</span>
-                </div>
-              ) : (
-                <div className="w-72 max-w-[80vw] rounded-xl bg-slate-900 text-white px-3.5 py-2.5 border border-slate-700 shadow-2xl ring-2 ring-white/90">
-                  <span className="text-emerald-400 text-[10px] font-bold block mb-1">{spec.label}</span>
-                  <p className="text-[11px] leading-5 break-words whitespace-pre-wrap">{toPersianDigits(value)}</p>
-                </div>
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-    );
-  };
-
-  const anyOpen = openAttrs.some((id) => id.startsWith(`${code}:`));
-
-  return (
-    <div data-code={code} className="relative" style={{ marginTop: 16, marginBottom: 32 }}>
-      {SIDE_ATTRS.map(renderSideTag)}
-      {renderBottomTag()}
-
-      {/* کارت اصلی فعالیت */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: Math.min(index * 0.04, 0.5), duration: 0.25 }}
-        className={`relative w-[24rem] sm:w-[26rem] max-w-full bg-white rounded-2xl border-2 flex flex-col items-center justify-center text-center px-6 py-6 transition-all ${
+      <div
+        data-code={code}
+        className={`w-full rounded-2xl border-2 p-4 sm:p-5 transition-all shadow-2xs ${
           highlighted
-            ? "border-emerald-600 shadow-xl ring-4 ring-emerald-200"
-            : anyOpen
-              ? "border-emerald-400 shadow-md"
-              : "border-slate-200 hover:border-slate-300 hover:shadow-sm"
+            ? "border-emerald-500 bg-emerald-50/80 ring-4 ring-emerald-200"
+            : "bg-gradient-to-l from-emerald-50/60 via-white to-white border-emerald-200 hover:border-emerald-300"
         }`}
-        style={{ minHeight: 110 }}
       >
-        {/* نوار کد WBS */}
-        <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-[10px] font-bold rounded-lg px-2.5 py-0.5 shadow-md tracking-wider whitespace-nowrap">
-          {toPersianDigits(code)}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-emerald-700 text-white flex items-center justify-center shrink-0 shadow-xs">
+              <Layers className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="px-2.5 py-0.5 rounded-lg bg-slate-900 text-white font-black text-xs shadow-xs tracking-wider">
+                  {toPersianDigits(code)}
+                </span>
+                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                  فاز کلان پروژه
+                </span>
+              </div>
+              <h3 className="font-extrabold text-base text-slate-900 mt-1">{task.name}</h3>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5 text-xs text-slate-600 shrink-0 flex-wrap">
+            {task.duration && (
+              <span className="flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-xl border border-slate-200 text-slate-700 font-semibold shadow-2xs">
+                <Clock className="w-3.5 h-3.5 text-slate-400" />
+                <span>مدت فاز: {toPersianDigits(task.duration)}</span>
+              </span>
+            )}
+            {task.owner && (
+              <span className="flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-xl border border-slate-200 text-slate-700 font-semibold shadow-2xs">
+                <User className="w-3.5 h-3.5 text-slate-400" />
+                <span>مسئول: {task.owner}</span>
+              </span>
+            )}
+          </div>
         </div>
 
-        {/* نام فعالیت */}
-        <p className="text-sm sm:text-base font-bold text-slate-900 leading-6 break-words">{task.name}</p>
-      </motion.div>
+        {hasDeliverables && (
+          <div className="mt-3 p-3 rounded-xl bg-white/90 border border-emerald-200 text-xs text-emerald-950 flex items-start gap-2 shadow-2xs">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <span className="font-bold text-emerald-800">خروجی کلان فاز: </span>
+              <span className="font-medium leading-relaxed">{toPersianDigits(task.deliverables)}</span>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // نمای سطر فعالیت / بسته کاری تفصیلی (Level 2+)
+  return (
+    <div
+      data-code={code}
+      className={`w-full rounded-2xl border p-4 sm:p-5 transition-all bg-white shadow-2xs ${
+        highlighted
+          ? "border-emerald-500 shadow-md ring-4 ring-emerald-200"
+          : "border-slate-200 hover:border-emerald-300 hover:shadow-xs"
+      }`}
+    >
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+        <div className="flex items-start gap-3 min-w-0 flex-1">
+          <div className="flex flex-col items-center gap-1 shrink-0 pt-0.5">
+            <span className="px-2.5 py-1 rounded-lg bg-slate-900 text-white font-black text-xs shadow-xs tracking-wider">
+              {toPersianDigits(code)}
+            </span>
+            <span className="text-[10px] font-bold text-slate-400">
+              سطح {toPersianDigits(task.level || "۲")}
+            </span>
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 flex-wrap mb-1">
+              {task.phase && (
+                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                  {task.phase}
+                </span>
+              )}
+              {hasKpi && (
+                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 flex items-center gap-1">
+                  <Target className="w-3 h-3 text-emerald-600" />
+                  <span>شاخص: {task.kpi}</span>
+                </span>
+              )}
+            </div>
+            <h4 className="font-bold text-sm sm:text-base text-slate-900 leading-snug">{task.name}</h4>
+          </div>
+        </div>
+
+        {hasNote && (
+          <button
+            type="button"
+            onClick={onToggleExpand}
+            className="flex items-center gap-1 text-[11px] font-bold text-slate-500 hover:text-emerald-700 bg-slate-50 hover:bg-emerald-50 px-2.5 py-1 rounded-xl border border-slate-200 transition-colors shrink-0 self-start cursor-pointer"
+          >
+            <span>ملاحظات</span>
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+          </button>
+        )}
+      </div>
+
+      {hasDeliverables && (
+        <div className="mt-3 p-3 rounded-xl bg-emerald-50/70 border border-emerald-100 text-xs text-emerald-950 flex items-start gap-2.5">
+          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+          <div className="min-w-0 flex-1">
+            <span className="font-bold text-emerald-800">قلم تحویل‌دادنی / خروجی: </span>
+            <span className="font-medium leading-relaxed">{toPersianDigits(task.deliverables)}</span>
+          </div>
+        </div>
+      )}
+
+      <div className="mt-3.5 pt-3 border-t border-slate-100 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-600">
+        <div className="flex items-center gap-1.5">
+          <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+          <span className="text-slate-400">مسئول:</span>
+          <span className="font-bold text-slate-800">{task.owner || "—"}</span>
+        </div>
+
+        {task.duration && (
+          <div className="flex items-center gap-1.5">
+            <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            <span className="text-slate-400">مدت زمان:</span>
+            <span className="font-bold text-slate-800">{toPersianDigits(task.duration)}</span>
+          </div>
+        )}
+
+        {task.start_date && (
+          <div className="flex items-center gap-1.5">
+            <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            <span className="text-slate-400">تاریخ شروع:</span>
+            <span className="font-bold text-slate-800">{toPersianDigits(task.start_date)}</span>
+          </div>
+        )}
+
+        {task.prerequisite && (
+          <div className="flex items-center gap-1.5">
+            <GitBranch className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            <span className="text-slate-400">پیش‌نیاز:</span>
+            <span className="font-bold text-slate-800">{toPersianDigits(task.prerequisite)}</span>
+          </div>
+        )}
+      </div>
+
+      {isExpanded && hasNote && (
+        <div className="mt-3 p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700 space-y-1 animate-fade-in">
+          <div className="font-bold text-slate-800 flex items-center gap-1.5">
+            <FileText className="w-3.5 h-3.5 text-slate-500" />
+            <span>توضیحات و ملاحظات تکمیلی:</span>
+          </div>
+          <p className="leading-relaxed font-normal whitespace-pre-wrap text-slate-600">{toPersianDigits(task.note)}</p>
+        </div>
+      )}
     </div>
   );
 }
