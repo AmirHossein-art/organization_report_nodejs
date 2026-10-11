@@ -229,7 +229,6 @@ export default function App() {
             {currentView === "manage_users" && (
               <ManageUsers users={users} onRefresh={fetchData} />
             )}
->>>>>>> main
           </>
         )}
       </main>

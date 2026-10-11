@@ -16,6 +16,7 @@ export interface Project {
   title: string;
   description: string;
   wbs_file_name?: string | null;
+  wbs_storage_filename?: string | null;
   code: string;
   project_type?: "weekly" | "monthly";
   order_index?: number;

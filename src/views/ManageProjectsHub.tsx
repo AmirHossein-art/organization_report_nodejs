@@ -1,14 +1,15 @@
 import { useState } from "react";
-import { Folder, Users } from "lucide-react";
+import { Folder, Users, Network } from "lucide-react";
 import ManageProjects from "./ManageProjects";
 import ProjectAllocations from "./ProjectAllocations";
+import WbsViewer from "./WbsViewer";
 import { Project, User } from "../types";
 
 interface ManageProjectsHubProps {
   projects: Project[];
   users: User[];
   onRefresh: () => void;
-  initialTab?: "projects" | "allocations";
+  initialTab?: "projects" | "allocations" | "wbs";
 }
 
 export default function ManageProjectsHub({
@@ -17,7 +18,7 @@ export default function ManageProjectsHub({
   onRefresh,
   initialTab = "projects",
 }: ManageProjectsHubProps) {
-  const [activeTab, setActiveTab] = useState<"projects" | "allocations">(initialTab);
+  const [activeTab, setActiveTab] = useState<"projects" | "allocations" | "wbs">(initialTab);
 
   return (
     <div className="space-y-6 animate-fade-in font-sans dir-rtl text-right">
@@ -26,14 +27,14 @@ export default function ManageProjectsHub({
         <div>
           <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2">
             <Folder className="w-6 h-6 text-emerald-700" />
-            <span>مدیریت و تخصیص پروژه‌ها</span>
+            <span>مدیریت پروژه‌ها</span>
           </h1>
           <p className="text-slate-500 text-xs mt-1">
-            تعریف پروژه‌ها، تنظیم اولویت و ترتیب نمایش، آپلود WBS و تخصیص حوزه نظارت مسئولین
+            تعریف پروژه‌ها، تنظیم اولویت و ترتیب نمایش، تخصیص مسئولین و مدیریت ساختار شکست کار (WBS)
           </p>
         </div>
 
-        <div className="flex items-center bg-slate-100 p-1 rounded-2xl border border-slate-200 shrink-0 self-start sm:self-auto">
+        <div className="flex items-center bg-slate-100 p-1 rounded-2xl border border-slate-200 shrink-0 self-start sm:self-auto flex-wrap">
           <button
             type="button"
             onClick={() => setActiveTab("projects")}
@@ -58,19 +59,35 @@ export default function ManageProjectsHub({
             <Users className="w-4 h-4 text-emerald-600" />
             <span>تخصیص پروژه به مسئولین</span>
           </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("wbs")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              activeTab === "wbs"
+                ? "bg-white text-emerald-800 shadow-sm"
+                : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            <Network className="w-4 h-4 text-emerald-600" />
+            <span>مدیریت و نمایش WBS</span>
+          </button>
         </div>
       </div>
 
       {/* محتوای زبانه فعال */}
-      {activeTab === "projects" ? (
+      {activeTab === "projects" && (
         <ManageProjects
           projects={projects}
           users={users}
           onRefresh={onRefresh}
           onNavigateToAllocations={() => setActiveTab("allocations")}
         />
-      ) : (
+      )}
+      {activeTab === "allocations" && (
         <ProjectAllocations users={users} projects={projects.filter((p) => p.is_active !== false)} />
+      )}
+      {activeTab === "wbs" && (
+        <WbsViewer projects={projects.filter((p) => p.is_active !== false)} onRefresh={onRefresh} />
       )}
     </div>
   );

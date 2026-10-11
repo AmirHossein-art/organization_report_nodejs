@@ -265,6 +265,16 @@ async function ensureDatabaseSchema() {
 
       CREATE INDEX IF NOT EXISTS "CompositeKpiValue_composite_kpi_id_idx" ON "CompositeKpiValue"("composite_kpi_id");
       CREATE INDEX IF NOT EXISTS "CompositeKpiValue_period_id_idx" ON "CompositeKpiValue"("period_id");
+
+      CREATE TABLE IF NOT EXISTS "WbsSubmission" (
+        "id" SERIAL PRIMARY KEY,
+        "project_id" INTEGER NOT NULL REFERENCES "Project"("id") ON DELETE CASCADE,
+        "uploaded_by" INTEGER NOT NULL REFERENCES "User"("id") ON DELETE CASCADE,
+        "file_name" TEXT NOT NULL,
+        "storage_filename" TEXT NOT NULL,
+        "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS "WbsSubmission_project_id_idx" ON "WbsSubmission"("project_id");
     `);
 
     console.log("Database schema checked and verified successfully.");
@@ -1159,72 +1169,125 @@ app.get("/api/projects/:id/wbs-file", authenticate, async (req: any, res) => {
 // 4.4 WBS Data View (خواندن اکسل WBS برای نمایش در UI — انتخاب پروژه، جزئیات، ساختار شکست)
 // -----------------------------
 
-// لیست پروژه‌هایی که ساختار شکست ارسالی دارند (برای مدیر)
+// لیست پروژه‌ها و وضعیت ساختار شکست آنها (فقط مدیر سیستم)
 app.get("/api/wbs-data/projects", authenticate, requireManager, async (_req, res) => {
   try {
-    const rows = await prisma.wbsSubmission.findMany({
-      orderBy: { created_at: "desc" },
+    const projects = await prisma.project.findMany({
+      where: { is_active: true },
+      orderBy: [{ order_index: "asc" }, { id: "asc" }],
       include: {
-        project: { select: { title: true, code: true } },
-        user: { select: { full_name: true, username: true } },
+        wbsSubmissions: {
+          orderBy: { created_at: "desc" },
+          take: 1,
+          include: { user: { select: { full_name: true, username: true } } },
+        },
       },
     });
 
-    // آخرین ارسال هر پروژه ملاک است (ارسال‌های قدیمی‌تر تاریخچه می‌مانند)
-    const latestByProject = new Map<number, any>();
-    for (const r of rows) {
-      if (!latestByProject.has(r.project_id)) {
-        latestByProject.set(r.project_id, r);
-      }
-    }
+    const result = projects.map((p) => {
+      const latestSub = p.wbsSubmissions[0];
+      const hasWbs = Boolean(p.wbs_storage_filename || latestSub);
+      const fileName = p.wbs_file_name || latestSub?.file_name || "";
+      const uploadedBy = latestSub?.user?.full_name || latestSub?.user?.username || "مدیر سیستم";
+      const uploadedAt = latestSub?.created_at || null;
+      return {
+        project_id: p.id,
+        project_title: p.title,
+        project_code: p.code || "",
+        has_wbs: hasWbs,
+        file_name: fileName,
+        submission_id: latestSub?.id || null,
+        uploaded_by: uploadedBy,
+        uploaded_at: uploadedAt,
+      };
+    });
 
-    const projects = Array.from(latestByProject.values()).map((r) => ({
-      submission_id: r.id,
-      project_id: r.project_id,
-      project_title: r.project?.title || `پروژه #${r.project_id}`,
-      project_code: r.project?.code || "",
-      uploaded_by: r.user?.full_name || r.user?.username || "نامشخص",
-      file_name: r.file_name,
-      uploaded_at: r.created_at,
-    }));
-
-    res.json(projects);
+    res.json(result);
   } catch (error) {
     console.error("Error listing WBS projects:", error);
     res.status(500).json({ error: "خطا در دریافت فهرست پروژه‌های دارای ساختار شکست." });
   }
 });
 
-// داده کامل اکسل WBS یک ارسال (شناسنامه + ساختار شکست + شاخص‌ها)
-app.get("/api/wbs-data/:submissionId", authenticate, async (req: any, res) => {
+// داده کامل اکسل WBS یک پروژه یا ارسال (شناسنامه + ساختار شکست + شاخص‌ها)
+app.get("/api/wbs-data/:targetId", authenticate, requireManager, async (req: any, res) => {
   try {
-    const submissionId = parseInt(req.params.submissionId);
-    const submission = await prisma.wbsSubmission.findUnique({ where: { id: submissionId } });
-    if (!submission) {
-      return res.status(404).json({ error: "ساختار شکست یافت نشد." });
+    const targetId = parseInt(req.params.targetId);
+    if (isNaN(targetId)) {
+      return res.status(400).json({ error: "شناسه نامعتبر است." });
     }
 
-    // دسترسی: مدیر، یا معاونِ همان پروژه
-    if (req.user.role !== "manager") {
-      const assignment = await prisma.userProject.findFirst({
-        where: { user_id: req.user.id, project_id: submission.project_id },
+    // ابتدا بررسی می‌کنیم که آیا targetId شناسه یک پروژه است
+    let project = await prisma.project.findUnique({
+      where: { id: targetId },
+      include: {
+        wbsSubmissions: {
+          orderBy: { created_at: "desc" },
+          take: 1,
+          include: { user: { select: { full_name: true, username: true } } },
+        },
+      },
+    });
+
+    let submission: any = null;
+    let filePath: string | null = null;
+    let fileName = "";
+    let uploadedAt: Date | null = null;
+    let uploadedBy = "مدیر سیستم";
+
+    if (project) {
+      submission = project.wbsSubmissions[0] || null;
+      if (submission) {
+        uploadedAt = submission.created_at;
+        uploadedBy = submission.user?.full_name || submission.user?.username || "مدیر سیستم";
+      }
+
+      filePath = resolveProjectWbsFilePath(project);
+      if (!filePath && submission?.storage_filename) {
+        filePath = safeResolvePath(wbsDir, submission.storage_filename);
+      }
+      fileName = project.wbs_file_name || submission?.file_name || "wbs_file.xlsx";
+    } else {
+      // اگر پروژه پیدا نشد، بررسی می‌کنیم که آیا targetId شناسه یک submission است
+      submission = await prisma.wbsSubmission.findUnique({
+        where: { id: targetId },
+        include: {
+          project: true,
+          user: { select: { full_name: true, username: true } },
+        },
       });
-      if (!assignment) {
-        return res.status(403).json({ error: "شما مجاز به مشاهده این ساختار شکست نیستید." });
+
+      if (submission) {
+        project = submission.project;
+        uploadedAt = submission.created_at;
+        uploadedBy = submission.user?.full_name || submission.user?.username || "مدیر سیستم";
+        fileName = submission.file_name;
+        filePath = safeResolvePath(wbsDir, submission.storage_filename);
       }
     }
 
-    const filePath = safeResolvePath(wbsDir, submission.storage_filename);
+    if (!project) {
+      return res.status(404).json({ error: "پروژه یا ساختار شکست یافت نشد." });
+    }
+
     if (!filePath || !fs.existsSync(filePath)) {
-      return res.status(404).json({ error: "فایل فیزیکی اکسل در سرور یافت نشد." });
+      return res.status(200).json({
+        has_wbs: false,
+        project_id: project.id,
+        project_title: project.title,
+        message: "فایل اکسل ساختار شکست برای این پروژه بارگذاری نشده است.",
+      });
     }
 
     const data = parseWbsWorkbook(filePath);
     res.json({
-      submission_id: submission.id,
-      project_id: submission.project_id,
-      file_name: submission.file_name,
-      uploaded_at: submission.created_at,
+      has_wbs: true,
+      submission_id: submission?.id || null,
+      project_id: project.id,
+      project_title: project.title,
+      file_name: fileName,
+      uploaded_by: uploadedBy,
+      uploaded_at: uploadedAt,
       ...data,
     });
   } catch (error) {
@@ -1234,11 +1297,11 @@ app.get("/api/wbs-data/:submissionId", authenticate, async (req: any, res) => {
 });
 
 // -----------------------------
-// 4.5 WBS Submissions (آپلود ساختار شکست توسط معاون / مشاهده و دانلود توسط مدیر)
+// 4.5 WBS Submissions & File Management (آپلود، ویرایش/جایگزینی و حذف فقط توسط مدیر)
 // -----------------------------
 
-// ثبت ساختار شکست برای یک پروژه
-app.post("/api/projects/:id/wbs-submissions", authenticate, uploadWBS.single("wbs_file"), async (req: any, res) => {
+// ثبت / جایگزینی ساختار شکست برای یک پروژه (فقط مدیر سیستم)
+app.post("/api/projects/:id/wbs-submissions", authenticate, requireManager, uploadWBS.single("wbs_file"), async (req: any, res) => {
   try {
     const projectId = parseInt(req.params.id);
     const file = req.file;
@@ -1252,15 +1315,24 @@ app.post("/api/projects/:id/wbs-submissions", authenticate, uploadWBS.single("wb
       return res.status(404).json({ error: "پروژه یافت نشد." });
     }
 
-    if (req.user.role !== "manager") {
-      const assignment = await prisma.userProject.findFirst({
-        where: { user_id: req.user.id, project_id: projectId },
-      });
-      if (!assignment) {
-        return res.status(403).json({ error: "شما به این پروژه تخصیص ندارید." });
+    // حذف فیزیکی فایل قدیمی در صورت تفاوت
+    if (project.wbs_storage_filename && project.wbs_storage_filename !== file.filename) {
+      const oldPath = safeResolvePath(wbsDir, project.wbs_storage_filename);
+      if (oldPath && fs.existsSync(oldPath)) {
+        try { fs.unlinkSync(oldPath); } catch (_) {}
       }
     }
 
+    // به‌روزرسانی پروژه با فایل جدید
+    const updatedProject = await prisma.project.update({
+      where: { id: projectId },
+      data: {
+        wbs_file_name: file.originalname,
+        wbs_storage_filename: file.filename,
+      },
+    });
+
+    // ثبت در تاریخچه ارسال‌ها
     const submission = await prisma.wbsSubmission.create({
       data: {
         project_id: projectId,
@@ -1270,28 +1342,72 @@ app.post("/api/projects/:id/wbs-submissions", authenticate, uploadWBS.single("wb
       },
     });
 
-    res.status(201).json(submission);
+    res.status(201).json({
+      submission,
+      project: updatedProject,
+      message: "فایل ساختار شکست با موفقیت ثبت گردید.",
+    });
   } catch (error) {
     console.error("Error uploading WBS submission:", error);
     res.status(500).json({ error: "خطا در ثبت ساختار شکست." });
   }
 });
 
-// لیست ساختارهای شکست یک پروژه (معاونِ همان پروژه یا مدیر)
-app.get("/api/projects/:id/wbs-submissions", authenticate, async (req: any, res) => {
+// حذف فایل ساختار شکست یک پروژه (فقط مدیر سیستم)
+app.delete("/api/projects/:id/wbs-file", authenticate, requireManager, async (req: any, res) => {
+  try {
+    const projectId = parseInt(req.params.id);
+    const project = await prisma.project.findUnique({ where: { id: projectId } });
+    if (!project) {
+      return res.status(404).json({ error: "پروژه یافت نشد." });
+    }
+
+    // حذف فیزیکی فایل از دیسک
+    if (project.wbs_storage_filename) {
+      const filePath = safeResolvePath(wbsDir, project.wbs_storage_filename);
+      if (filePath && fs.existsSync(filePath)) {
+        try { fs.unlinkSync(filePath); } catch (_) {}
+      }
+    }
+
+    // حذف فیزیکی فایل‌های تاریخچه
+    const oldSubs = await prisma.wbsSubmission.findMany({ where: { project_id: projectId } });
+    for (const sub of oldSubs) {
+      if (sub.storage_filename && sub.storage_filename !== project.wbs_storage_filename) {
+        const subPath = safeResolvePath(wbsDir, sub.storage_filename);
+        if (subPath && fs.existsSync(subPath)) {
+          try { fs.unlinkSync(subPath); } catch (_) {}
+        }
+      }
+    }
+
+    // پاک‌سازی ارجاعات در دیتابیس
+    await prisma.$transaction([
+      prisma.project.update({
+        where: { id: projectId },
+        data: {
+          wbs_file_name: null,
+          wbs_storage_filename: null,
+        },
+      }),
+      prisma.wbsSubmission.deleteMany({
+        where: { project_id: projectId },
+      }),
+    ]);
+
+    res.json({ success: true, message: "فایل ساختار شکست پروژه با موفقیت حذف گردید." });
+  } catch (error) {
+    console.error("Error deleting WBS file:", error);
+    res.status(500).json({ error: "خطا در حذف فایل ساختار شکست." });
+  }
+});
+
+// لیست ساختارهای شکست یک پروژه (فقط مدیر)
+app.get("/api/projects/:id/wbs-submissions", authenticate, requireManager, async (req: any, res) => {
   try {
     const projectId = parseInt(req.params.id);
     const project = await prisma.project.findUnique({ where: { id: projectId } });
     if (!project) return res.status(404).json({ error: "پروژه یافت نشد." });
-
-    if (req.user.role !== "manager") {
-      const assignment = await prisma.userProject.findFirst({
-        where: { user_id: req.user.id, project_id: projectId },
-      });
-      if (!assignment) {
-        return res.status(403).json({ error: "شما به این پروژه تخصیص ندارید." });
-      }
-    }
 
     const submissions = await prisma.wbsSubmission.findMany({
       where: { project_id: projectId },
@@ -1323,7 +1439,7 @@ app.get("/api/wbs-submissions", authenticate, requireManager, async (_req, res) 
   }
 });
 
-// دانلود فایل ساختار شکست
+// دانلود فایل ساختار شکست (فقط مدیر یا معاون تخصیص‌یافته)
 app.get("/api/wbs-submissions/:id/download", authenticate, async (req: any, res) => {
   try {
     const id = parseInt(req.params.id);

@@ -175,3 +175,16 @@
   3. **Prisma Relation Hydration:** Ensure all report queries across creation, updates, and AI audits include `{ kpiValues: { include: { kpi: true } } }` so KPI names, units, and target metadata are never lost or rendered as anonymous placeholders.
 - **Rationale:** Eliminates false alarms in managerial reviews where executive directors defined project KPIs but AI erroneously reported projects as KPI-less due to report-submission desynchronization.
 
+### D30 — WBS Management & Interactive Visualization in Project Governance Hub
+- **Decision:** Consolidate Work Breakdown Structure (WBS) management into the existing Project Governance Hub (`ManageProjectsHub.tsx`) and enforce strict managerial access controls:
+  1. **Role-Based Isolation (Manager Only):** Remove any standalone deputy/personnel upload views (`WbsUpload.tsx`). All WBS file uploading, replacing, and deletion routes (`/api/projects/:id/wbs-submissions`, `/api/projects/:id/wbs-file`) strictly enforce `authenticate, requireManager`. Regular staff/deputies cannot upload or modify WBS records.
+  2. **Top-Tab Hub Nesting & Navigation Simplification:** Rename sidebar navigation and hub header from "مدیریت و تخصیص پروژه‌ها" to the concise "مدیریت پروژه‌ها". Embed WBS administration as a 3rd top horizontal tab (`ساختار شکست کار (WBS)`) inside `ManageProjectsHub.tsx`.
+  3. **Zero-Space Searchable Project Selection:** Utilize `CustomSelect` (`searchable={true}`) with embedded auto-focusing sticky search bar at the top of the popover menu for selecting projects, preserving 100% grid layout without external search fields.
+  4. **Complete File Lifecycle Controls (Edit/Replace & Delete):** Provide explicit Download, Edit/Replace (triggering fresh Excel upload with disk cleanup), and Delete (with confirmation modal, physical disk unlinking, and database transaction) buttons on each selected project.
+  5. **Unified Multi-View WBS Presentation:** Structure WBS exploration into 3 sub-views matching the system design palette (emerald `#10b981` / slate):
+     - **شناسنامه و مشخصات:** Project metadata cards and WBS KPI definitions.
+     - **کارت‌های فعالیت (WBS):** Interactive task cards with expandable property tags (level, owner, prerequisite, dates, duration, deliverables).
+     - **نمودار درختی (Tree):** Interactive hierarchical WBS diagram with parent-child links and 1-click cross-view card jumping.
+- **Rationale:** Aligns WBS governance directly with municipal management workflows, prevents deputy privilege escalation, guarantees database and physical storage synchronization, and prevents navigation bloat.
+
+
