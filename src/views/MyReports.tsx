@@ -33,7 +33,10 @@ import ProjectBubbleNode from "../components/ProjectBubbleNode";
 import ProjectNextActionsModal, { NextActionItem } from "../components/ProjectNextActionsDrawer";
 import Projects3DExplorer from "../components/projects-3d/Projects3DExplorer";
 import ReportsPdfDocument from "../components/ReportsPdfDocument";
+import { KpiMatrixTable } from "../components/KpiMatrixTable";
+import { KpiInteractiveInput } from "../components/KpiInteractiveInput";
 import { getDeadlineState } from "../deadline";
+import { ensureShamsiDate } from "../dateUtils";
 
 // 🌐 تابع کمکی تبدیل اعداد انگلیسی به فارسی
 export const toPersianDigits = (n: string | number | undefined | null): string => {
@@ -68,7 +71,7 @@ interface MyReportsProps {
   allReports?: Report[];
   projects?: Project[];
   periods?: ReportPeriod[];
-  onRefresh?: () => void;
+  onRefresh?: (updatedReport?: any) => void;
 }
 
 interface SingleReportAuditResult {
@@ -107,7 +110,6 @@ function RawReportDetailsModal({
   onClose,
   onRunAudit,
   showAiAudit = false,
-  onToggleActionStatus,
 }: {
   report: any | null;
   kpiMap: Record<number, any>;
@@ -234,21 +236,9 @@ function RawReportDetailsModal({
                       </div>
 
                       <div className="flex items-center gap-2 self-end sm:self-center">
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
-                          isVerified ? "bg-emerald-600 text-white" : "bg-indigo-600 text-white"
-                        }`}>
-                          {isVerified ? "تایید شده توسط مدیر" : "اعلام پرسنل (در انتظار تایید)"}
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-600 text-white">
+                          تکمیل‌شده در این گزارش
                         </span>
-
-                        {onToggleActionStatus && (
-                          <button
-                            type="button"
-                            onClick={() => onToggleActionStatus(act.id, act.is_completed)}
-                            className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-[10px] font-bold text-slate-800 transition-all cursor-pointer shadow-2xs"
-                          >
-                            {isVerified ? "لغو تایید" : "تایید صحت"}
-                          </button>
-                        )}
                       </div>
                     </div>
                   );
@@ -271,66 +261,18 @@ function RawReportDetailsModal({
             )}
           </div>
 
-          {/* شاخص‌های ساختاریافته (Structured KPIs) */}
-          {report.kpiValues && report.kpiValues.length > 0 && (
+          {/* پایش و نمایش یکپارچه شاخص‌های کلیدی عملکرد (KPI Matrix) */}
+          {((report.kpiValues && report.kpiValues.length > 0) || (report.kpi_text && report.kpi_text.trim())) && (
             <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-2xs space-y-3">
               <h4 className="font-extrabold text-slate-900 text-xs md:text-sm flex items-center gap-2 border-b border-slate-100 pb-2">
                 <Target className="w-4 h-4 text-emerald-600" />
-                شاخص‌های عملکرد ساختاریافته
+                شاخص‌های کلیدی عملکرد (KPI)
               </h4>
-              <div className="space-y-2">
-                {report.kpiValues.map((kv: any) => {
-                  const kpiMeta = kpiMap?.[kv.project_kpi_id];
-                  if (kv.not_measured) {
-                    return (
-                      <div key={kv.id} className="bg-rose-50 border border-rose-100 rounded-xl p-3 text-xs">
-                        <p className="font-bold text-slate-800">{kpiMeta?.name || "شاخص"}</p>
-                        <p className="text-rose-600 mt-0.5">اندازه‌گیری نشده — {kv.missing_reason || "دلیل ثبت نشده"}</p>
-                      </div>
-                    );
-                  }
-                  return (
-                    <div key={kv.id} className="bg-slate-50 border border-slate-100 rounded-xl p-3 text-xs flex flex-col gap-0.5">
-                      <p className="font-bold text-slate-800">{kpiMeta?.name || "شاخص"}</p>
-                      {kpiMeta?.input_type === "percentage_change" ? (
-                        <p className="text-slate-600">
-                          مبنا: {toPersianDigits(Number(kv.baseline_value).toFixed(2))}، دوره جاری: {toPersianDigits(Number(kv.current_value).toFixed(2))}
-                          {" → "}درصد تغییر: <strong className="text-emerald-700">{toPersianDigits(Number(kv.calculated_value).toFixed(1))}٪</strong>
-                        </p>
-                      ) : (
-                        <p className="text-slate-600 flex items-center gap-2 flex-wrap">
-                          <span>
-                            مقدار این دوره: <strong className="text-emerald-700">{toPersianDigits(Number(kv.current_value).toFixed(2))} {kpiMeta?.unit || ""}</strong>
-                          </span>
-                          {(kv.baseline_value !== null && kv.baseline_value !== undefined) && (
-                            <span className="text-[11px] bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-lg text-slate-700">
-                              مبنا: {toPersianDigits(Number(kv.baseline_value).toFixed(2))}
-                              {" ← "}
-                              رشد: <strong className={Number(kv.current_value) >= Number(kv.baseline_value) ? "text-emerald-700" : "text-rose-600"}>
-                                {Number(kv.current_value) - Number(kv.baseline_value) > 0 ? "+" : ""}
-                                {toPersianDigits((Number(kv.current_value) - Number(kv.baseline_value)).toFixed(2))} {kpiMeta?.unit || ""}
-                              </strong>
-                            </span>
-                          )}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* شاخص‌های متنی قدیمی (Legacy kpi_text) */}
-          {report.kpi_text && (
-            <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-2xs space-y-2">
-              <h4 className="font-extrabold text-slate-900 text-xs md:text-sm flex items-center gap-2 border-b border-slate-100 pb-2">
-                <Target className="w-4 h-4 text-amber-600" />
-                شاخص‌های کلیدی عملکرد (متن آزاد - گزارش‌های قدیمی)
-              </h4>
-              <p className="text-xs text-slate-700 leading-relaxed pt-1">
-                {toPersianDigits(report.kpi_text)}
-              </p>
+              <KpiMatrixTable
+                kpiValues={report.kpiValues}
+                kpiMap={kpiMap}
+                kpiText={report.kpi_text}
+              />
             </div>
           )}
 
@@ -626,7 +568,7 @@ function SingleReportAuditModal({
                     <div key={i} className="flex items-center justify-between bg-slate-50 p-3 rounded-xl text-xs border border-slate-200/80">
                       <span className="text-slate-800 font-medium">{act.action}</span>
                       <span className="bg-amber-100 text-amber-900 px-2.5 py-1 rounded-lg font-bold text-[11px] shrink-0">
-                        📅 {toPersianDigits(act.deadline)}
+                        📅 {ensureShamsiDate(act.deadline)}
                       </span>
                     </div>
                   ))}
@@ -660,10 +602,31 @@ function SingleReportAuditModal({
 // 🚀 ۳. کاوشگر دیداری مدیر (Visual Explorer)
 // =================================================================
 
-function ManagerVisualBubbleExplorer({ currentUser }: { currentUser?: User } = {}) {
-  const [projectClusters, setProjectClusters] = useState<any[]>([]);
+function ManagerVisualBubbleExplorer({
+  currentUser,
+  initialReports = [],
+  initialProjects = [],
+  initialPeriods = [],
+}: {
+  currentUser?: User;
+  initialReports?: Report[];
+  initialProjects?: Project[];
+  initialPeriods?: ReportPeriod[];
+} = {}) {
+  const [projectClusters, setProjectClusters] = useState<any[]>(() => {
+    if (initialProjects && initialProjects.length > 0) {
+      return initialProjects.map((p: any) => ({
+        ...p,
+        project_title: p.title,
+        reports: (initialReports || []).filter(
+          (r: any) => r.project_id === p.id || r.project_title === p.title
+        ),
+      }));
+    }
+    return [];
+  });
   const [nextActions, setNextActions] = useState<NextActionItem[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState<boolean>(() => !(initialProjects && initialProjects.length > 0));
 
   // استیت‌های لایه‌بندی
   const [activeProjectLayer, setActiveProjectLayer] = useState<any | null>(null);
@@ -685,9 +648,9 @@ function ManagerVisualBubbleExplorer({ currentUser }: { currentUser?: User } = {
 
   // استیت‌های خروجی PDF
   const [pdfModalOpen, setPdfModalOpen] = useState<boolean>(false);
-  const [rawReports, setRawReports] = useState<Report[]>([]);
-  const [periodsList, setPeriodsList] = useState<ReportPeriod[]>([]);
-  const [projectsList, setProjectsList] = useState<Project[]>([]);
+  const [rawReports, setRawReports] = useState<Report[]>(initialReports);
+  const [periodsList, setPeriodsList] = useState<ReportPeriod[]>(initialPeriods);
+  const [projectsList, setProjectsList] = useState<Project[]>(initialProjects);
   const [usersList, setUsersList] = useState<User[]>([]);
 
   // استخراج لیست یکتای نام معاونت‌ها
@@ -1059,7 +1022,7 @@ function ManagerVisualBubbleExplorer({ currentUser }: { currentUser?: User } = {
         onClose={() => setPdfModalOpen(false)}
         reports={rawReports}
         periods={periodsList}
-        projects={projectsList}
+        projects={(projectsList || []).filter((p) => p.is_active !== false)}
         users={usersList}
         currentUser={currentUser}
       />
@@ -1086,7 +1049,7 @@ function ReportEditModal({
   report: any | null;
   isOpen: boolean;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (updatedReport?: any) => void;
   isGrace?: boolean;
 }) {
   const [activitiesDone, setActivitiesDone] = useState("");
@@ -1199,6 +1162,34 @@ function ReportEditModal({
     );
   };
 
+  const handleCancelAction = async (actionId: number) => {
+    const reason = prompt("لطفاً دلیل حذف یا لغو این اقدام را بنویسید (الزامی جهت درج در گزارش رسمی PDF):");
+    if (reason === null) return;
+    const trimmedReason = reason.trim();
+    if (!trimmedReason) {
+      alert("ثبت دلیل برای حذف اقدام الزامی است.");
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/next-actions/${actionId}/cancel`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: trimmedReason }),
+      });
+      if (res.ok) {
+        setPendingActions((prev) => prev.filter((a) => a.id !== actionId));
+        setSelectedActionIds((prev) => prev.filter((id) => id !== actionId));
+        setSuccessMsg("اقدام با موفقیت لغو شد و در گزارش رسمی با ذکر دلیل مستند گردید.");
+      } else {
+        const data = await res.json();
+        alert(data.error || "خطا در لغو اقدام.");
+      }
+    } catch (err) {
+      alert("خطا در برقراری ارتباط با سرور جهت لغو اقدام.");
+    }
+  };
+
   const kpiIncomplete = kpis.some((k) => {
     const v = kpiValues[k.id];
     if (!v) return true;
@@ -1222,6 +1213,16 @@ function ReportEditModal({
     const hasInvalidAction = nextActions.some((a) => !a.action_text.trim() || !a.target_date);
     if (hasInvalidAction) {
       flashError("لطفاً شرح و تاریخ سررسید دقیق را برای تمامی اقدامات آتی مشخص کنید.");
+      return;
+    }
+    const hasRegressedKpi = kpis.some((k) => {
+      const v = kpiValues[k.id];
+      if (!v || v.not_measured) return false;
+      const bNum = (k.baseline_value !== null && k.baseline_value !== undefined) ? Number(k.baseline_value) : null;
+      return bNum !== null && v.current_value !== "" && !isNaN(Number(v.current_value)) && Number(v.current_value) < bNum;
+    });
+    if (hasRegressedKpi) {
+      flashError("درصد پیشرفت تجمیعی پروژه‌ها نمی‌تواند کمتر از پیشرفت قبلی ثبت‌شده باشد.");
       return;
     }
     if (kpiIncomplete) {
@@ -1266,9 +1267,10 @@ function ReportEditModal({
     try {
       const res = await fetch(`/api/reports/${report.id}`, { method: "PUT", body: formData });
       if (res.ok) {
+        const updated = await res.json();
         flashSuccess("گزارش با موفقیت ویرایش شد.");
-        onSaved();
-        setTimeout(() => onClose(), 1200);
+        onSaved(updated);
+        setTimeout(() => onClose(), 800);
       } else {
         const data = await res.json();
         flashError(data.error || "خطا در ویرایش گزارش.");
@@ -1387,14 +1389,16 @@ function ReportEditModal({
                   return (
                     <div
                       key={action.id}
-                      onClick={() => toggleActionSelected(action.id)}
-                      className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex items-start justify-between gap-3 ${
+                      className={`p-3.5 rounded-2xl border transition-all flex items-start justify-between gap-3 ${
                         isSelected
                           ? "bg-emerald-50/90 border-emerald-400 shadow-xs ring-1 ring-emerald-400"
                           : "bg-slate-50 hover:bg-slate-100 border-slate-200/80 shadow-2xs"
                       }`}
                     >
-                      <div className="flex items-start gap-3 flex-1 min-w-0">
+                      <div
+                        onClick={() => toggleActionSelected(action.id)}
+                        className="flex items-start gap-3 flex-1 min-w-0 cursor-pointer"
+                      >
                         <div className="pt-0.5 shrink-0">
                           {isSelected ? (
                             <CheckSquare className="w-5 h-5 text-emerald-600" />
@@ -1429,6 +1433,19 @@ function ReportEditModal({
                           </div>
                         </div>
                       </div>
+
+                      {/* دکمه لغو یا حذف اقدام با ثبت دلیل الزامی */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCancelAction(action.id);
+                        }}
+                        className="p-1.5 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer shrink-0"
+                        title="لغو یا حذف اقدام با ذکر دلیل الزامی"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   );
                 })}
@@ -1533,82 +1550,16 @@ function ReportEditModal({
                 {kpis
                   .filter((k) => selectedKpiFilter === 0 || k.id === selectedKpiFilter)
                   .map((k) => {
-                  const v = kpiValues[k.id] || { current_value: "", baseline_value: "", not_measured: false, missing_reason: "" };
-                  const disabled = v.not_measured;
-                  let preview: string | null = null;
-                  if (k.input_type === "percentage_change" && !disabled && v.baseline_value && v.current_value &&
-                      Number(v.baseline_value) !== 0 && !isNaN(Number(v.current_value)) && !isNaN(Number(v.baseline_value))) {
-                    const pct = ((Number(v.current_value) - Number(v.baseline_value)) / Number(v.baseline_value)) * 100;
-                    preview = `${toPersianDigits(pct.toFixed(1))}٪`;
-                  }
-                  let directDiffPreview: string | null = null;
-                  const baselineNum = (k.baseline_value !== null && k.baseline_value !== undefined) ? Number(k.baseline_value) : (v.baseline_value !== "" ? Number(v.baseline_value) : null);
-                  if (k.input_type === "direct" && !disabled && baselineNum !== null && v.current_value && !isNaN(Number(v.current_value))) {
-                    const diff = Number(v.current_value) - baselineNum;
-                    const sign = diff > 0 ? "+" : "";
-                    directDiffPreview = `${sign}${toPersianDigits(diff.toFixed(2))} ${k.unit}`;
-                  }
-                  return (
-                    <div key={k.id} className="bg-white p-4 rounded-2xl border border-slate-200/70 space-y-3">
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <h5 className="text-sm font-bold text-slate-800">{k.name}</h5>
-                            {k.baseline_value !== null && k.baseline_value !== undefined && (
-                              <span className="font-semibold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-200 text-[10px]">
-                                مبنا: {toPersianDigits(k.baseline_value)} {k.unit}
-                              </span>
-                            )}
-                          </div>
-                          {k.description && <p className="text-[11px] text-slate-500 mt-0.5">{k.description}</p>}
-                          <p className="text-[11px] text-slate-600 mt-1">
-                            هدف: {k.target_direction === "minimum" ? "حداقل" : "حداکثر"} {toPersianDigits(k.target_value)} {k.unit}
-                          </p>
-                        </div>
-                        <label className="flex items-center gap-1.5 shrink-0 cursor-pointer text-[11px] text-slate-600">
-                          <input type="checkbox" checked={disabled} onChange={(e) => updateKpiValue(k.id, { not_measured: e.target.checked })} className="w-4 h-4 accent-rose-600" />
-                          اندازه‌گیری نشده
-                        </label>
-                      </div>
-                      {disabled ? (
-                        <div className="space-y-1.5">
-                          <label className="text-[11px] font-medium text-slate-500 block">دلیل عدم اندازه‌گیری *</label>
-                          <textarea value={v.missing_reason} onChange={(e) => updateKpiValue(k.id, { missing_reason: e.target.value })}
-                            rows={2} placeholder="دلیل..." className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-rose-500" />
-                        </div>
-                      ) : (
-                        <div className={k.input_type === "percentage_change" ? "grid grid-cols-1 sm:grid-cols-2 gap-3" : ""}>
-                          {k.input_type === "percentage_change" && (
-                            <div className="space-y-1.5">
-                              <label className="text-[11px] font-medium text-slate-500 block">مقدار مبنا *</label>
-                              <input type="number" step="any" value={v.baseline_value}
-                                onChange={(e) => updateKpiValue(k.id, { baseline_value: e.target.value })}
-                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:border-emerald-600" />
-                            </div>
-                          )}
-                          <div className="space-y-1.5">
-                            <label className="text-[11px] font-medium text-slate-500 block">
-                              {k.input_type === "direct" ? "مقدار این دوره *" : "مقدار دوره جاری *"}
-                            </label>
-                            <input type="number" step="any" value={v.current_value}
-                              onChange={(e) => updateKpiValue(k.id, { current_value: e.target.value })}
-                              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:border-emerald-600" />
-                          </div>
-                          {k.input_type === "percentage_change" && preview !== null && (
-                            <div className="sm:col-span-2 text-[11px] text-slate-500">
-                              درصد تغییر (پیش‌نمایش): <span className="font-bold text-emerald-700">{preview}</span>
-                            </div>
-                          )}
-                          {k.input_type === "direct" && directDiffPreview !== null && (
-                            <div className="text-[11px] text-slate-500">
-                              رشد نسبت به مبنا (پیش‌نمایش): <span className={`font-bold ${Number(v.current_value) >= (baselineNum ?? 0) ? "text-emerald-700" : "text-rose-600"}`}>{directDiffPreview}</span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                    const v = kpiValues[k.id] || { current_value: "", baseline_value: "", not_measured: false, missing_reason: "" };
+                    return (
+                      <KpiInteractiveInput
+                        key={k.id}
+                        kpi={k}
+                        value={v}
+                        onChange={(updated) => updateKpiValue(k.id, updated)}
+                      />
+                    );
+                  })}
               </div>
             )}
           </div>
@@ -1796,7 +1747,14 @@ export default function MyReports({ currentUser, user, reports = [], allReports 
 
   // 🟢 برای مدیران -> کاوشگر دیداری حباب‌ها همراه با سیارک‌های چرخان
   if (isManagerOrAdmin) {
-    return <ManagerVisualBubbleExplorer currentUser={activeUser} />;
+    return (
+      <ManagerVisualBubbleExplorer
+        currentUser={activeUser}
+        initialReports={activeReports}
+        initialProjects={projects}
+        initialPeriods={periods}
+      />
+    );
   }
 
   // 🟡 برای پرسنل عادی -> جدول گزارش‌های شخص خودش
@@ -1922,8 +1880,8 @@ export default function MyReports({ currentUser, user, reports = [], allReports 
         isOpen={Boolean(editingReport)}
         onClose={() => setEditingReport(null)}
         isGrace={getReportDeadlineState(editingReport)?.phase === "grace"}
-        onSaved={() => {
-          if (onRefresh) onRefresh();
+        onSaved={(updatedReport?: any) => {
+          if (onRefresh) onRefresh(updatedReport);
         }}
       />
 
@@ -1936,7 +1894,7 @@ export default function MyReports({ currentUser, user, reports = [], allReports 
         }}
         reports={pdfSelectedReports}
         periods={periodsList}
-        projects={projects}
+        projects={(projects || []).filter((p) => p.is_active !== false)}
         currentUser={activeUser}
         defaultPeriodId={pdfDefaultPeriodId}
       />

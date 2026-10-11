@@ -176,8 +176,8 @@ export function getDefaultDeadline(
   const [hours, minutes] = deadlineTime.split(":").map((n) => parseInt(n, 10) || 0);
 
   if (reportType === "weekly") {
-    // Start from the calendar day following the period end in Tehran
-    let curCal = new Date(Date.UTC(endParts.year, endParts.month - 1, endParts.day + 1));
+    // Start from the calendar day of the period end in Tehran (if already on deadline day, deadline is on that day)
+    let curCal = new Date(Date.UTC(endParts.year, endParts.month - 1, endParts.day));
     let curJsDay = curCal.getUTCDay();
     let curPersianDay = (curJsDay + 1) % 7;
 

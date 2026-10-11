@@ -1,0 +1,177 @@
+# Architecture Decision Record (ADR) — Log of Decisions
+
+### D1 — Single-Repo Full-Stack Monolith
+- **Decision:** Bundle Express 4 API and React 18 Vite frontend into a single `dist/server.cjs` artifact.
+- **Rationale:** Minimizes operational complexity for deployment on Railway for a single client organization.
+
+### D2 — Denormalized Snapshot Fields on Report
+- **Decision:** Copy `user_full_name`, `project_title`, and `period_title` directly onto the `Report` record at creation.
+- **Rationale:** Guarantees historical audit integrity even if users, projects, or periods are later renamed or reassigned.
+
+### D3 — Standalone Shamsi & Tehran Timezone Engine
+- **Decision:** Implement date handling purely in `src/dateUtils.ts` and `src/deadline.ts` without external Jalali packages.
+- **Rationale:** Eliminates external bundle weight and allows direct, deterministic unit testing of submission windows.
+
+### D4 — Deadline System: Global Settings + Per-Period Overrides
+- **Decision:** Maintain global defaults in `DeadlineSetting` with explicit per-period override capabilities in `ReportPeriod`.
+- **Rationale:** Accommodates organizational holidays and custom reporting extensions without modifying global defaults.
+
+### D5 — Session Auth via HttpOnly Cookies + Forced Password Rotation
+- **Decision:** Use JWTs in secure HttpOnly cookies with RBAC (Admin, Manager, User) and require staff password rotation upon initial sign-in.
+- **Rationale:** Ensures session hygiene and mitigates token leakage via XSS.
+
+### D6 — Multi-Provider Fallback for AI Audits
+- **Decision:** Route LLM analysis through `callAiWithFallback` with sequential fallback (Gemini → Cerebras → SambaNova).
+- **Rationale:** Prevents single-provider outages or regional API throttling from degrading administrative review workflows.
+
+### D7 — Deduplicated Legacy Report Import Pipeline
+- **Decision:** Provide a dedicated import script with deterministic `import_key` deduplication.
+- **Rationale:** Prevents duplicate report insertions when synchronizing legacy data.
+
+### D8 — Local Disk Storage for Uploads
+- **Decision:** Store WBS Excel sheets and report attachments on disk using Multer.
+- **Rationale:** Keeps infrastructure lightweight, with persistence backed by Railway volumes.
+
+### D9 — Multi-Repo Scaling Strategy for Organizational Units
+- **Decision:** Scale new organizational branches as independent repositories and ports behind an Nginx reverse proxy.
+- **Rationale:** Maintains separation of concerns and data boundaries between distinct administrative entities.
+
+### D10 — 3D Visual Explorer Layer
+- **Decision:** Integrate React Three Fiber (`@react-three/fiber` + `@react-three/drei`) as an optional visual exploration layer.
+- **Rationale:** Provides an interactive 3D topology of organizational projects and related action satellites.
+
+### D11 — Deputy-Level AI Strategic Analysis
+- **Decision:** Implement `/api/reports/analyze-deputy` to cross-reference WBS activities with periodic submissions and extract unquantified achievements as candidate KPIs (`suggested_kpis_from_text`).
+- **Rationale:** Empowers deputy directors to uncover structural progress indicators directly from textual narrative reports.
+
+### D12 — Streamlined Action Completion Without Manager Approval
+- **Decision:** Automatically set `is_completed = true` for actions checked by personnel in their reports, eliminating the intermediate pending-approval step.
+- **Rationale:** Reduces bureaucratic overhead and administrative bottlenecks for routine milestones.
+
+### D13 — Harmonized Monthly Project Reporting
+- **Decision:** Align monthly project reporting deadlines to the final week of each Shamsi month (`isLastWeekOfShamsiMonth`), suppressing missing-report indicators during weeks 1 through 3.
+- **Rationale:** Avoids false delinquency warnings while maintaining a unified submission rhythm.
+
+### D14 — Dual-Surface Cumulative KPI Representation & Regression Guardrail
+- **Decision:** Standardize KPI rendering across reporting surfaces around physical cumulative progress rather than abstract achievement ratios:
+  1. A unified compact matrix table (`KpiMatrixTable.tsx`) with segmented two-color micro-progress bars (slate for prior baseline progress + vibrant emerald for period growth) across raw reports and printable A4 PDF exports (`ReportsPdfDocument.tsx`).
+  2. Live dual-color visual feedback gauges in staff entry forms (`KpiInteractiveInput.tsx`) across `MyReports.tsx` and `SubmitReport.tsx`.
+  3. Strict client-side validation guardrails blocking staff from entering cumulative progress lower than previously accumulated project milestones.
+  4. Semantically adapted Recharts views in the dedicated web analytics view (`ProjectKpiAnalytics.tsx`).
+- **Rationale:** Prevents confusing anomalies (e.g. labeling low progress as 100% achieved), preserves strict A4 printable geometry, and prevents erroneous regressions in cumulative progress reporting.
+
+### D15 — Relational Integrity & Performance over NoSQL / Streaming Over-Engineering
+- **Decision:** Retain PostgreSQL and Prisma as the single source of truth (leveraging Postgres `JSONB` if semi-structured flexibility is needed) and reject distributed stream processors (Kafka). Address report saving latency by:
+  1. Adopting optimistic UI confirmation in the browser.
+  2. Eliminating historical database re-fetch storms (`fetch("/api/reports")`) upon save, merging single updated records into local state instead.
+- **Rationale:** For 10–15 concurrent users, distributed brokers add unnecessary memory bloat and architectural fragility on cloud hosting; the actual bottleneck is client-side re-fetching and sequential network roundtrips.
+
+### D16 — Fluid Workspace Geometry, Collapsible Navigation & Consolidated Management Hubs
+- **Decision:** Overhaul system layout and administrative navigation:
+  1. **Fixed & Collapsible Navigation:** Stabilize sidebar with sticky top positioning and zero layout shifts (eliminating the wiggle effect) plus an expand/collapse toggle (`w-64` <-> `w-20`) persisted in local storage.
+  2. **Fluid Responsive Workspace:** Eliminate the restrictive `max-w-7xl` constraint, enabling the application layout to dynamically adapt to 100% of any monitor width.
+  3. **Consolidated Top-Tab Hubs:** Consolidate fragmented sidebar links:
+     - Combine Reporting Periods and Deadline Settings under a unified "تقویم و مهلت‌های گزارش‌دهی" hub using top horizontal tabs.
+     - Combine KPI Tracking and KPI Definitions under a unified "شاخص‌های کلیدی عملکرد (KPI)" hub using top horizontal tabs.
+     - Combine Project Management and Personnel Allocation under a unified "مدیریت و تخصیص پروژه‌ها" hub (`ManageProjectsHub.tsx`) using top horizontal tabs.
+  4. **Personnel-Centric Allocation Partitioning:** On the project allocation page, automatically partition and prioritize the selected official's assigned projects at the top of the grid.
+  5. **Same-Day Weekly Deadline Resolution:** Correct the weekly deadline calculation to resolve on the period end date itself when day matches, eliminating the erroneous 1-week forward shift bug.
+- **Rationale:** Reduces visual clutter, prevents navigation cognitive fatigue, maximizes viewport utility on large monitors, and resolves deadline scheduling friction.
+
+### D17 — Comprehensive Multi-Period Next Actions in PDF & Drag-and-Drop Project Ordering
+- **Decision:** Enhance project governance and print fidelity:
+  1. **Multi-Period Next Actions Aggregation:** In `ReportsPdfDocument.tsx`, aggregate and deduplicate all active, non-cancelled next actions ever defined for each project across all periods, rather than strictly displaying only the sparse actions recorded in the latest single period submission.
+  2. **Native Drag-and-Drop Reordering:** Support drag-and-drop reordering of organizational projects using `GripVertical` handles in `ManageProjects.tsx`, backed by `PATCH /api/projects/reorder`.
+  3. **Auto-Increment Project Order Index:** In `POST /api/projects`, compute `nextOrderIndex = (maxOrderIndex ?? 0) + 1` to guarantee unique sequential priority ordering and prevent duplicate indexes on new creation.
+  4. **Removal of Redundant Export Triggers:** Remove redundant PDF export buttons from inside project configuration forms to keep operational tools focused on data entry and administration.
+- **Rationale:** Auditing managers requiring executive PDF reports must have visibility into all active commitments of a strategic project regardless of which specific weekly period they were originally recorded under.
+
+### D18 — Audited Next Action Lifecycle & Mandatory Cancellation Justification in Official PDF
+- **Decision:** Establish rigorous audit trails for next actions across user workflows and executive print artifacts:
+  1. **Mandatory Justification for Action Cancellation:** Enable staff and managers to cancel actions from reporting forms (`SubmitReport.tsx`, `MyReports.tsx`) and project action drawer (`ProjectNextActionsDrawer.tsx`) via `PATCH /api/next-actions/:id/cancel` and `DELETE /api/next-actions/:id`. Rejection of empty reasons enforces accountable cancellation.
+  2. **Comprehensive 4-State PDF Action Surface:** In Section 2 of `ReportsPdfDocument.tsx`, render all actions classified into 4 distinct semantic states:
+     - **Completed (`✓ تکمیل‌شده`):** Green badge with target date.
+     - **Overdue / Past Deadline (`⚠️ گذشته از موعد`):** Amber/rose badge indicating delay.
+     - **Upcoming / In Progress:** Regular bullet with target date.
+     - **Cancelled (`✕ حذف‌شده`):** Struck-through text with explicit display of cancellation reason (`علت حذف: ...`) so executives and auditors maintain full operational context.
+  3. **Unconditional Data Hydration in PDF:** Ensure `ReportsPdfDocument.tsx` unconditionally fetches `/api/next-actions` and `/api/project-kpis` on modal open regardless of passed props, preventing sparse or stale local state.
+- **Rationale:** Eliminates data loss from unrecorded cancellations, informs executives of abandoned project commitments, and guarantees complete accountability in printed audits.
+
+### D20 — Zero-Latency Print Rendering, Sub-Page Spillover Containment & Non-Blocking Data Hydration
+- **Decision:** Eliminate print preview latency bottlenecks and eliminate alternating blank pages in browser print dialogs:
+  1. **Zero-Latency In-Memory Style Ingestion:** Instead of injecting external CDN fonts (which hang in restricted network environments) or linking external stylesheet URLs, extract parsed stylesheet rules synchronously from `document.styleSheets` directly into the print iframe. This eliminates network round-trips and guarantees instant (<0.5s) preview generation in Chrome.
+  2. **Safe A4 Height & Spillover Prevention:** Standardize `.pdf-page-container` at `height: 278mm !important` (19mm below 297mm A4 limit) with `overflow: hidden !important` and `box-sizing: border-box`. This guarantees that even when Chrome or printer drivers impose hardware margins or "Headers and footers", the page number anchor never spills onto an adjacent page, completely eliminating alternating blank sheets and guaranteeing the cover page lands on Page 1.
+  3. **Zero-Flicker Optimistic Preview Hydration:** In `ReportsPdfDocument.tsx`, render available parent props immediately without full-screen loading spinners. Fetch supplementary datasets (KPIs, next actions) asynchronously in the background only when missing, reducing Railway database load and server memory consumption.
+- **Rationale:** Ensures flawless print and PDF rendering regardless of network restrictions or browser margin configurations, preserving server efficiency on resource-constrained platforms like Railway.
+
+### D22 — Golden Middle-Ground Typography (12px), Unclipped Table Pagination & Native Chrome Print Layout Integration
+- **Decision:** Establish an optimal middle ground between readability and physical A4 page containment:
+  1. **Native Chrome Print Layout Restoration:** In `ReportsPdfDocument.tsx`, omit restrictive orientation keywords from `@page { size: auto; margin: 6mm 8mm 6mm 8mm !important; }`. This automatically restores Chrome's native **Layout: [Portrait | Landscape]** dropdown in the print settings sidebar while removing the redundant in-app toolbar dropdown.
+  2. **AI Analysis Output Dual-Orientation:** In `ManagerDashboard.tsx` (`DeputyAnalysisModal`), add interactive Portrait / Landscape switching for executive AI strategic audit printouts.
+  3. **Golden Middle-Ground Typography (12px):** Scale base body typography to 12px (`line-height: 1.45`), titles to 15.5px, and section headings to 13px. This completely stops text from overflowing page bottoms while eliminating excessive blank space.
+  4. **Realistic KPI Table Height Estimation & Spillover Protection:** Recalibrate KPI table estimation to `2.5 + rowCount * 1.85 lines` (accurately budgeting ~19 lines for 9-row tables). When a project with extensive actions and a multi-row KPI table exceeds the 40.5 usable line budget, the KPI table seamlessly paginates to Page 2 under `(ادامه)`, completely eliminating sliced/truncated rows (such as Row 4) and preserving all data indicators intact.
+- **Rationale:** Prevents table truncation, eliminates awkward overflow, respects native browser print configuration, and provides specialized dual-orientation printing for AI executive outputs.
+
+### D23 — Unified Single-Source Print/Web Styling (14px), Guaranteed Margins & Overflow Protection
+- **Decision:** Unify PDF report styling across in-app modal preview and Chrome print dialog:
+  1. **Single Source of Truth Styling (`PDF_DOCUMENT_STYLES`):** Consolidate all report CSS (typography, card borders, badge colors, table layout, and spacing) into a single unified stylesheet consumed identically by both the in-app preview DOM and the print iframe.
+  2. **Guaranteed Margins Regardless of Chrome Settings:** Enforce `@page { size: A4; margin: 0; }` and apply direct physical padding (`padding: 10mm 14mm 10mm 14mm !important;`) on `.pdf-page-container` at `width: 210mm !important; height: 296.5mm !important; box-sizing: border-box !important;`. This guarantees that even when Chrome print margins are set to "None", headers and cards strictly maintain 14mm side margins and 10mm top/bottom margins, matching the preview 1:1.
+  3. **14px Typography & Calibrated Pagination Budget:** Standardize body text at 14px (`line-height: 1.5`), section headings at 14.5px, and project titles at 17px font-black. Calibrate safe page capacity to 38 lines (34.5 usable lines) with line estimation at 80 characters per line, preventing text clipping and ensuring smooth pagination under `(ادامه)`.
+  4. **Anchored Safe Footer Bar:** Establish a dedicated, flex-pinned footer bar (`height: 24px; border-top: 1px solid #e2e8f0; margin-top: auto; flex-shrink: 0;`) displaying `صفحه X از Y` in Persian digits, immune to text overflow displacement.
+- **Rationale:** Guarantees 100% parity between what staff/managers see in the browser preview modal and the final exported PDF from Chrome, eliminating margin bleed, missing footers, and text overflow.
+
+### D24 — Defensive Overdue Action Filtering & Period-Bound AI Cache Persistence
+- **Decision:** Eliminate spurious overdue action warnings and preserve manager AI revisions:
+  1. **Strict Temporal Cutoff for Overdue Actions:** In `POST /api/reports/analyze` and `/api/ai/strategic-analysis`, evaluate the reporting period end date (`cutoffDate = period_end`). Constrain database action retrieval to `target_date <= cutoffDate` and `is_cancelled: false`, explicitly preventing future commitments (e.g. deadlines falling after the period cutoff) from entering the overdue list.
+  2. **Defensive Post-Processing Guardrail:** Apply dual-calendar date parsing and comparison (`shamsiToGregorian`) to post-process AI outputs, defensively filtering out any hallucinated actions whose deadlines exceed `cutoffDate`.
+  3. **Period-Keyed In-Memory Cache Replacement:** Key strategic analysis caching by `strategic-analysis:period:${period_id}` (and deputy analysis by `deputy-analysis:period:${period_id}:deputy:${deputy_name}`) instead of a volatile prompt hash. When managers submit revisions via "ویرایش و بازنگری با AI", overwrite the period cache entry with the revised output, ensuring repeated views throughout the 1-week TTL reliably serve the revised analysis without re-generating from scratch.
+- **Rationale:** Ensures strategic managerial reports reflect true period delinquencies rather than future commitments, and preserves managerial review feedback across session revisits.
+
+### D25 — 2-Week Performance Tracking, Overdue Warning Badges & Cancelled Action Attribution in Executive PDF
+- **Decision:** Restructure executive periodic PDF reporting (`ReportsPdfDocument.tsx`) and action cancellation audits:
+  1. **Consolidated Results Section (2-Week Performance Tracking):** In section "۱-۱. نتایج اقدامات", aggregate:
+     - Actions completed and reported in the current reporting period.
+     - Actions completed in the previous period's report for the project, prefixed with the prominent tag `[اقدامات هفته قبل]` and green completion badge (`✓ تکمیل‌شده`).
+     - Actions cancelled during the reporting period, appended at the end with a red status badge (`✕ حذف‌شده`) and explicit display of `(علت حذف: ...)`.
+  2. **De-cluttered Future Actions Section:** Remove historical completed and cancelled actions entirely from section "۲. اقدامات آتی". Render exclusively active commitments:
+     - Overdue actions (`target_date < now`): Highlighted with an amber/yellow warning badge (`⚠️ گذشته از موعد`).
+     - Upcoming actions: Rendered with a clean, unified bullet and Persian target date.
+  3. **Removal of Redundant Header Filter:** Eliminate the obsolete 4th dropdown filter ("همه اقدامات تعریف‌شده / فقط اقدامات آینده") from the PDF modal toolbar.
+  4. **Database-Backed Period Attribution for Cancellations:** In `PATCH /api/next-actions/:id/cancel` and `DELETE /api/next-actions/:id`, persist `canelled_period_id` alongside timestamp, reason, and user identity to support retrospective auditing.
+- **Rationale:** Prevents historical action accumulation from cluttering future commitments, provides comprehensive multi-week progress tracking, and ensures rigorous auditability for cancelled operational milestones.
+
+### D26 — Universal Inactive Project Isolation & Dedicated Archive View
+- **Decision:** Strictly isolate deactivated projects (`is_active: false`) across the application stack:
+  1. **Default Backend Active-Only Scoping:** In `GET /api/projects`, return exclusively active projects (`{ is_active: true }`) by default for all roles. Inactive projects are returned only when `?include_inactive=true` is explicitly requested by managers.
+  2. **AI Audit & Strategic Prompt Guardrail:** In `POST /api/reports/analyze` and `/api/ai/strategic-analysis`, bound overdue action retrieval strictly to active projects (`project: { is_active: true }`), preventing legacy milestones of disabled projects from surfacing in executive reviews.
+  3. **Reporting & PDF Generation Quarantine:** In `ReportsPdfDocument.tsx`, exclude inactive projects from the project dropdown filter and suppress their historical reports from periodic A4 PDF outputs.
+  4. **Administrative Tabs Partitioning in ManageProjects:** In `ManageProjects.tsx`, divide the project management view into two dedicated tabs:
+     - `پروژه‌های فعال`: Renders only active projects with continuous ordinal numbering, drag-and-drop ordering, and full CRUD.
+     - `غیرفعال / بایگانی`: Contains deactivated projects with a 1-click `فعال‌سازی مجدد` button and edit/delete actions, keeping inactive records fully recoverable without cluttering the primary operations grid.
+  5. **Operational Scoping across Modules:** Restrict project options in `ManagerDashboard.tsx`, `ProjectAllocations.tsx`, `ProjectKpiManagement.tsx`, `ProjectKpiAnalytics.tsx`, and `MyReports.tsx` to active projects.
+- **Rationale:** Prevents clutter from decommissioned projects, prevents false delinquency warnings for inactive initiatives, and ensures pristine executive reports while preserving historical data integrity in the database.
+
+### D27 — Nullable KPI Target Values (آزاد کردن و اختیاری‌سازی مقدار هدف شاخص‌ها)
+- **Decision:** Make KPI `target_value` optional and nullable across the database schema, API contracts, forms, and visualization logic:
+  1. **Schema & Self-Healing Migration:** Change `target_value Float?` in `prisma/schema.prisma` and add `ALTER TABLE "ProjectKpi" ALTER COLUMN "target_value" DROP NOT NULL;` in `server.ts` startup migrations (`ensureDatabaseSchema`) for non-destructive deployment.
+  2. **API & Validation:** Update `POST /api/project-kpis` and `PATCH /api/project-kpis/:id` to accept null or omitted target values, and update AI prompt serialization (`formatKpiValuesForPrompt`) to gracefully omit missing targets.
+  3. **Form & Management UI:** Remove `required` constraint and `*` from KPI definition forms (`ProjectKpiManagement.tsx`), displaying `(اختیاری)` and handling null values in both create and update operations.
+  4. **Visualization & Analytics:** Guard against null targets in `computeKpiVisual` (`kpiVisuals.ts`), `KpiMatrixTable.tsx`, `KpiInteractiveInput.tsx`, and `ProjectKpiAnalytics.tsx`, showing "فاقد هدف عددی" or "—" rather than arbitrary 0%/100% assumptions or broken reference lines.
+- **Rationale:** Allows defining directional or qualitative tracking indicators without forcing arbitrary target numbers on organizational projects.
+
+### D28 — Managerial Composite KPIs with Visual Drag & Drop Builder
+- **Decision:** Architect a dedicated managerial composite KPI engine enabling executives to aggregate cross-project and cross-deputy indicators with mathematical operators without exposing composite metrics to operational deputy reporting surfaces:
+  1. **Strict Role-Based Security & Confidentiality:** Every `/api/composite-kpis*` endpoint enforces `authenticate, requireManager`. The frontend "شاخص‌های ترکیبی مدیریتی" tab in `ProjectKpiHub.tsx` is strictly gated to `role === "manager"` and completely inaccessible to regular personnel/deputies.
+  2. **Relational Schema & Self-Healing Startup Migrations:** Implement `CompositeOperator` enum (`sum`, `average`, `difference`, `multiply`, `ratio_percentage`), `CompositeKpi`, `CompositeKpiItem`, and `CompositeKpiValue` models in Prisma and startup DDL in `server.ts` (`ensureDatabaseSchema`) with zero-touch Railway production migration capability.
+  3. **Visual Drag & Drop & Deputy Window Pods:** Support modular Deputy Window Pods displaying each deputy's KPIs with HTML5 drag-and-drop (`draggable={true}`) into a central formula drop zone alongside 1-click addition and an instant universal search bar filtering across all base KPIs.
+  4. **Multi-Operand Formulation & Order Governance:** Support 2 or more base KPIs with dynamic ordering (`order_index`, `ArrowUp`/`ArrowDown`) vital for directional operators (difference and percentage ratios) and safe zero-division handling.
+  5. **Durable Period Snapshots & Automatic Calculation:** Calculate composite periodic metrics and persist full constituent audits (`details` JSONB snapshot) automatically upon report submissions/updates (`syncAllCompositeKpisForPeriod`), with full manual recalculation (`/recalculate`) and chronological Recharts trend exploration.
+- **Rationale:** Empowers executive directors to evaluate cross-departmental macro progress and ratios while keeping operational reporting focused purely on departmental base KPIs.
+
+### D29 — Approved Project KPI Grounding & Attribution in Deputy AI Strategic Audits
+- **Decision:** Ground deputy-level AI strategic audits (`/api/reports/analyze-deputy`) in both approved organizational project KPIs (`ProjectKpi`) and periodic report submissions:
+  1. **Dual KPI Context Injection:** Query all active project KPIs (`prisma.projectKpi.findMany({ where: { is_active: true } })`) alongside report submissions. Provide the LLM with the full catalog of approved KPIs, units, and targets for each project.
+  2. **Defensive Differentiation between Missing KPIs vs Missing Submissions:** Differentiate between projects truly lacking defined KPIs ("فاقد شاخص مصوب") versus projects where KPIs exist but personnel failed to record periodic values ("دارای شاخص مصوب ولی مقدار ثبت نشده"). Prompt instructions strictly forbid labeling projects with approved KPIs as "فاقد شاخص ساختاریافته".
+  3. **Prisma Relation Hydration:** Ensure all report queries across creation, updates, and AI audits include `{ kpiValues: { include: { kpi: true } } }` so KPI names, units, and target metadata are never lost or rendered as anonymous placeholders.
+- **Rationale:** Eliminates false alarms in managerial reviews where executive directors defined project KPIs but AI erroneously reported projects as KPI-less due to report-submission desynchronization.
+

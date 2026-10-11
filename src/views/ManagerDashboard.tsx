@@ -21,11 +21,14 @@ import {
   FolderKanban, 
   Printer,
   Edit3,
-  Send
+  Send,
+  Building2,
+  BookmarkPlus
 } from "lucide-react";
 import { ReportPeriod, Project, User } from "../types";
 import { CustomSelect } from "../components";
 import ReportsPdfDocument from "../components/ReportsPdfDocument";
+import { ensureShamsiDate, isLastWeekOfShamsiMonth } from "../dateUtils";
 
 // 🌐 تبدیل اعداد به فارسی
 export const toPersianDigits = (n: string | number | undefined | null): string => {
@@ -37,14 +40,24 @@ export const toPersianDigits = (n: string | number | undefined | null): string =
 interface AiAnalysisResult {
   health_score: number;
   overall_status: string;
-  executive_summary: string;
+  executive_summary: string | Array<{
+    deputy_name: string;
+    summary: string;
+  }>;
   key_achievements: string[];
   risks_and_delays: {
     project_title: string;
     risk_level: "high" | "medium" | "low";
     description: string;
   }[];
-  actionable_recommendations: string[];
+  uncompleted_actions?: Array<{
+    project_title: string;
+    action_text: string;
+    deputy_name?: string;
+    target_date?: string;
+    delay_status?: string;
+  }>;
+  actionable_recommendations?: string[];
 }
 
 interface SingleReportAuditResult {
@@ -275,7 +288,7 @@ function SingleReportAuditModal({
                     <div key={i} className="flex items-center justify-between bg-slate-50 p-3 rounded-xl text-xs border border-slate-100">
                       <span className="text-slate-700 font-medium">{act.action}</span>
                       <span className="bg-amber-100 text-amber-900 px-2.5 py-1 rounded-lg font-bold text-[11px] shrink-0">
-                        📅 {toPersianDigits(act.deadline)}
+                        📅 {ensureShamsiDate(act.deadline)}
                       </span>
                     </div>
                   ))}
@@ -297,6 +310,620 @@ function SingleReportAuditModal({
                   ))}
                 </ul>
               </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =================================================================
+// 🏢 اینترفیس و مودال ارزیابی استراتژیک معاونت (Deputy AI Analysis)
+// =================================================================
+interface DeputyAiAnalysisResult {
+  deputy_name: string;
+  period_title: string;
+  health_score: number;
+  overall_status: string;
+  deputy_executive_summary: string;
+  projects_analysis: Array<{
+    project_title: string;
+    status: "submitted" | "missing" | "late";
+    project_summary: string;
+    key_achievements: string[];
+    risks_or_delays: string[];
+    wbs_alignment: string;
+    kpi_evaluation: string;
+  }>;
+  suggested_kpis_from_text: Array<{
+    project_title: string;
+    suggested_kpi_name: string;
+    suggested_unit: string;
+    extracted_context: string;
+    reasoning: string;
+  }>;
+  next_period_commitments: Array<{
+    project_title: string;
+    action: string;
+    deadline: string;
+  }>;
+  actionable_recommendations: string[];
+}
+
+function DeputyAiAnalysisModal({
+  isOpen,
+  onClose,
+  periodId,
+  periodTitle,
+  deputyName,
+  userId,
+  deputyManagerName,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  periodId: number;
+  periodTitle: string;
+  deputyName: string;
+  userId?: number | null;
+  deputyManagerName?: string;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [analysis, setAnalysis] = useState<DeputyAiAnalysisResult | null>(null);
+  const [modelUsed, setModelUsed] = useState<string>("");
+  const [error, setError] = useState<string>("");
+
+  // استیت‌های بازخورد تعاملی مدیر
+  const [showRevisionForm, setShowRevisionForm] = useState<boolean>(false);
+  const [managerComment, setManagerComment] = useState<string>("");
+  const [revisionLoading, setRevisionLoading] = useState<boolean>(false);
+  const [revisionSuccessMsg, setRevisionSuccessMsg] = useState<string>("");
+  const [printOrientation, setPrintOrientation] = useState<"portrait" | "landscape">("portrait");
+
+  const runAnalysis = async (forceRefresh = false) => {
+    if (!periodId || (!deputyName && !userId)) return;
+    setLoading(true);
+    setError("");
+    setRevisionSuccessMsg("");
+    setShowRevisionForm(false);
+    if (forceRefresh) setAnalysis(null);
+
+    try {
+      const res = await fetch("/api/reports/analyze-deputy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          period_id: periodId,
+          deputy_name: deputyName,
+          user_id: userId || undefined,
+          force_refresh: forceRefresh,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setAnalysis(data.analysis);
+        setModelUsed(data.model_used || "AI Multi-Provider Engine");
+      } else {
+        setError(data.error || "خطا در ارزیابی هوشمند معاونت.");
+      }
+    } catch (err) {
+      setError("عدم برقراری ارتباط با سرور برای تحلیل هوشمند.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRevise = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!managerComment.trim() || !periodId) return;
+
+    setRevisionLoading(true);
+    setError("");
+    setRevisionSuccessMsg("");
+
+    try {
+      const res = await fetch("/api/reports/analyze-deputy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          period_id: periodId,
+          deputy_name: deputyName,
+          user_id: userId || undefined,
+          manager_comment: managerComment.trim(),
+          previous_analysis: analysis,
+          force_refresh: true,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setAnalysis(data.analysis);
+        setModelUsed(data.model_used || "AI Multi-Provider Engine");
+        setRevisionSuccessMsg("تحلیل این معاونت بر اساس بازخورد و دستورات شما بازنویسی شد.");
+        setManagerComment("");
+      } else {
+        setError(data.error || "خطا در اعمال بازنگری.");
+      }
+    } catch (err) {
+      setError("ارتباط با سرور جهت بازنویسی برقرار نشد.");
+    } finally {
+      setRevisionLoading(false);
+    }
+  };
+
+  const handlePrint = () => {
+    if (!analysis) return;
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      alert("لطفاً اجازه باز شدن پنجره چاپ را در مرورگر بدهید.");
+      return;
+    }
+
+    const html = `<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <title>ارزیابی استراتژیک معاونت: ${analysis.deputy_name}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;600;700;800;900&display=swap');
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    @page { size: A4 ${printOrientation}; margin: 8mm 10mm; }
+    body { font-family: 'Vazirmatn', system-ui, sans-serif; background: #fff; color: #1e293b; padding: 10mm; line-height: 1.6; }
+    h1 { font-size: 16pt; font-weight: 900; margin-bottom: 6px; color: #0f172a; }
+    .meta { font-size: 10pt; color: #64748b; margin-bottom: 16px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; }
+    .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+    .card-title { font-weight: 800; font-size: 11pt; margin-bottom: 6px; color: #0f172a; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 8.5pt; font-weight: bold; background: #e0f2fe; color: #0369a1; }
+    ul { padding-right: 18px; margin-top: 6px; }
+    li { font-size: 9.5pt; margin-bottom: 4px; }
+  </style>
+</head>
+<body>
+  <h1>ارزیابی و ممیزی استراتژیک معاونت: ${analysis.deputy_name}</h1>
+  <div class="meta">
+    دوره: ${analysis.period_title} | نمره سلامت: ${toPersianDigits(analysis.health_score)} از ۱۰۰ (${analysis.overall_status}) | مسئول: ${deputyManagerName || "-"}
+  </div>
+  <div class="card">
+    <div class="card-title">خلاصه مدیریتی عملکرد معاونت</div>
+    <p style="font-size: 10pt;">${analysis.deputy_executive_summary}</p>
+  </div>
+  <div class="card-title" style="margin-top: 16px;">بررسی تفکیکی پروژه‌ها</div>
+  ${(analysis.projects_analysis || []).map((p) => `
+    <div class="card">
+      <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+        <strong>${p.project_title}</strong>
+        <span class="badge">${p.status === "submitted" ? "ثبت‌شده منظم" : p.status === "late" ? "تأخیری" : "فاقد گزارش"}</span>
+      </div>
+      <p style="font-size: 9.5pt; color: #475569; margin-bottom: 6px;">${p.project_summary}</p>
+      ${p.key_achievements?.length ? `<div style="font-size: 9pt; color: #047857;"><strong>دستاوردهای کلیدی:</strong> ${p.key_achievements.join(" • ")}</div>` : ""}
+      ${p.risks_or_delays?.length ? `<div style="font-size: 9pt; color: #b91c1c; margin-top: 2px;"><strong>موانع و ریسک‌ها:</strong> ${p.risks_or_delays.join(" • ")}</div>` : ""}
+      <div style="font-size: 8.5pt; color: #64748b; margin-top: 4px;">WBS: ${p.wbs_alignment} | شاخص‌ها: ${p.kpi_evaluation}</div>
+    </div>
+  `).join("")}
+  ${analysis.suggested_kpis_from_text?.length ? `
+    <div class="card-title" style="margin-top: 16px;">شاخص‌های پیشنهادی استخراج‌شده از متن (جهت مصوب‌سازی KPI)</div>
+    ${analysis.suggested_kpis_from_text.map(k => `
+      <div class="card" style="background: #faf5ff; border-color: #e9d5ff;">
+        <strong style="color: #6b21a8;">${k.suggested_kpi_name} (${k.suggested_unit})</strong> - پروژه: ${k.project_title}
+        <div style="font-size: 9pt; color: #7e22ce; margin-top: 2px;">زمینه در گزارش: «${k.extracted_context}»</div>
+        <div style="font-size: 8.5pt; color: #475569; margin-top: 2px;">دلیل پیشنهاد: ${k.reasoning}</div>
+      </div>
+    `).join("")}
+  ` : ""}
+  <script>window.onload = function() { window.print(); }</script>
+</body>
+</html>`;
+
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+  };
+
+  useEffect(() => {
+    if (isOpen && periodId && (deputyName || userId)) {
+      runAnalysis(false);
+    }
+  }, [isOpen, periodId, deputyName, userId]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-3 md:p-6 animate-fade-in dir-rtl">
+      <div className="relative w-full max-w-5xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
+        
+        {/* هدر مودال */}
+        <div className="p-5 md:p-6 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center border border-amber-500/30">
+              <Building2 className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-black text-base md:text-lg text-white">ارزیابی استراتژیک معاونت (پروژه به پروژه)</h3>
+                <span className="bg-amber-500/20 text-amber-300 text-[10px] font-extrabold px-2 py-0.5 rounded-full border border-amber-500/30">
+                  تحلیل تفکیکی
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 mt-0.5 font-medium">
+                {deputyName} • بازه: {periodTitle} {deputyManagerName ? `(مسئول: ${deputyManagerName})` : ""}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {analysis && (
+              <div className="flex items-center bg-slate-800 p-0.5 rounded-xl border border-slate-700">
+                <button
+                  type="button"
+                  onClick={() => setPrintOrientation("portrait")}
+                  className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-all cursor-pointer ${
+                    printOrientation === "portrait"
+                      ? "bg-amber-400 text-slate-950 shadow-xs"
+                      : "text-slate-300 hover:text-white"
+                  }`}
+                  title="چاپ عمودی"
+                >
+                  عمودی
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPrintOrientation("landscape")}
+                  className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-all cursor-pointer ${
+                    printOrientation === "landscape"
+                      ? "bg-amber-400 text-slate-950 shadow-xs"
+                      : "text-slate-300 hover:text-white"
+                  }`}
+                  title="چاپ افقی"
+                >
+                  افقی
+                </button>
+              </div>
+            )}
+            {analysis && (
+              <button
+                type="button"
+                onClick={handlePrint}
+                className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-2 rounded-xl text-xs font-bold transition-all border border-slate-700 cursor-pointer"
+                title="چاپ و خروجی PDF"
+              >
+                <Printer className="w-4 h-4 text-amber-400" />
+                <span className="hidden sm:inline">چاپ / PDF</span>
+              </button>
+            )}
+            {analysis && (
+              <button
+                type="button"
+                onClick={() => runAnalysis(true)}
+                disabled={loading}
+                className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-2 rounded-xl text-xs font-bold transition-all border border-slate-700 cursor-pointer"
+                title="تحلیل مجدد بدون کش"
+              >
+                <RefreshCw className={`w-4 h-4 text-emerald-400 ${loading ? "animate-spin" : ""}`} />
+                <span className="hidden sm:inline">بازتولید</span>
+              </button>
+            )}
+            <button 
+              onClick={onClose}
+              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        {/* بدنه مودال */}
+        <div className="flex-1 overflow-y-auto p-5 md:p-8 space-y-6 bg-slate-50/70 text-right text-slate-900">
+          {loading && (
+            <div className="py-24 text-center space-y-4">
+              <RefreshCw className="w-12 h-12 text-amber-500 animate-spin mx-auto" />
+              <p className="text-sm font-bold text-slate-700">
+                در حال استخراج پروژه‌های این معاونت، تطابق با WBS و تحلیل هوشمند...
+              </p>
+              <p className="text-xs text-slate-500">
+                پردازش همزمان شاخص‌ها، موانع و استخراج سنجه‌های پیشنهادی از متن
+              </p>
+            </div>
+          )}
+
+          {error && (
+            <div className="p-4 bg-rose-50 border border-rose-200 text-rose-700 rounded-2xl text-xs flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 shrink-0" />
+                <span>{error}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => runAnalysis(true)}
+                className="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1 rounded-xl text-xs font-bold cursor-pointer"
+              >
+                تلاش مجدد
+              </button>
+            </div>
+          )}
+
+          {analysis && (
+            <div className="space-y-6">
+              
+              {/* نوار اطلاعات موتور پردازشگر */}
+              {modelUsed && (
+                <div className="flex items-center justify-between bg-white p-3 rounded-2xl border border-slate-200 text-xs text-slate-600 shadow-2xs">
+                  <span className="flex items-center gap-2 font-medium">
+                    <Cpu className="w-4 h-4 text-emerald-600" />
+                    موتور پردازش هوش مصنوعی: <strong>{modelUsed}</strong>
+                  </span>
+                  <span className="text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 text-[11px] font-bold">
+                    تحلیل داده‌محور (Strict Grounding)
+                  </span>
+                </div>
+              )}
+
+              {/* ۱. کارت شاخص سلامت و وضعیت کلان معاونت */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className={`p-5 rounded-3xl border flex items-center gap-4 ${
+                  analysis.health_score >= 75
+                    ? "bg-emerald-50/80 border-emerald-200 text-emerald-950"
+                    : analysis.health_score >= 50
+                    ? "bg-amber-50/80 border-amber-200 text-amber-950"
+                    : "bg-rose-50/80 border-rose-200 text-rose-950"
+                }`}>
+                  <div className="w-14 h-14 rounded-2xl bg-white shadow-md flex items-center justify-center font-black text-2xl shrink-0">
+                    {toPersianDigits(analysis.health_score)}
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold opacity-80 block">نمره سلامت این معاونت</span>
+                    <span className="text-sm font-black mt-0.5 block">{analysis.overall_status}</span>
+                  </div>
+                </div>
+
+                <div className="md:col-span-2 bg-white p-5 rounded-3xl border border-slate-200 shadow-2xs space-y-2">
+                  <h4 className="font-extrabold text-slate-900 text-xs md:text-sm flex items-center gap-2 border-b border-slate-100 pb-2">
+                    <FileText className="w-4 h-4 text-amber-500" />
+                    چکیده مدیریتی وضعیت پروژه‌های این معاونت
+                  </h4>
+                  <p className="text-xs text-slate-600 leading-relaxed pt-1">
+                    {analysis.deputy_executive_summary}
+                  </p>
+                </div>
+              </div>
+
+              {/* ۲. بخش ویژه و کلیدی: تحلیل تفکیکی پروژه به پروژه */}
+              <div className="bg-white p-5 md:p-6 rounded-3xl border border-slate-200 shadow-2xs space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <h4 className="font-black text-slate-900 text-sm md:text-base flex items-center gap-2">
+                    <FolderKanban className="w-5 h-5 text-indigo-600" />
+                    ارزیابی و وضعیت به تفکیک پروژه‌ها ({toPersianDigits(analysis.projects_analysis?.length || 0)} پروژه)
+                  </h4>
+                  <span className="text-[11px] text-slate-500 font-medium">
+                    بررسی انطباق WBS و پیشرفت
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4">
+                  {(analysis.projects_analysis || []).map((proj, pIdx) => {
+                    const isSubmitted = proj.status === "submitted";
+                    const isLate = proj.status === "late";
+                    const statusBg = isSubmitted
+                      ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                      : isLate
+                      ? "bg-amber-50 text-amber-800 border-amber-200"
+                      : "bg-rose-50 text-rose-800 border-rose-200";
+                    const statusText = isSubmitted ? "گزارش منظم" : isLate ? "گزارش تأخیری" : "فاقد گزارش";
+
+                    return (
+                      <div key={pIdx} className="bg-slate-50/80 rounded-2xl p-4 border border-slate-200/80 space-y-3 hover:border-slate-300 transition-colors">
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/60 pb-2.5">
+                          <span className="font-extrabold text-sm text-slate-900 flex items-center gap-2">
+                            <span className="w-6 h-6 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-black">
+                              {toPersianDigits(pIdx + 1)}
+                            </span>
+                            {proj.project_title}
+                          </span>
+                          <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${statusBg}`}>
+                            {statusText}
+                          </span>
+                        </div>
+
+                        <p className="text-xs text-slate-700 leading-relaxed font-medium">
+                          {proj.project_summary}
+                        </p>
+
+                        {/* دستاوردها و ریسک‌ها */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                          {proj.key_achievements && proj.key_achievements.length > 0 && (
+                            <div className="bg-emerald-50/50 p-3 rounded-xl border border-emerald-100 text-xs space-y-1.5">
+                              <span className="font-bold text-emerald-900 flex items-center gap-1.5 text-[11px]">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                دستاوردهای ملموس دوره:
+                              </span>
+                              <ul className="space-y-1 pr-4 list-disc text-emerald-800 text-[11px] leading-relaxed">
+                                {proj.key_achievements.map((ach, aI) => (
+                                  <li key={aI}>{ach}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {proj.risks_or_delays && proj.risks_or_delays.length > 0 && (
+                            <div className="bg-amber-50/50 p-3 rounded-xl border border-amber-100 text-xs space-y-1.5">
+                              <span className="font-bold text-amber-900 flex items-center gap-1.5 text-[11px]">
+                                <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                                موانع، تأخیرها یا ریسک‌ها:
+                              </span>
+                              <ul className="space-y-1 pr-4 list-disc text-amber-800 text-[11px] leading-relaxed">
+                                {proj.risks_or_delays.map((rsk, rI) => (
+                                  <li key={rI}>{rsk}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* تطابق WBS و ارزیابی شاخص */}
+                        <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-slate-600">
+                          <span className="bg-white px-2.5 py-1 rounded-lg border border-slate-200">
+                            <strong>WBS:</strong> {proj.wbs_alignment}
+                          </span>
+                          <span className="bg-white px-2.5 py-1 rounded-lg border border-slate-200">
+                            <strong>شاخص‌ها:</strong> {proj.kpi_evaluation}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* ۳. بخش طلایی: شاخص‌های پیشنهادی استخراج‌شده از متن (KPI Suggestions) */}
+              {analysis.suggested_kpis_from_text && analysis.suggested_kpis_from_text.length > 0 && (
+                <div className="bg-gradient-to-br from-indigo-50/80 via-purple-50/80 to-pink-50/50 p-5 md:p-6 rounded-3xl border border-purple-200 shadow-2xs space-y-4">
+                  <div className="flex items-center justify-between border-b border-purple-200/80 pb-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-purple-600 text-white flex items-center justify-center shadow-md shadow-purple-500/20">
+                        <BookmarkPlus className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="font-black text-purple-950 text-sm md:text-base">
+                          شاخص‌های پیشنهادی برگرفته از متن (فرصت‌های شاخص‌سازی KPI)
+                        </h4>
+                        <p className="text-[11px] text-purple-700 mt-0.5">
+                          هوش مصنوعی این سنجه‌های عددی را از دل گزارش‌های متنی کشف کرده تا بتوانید به عنوان شاخص رسمی معاونت مصوب کنید.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {analysis.suggested_kpis_from_text.map((kpiSug, kIdx) => (
+                      <div key={kIdx} className="bg-white p-4 rounded-2xl border border-purple-100 shadow-2xs space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-extrabold text-xs text-purple-950 flex items-center gap-1.5">
+                            <Target className="w-4 h-4 text-purple-600" />
+                            {kpiSug.suggested_kpi_name}
+                          </span>
+                          <span className="bg-purple-100 text-purple-800 text-[10px] font-bold px-2 py-0.5 rounded-md">
+                            واحد: {kpiSug.suggested_unit}
+                          </span>
+                        </div>
+
+                        <p className="text-[11px] text-slate-500">
+                          <strong>پروژه:</strong> {kpiSug.project_title}
+                        </p>
+
+                        <div className="bg-purple-50/60 p-2.5 rounded-xl border border-purple-100/80 text-[11px] text-purple-900 leading-relaxed">
+                          «{kpiSug.extracted_context}»
+                        </div>
+
+                        <p className="text-[11px] text-slate-600 leading-relaxed">
+                          💡 <strong>دلیل پیشنهاد:</strong> {kpiSug.reasoning}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* ۴. اقدامات آتی و تعهدات دوره آینده */}
+              {analysis.next_period_commitments && analysis.next_period_commitments.length > 0 && (
+                <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-2xs space-y-3">
+                  <h4 className="font-extrabold text-slate-900 text-xs md:text-sm flex items-center gap-2 border-b border-slate-100 pb-2">
+                    <Clock className="w-4 h-4 text-amber-600" />
+                    تعهدات و اقدامات آتی این معاونت در دوره آینده
+                  </h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                    {analysis.next_period_commitments.map((cmt, cIdx) => (
+                      <div key={cIdx} className="bg-slate-50 p-3 rounded-xl border border-slate-100 flex items-center justify-between gap-2 text-xs">
+                        <div>
+                          <span className="text-[10px] text-slate-400 font-bold block">{cmt.project_title}</span>
+                          <span className="font-medium text-slate-800 mt-0.5 block">{cmt.action}</span>
+                        </div>
+                        <span className="bg-amber-100 text-amber-900 px-2 py-0.5 rounded-md text-[10px] font-bold shrink-0">
+                          {toPersianDigits(cmt.deadline)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* ۵. پیشنهادات راهبردی به مدیر ارشد */}
+              {analysis.actionable_recommendations && analysis.actionable_recommendations.length > 0 && (
+                <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-2xs space-y-3">
+                  <h4 className="font-extrabold text-slate-900 text-xs md:text-sm flex items-center gap-2 border-b border-slate-100 pb-2">
+                    <Lightbulb className="w-4 h-4 text-amber-500" />
+                    توصیه‌های اجرایی هوش مصنوعی جهت راهبری این معاونت
+                  </h4>
+                  <ul className="space-y-2">
+                    {analysis.actionable_recommendations.map((rec, rIdx) => (
+                      <li key={rIdx} className="text-xs text-slate-700 flex items-start gap-2 bg-slate-50 p-3 rounded-xl border border-slate-100 leading-relaxed">
+                        <span className="w-2 h-2 bg-amber-500 rounded-full mt-1.5 shrink-0"></span>
+                        <span>{rec}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* ۶. حلقه بازخورد و بازتولید تعاملی مدیر */}
+              <div className="bg-slate-900 text-white p-5 md:p-6 rounded-3xl border border-slate-800 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <Edit3 className="w-5 h-5 text-amber-400" />
+                    <div>
+                      <h4 className="font-black text-sm">حلقه بازخورد و اصلاح هوشمند تحلیل معاونت</h4>
+                      <p className="text-[11px] text-slate-400">
+                        در صورت تمایل می‌توانید نکات اصلاحی خود را بنویسید تا هوش مصنوعی تحلیل را متناسب با نظر شما بازنگری کند.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowRevisionForm(!showRevisionForm)}
+                    className="text-xs bg-slate-800 hover:bg-slate-700 text-amber-300 px-3 py-1.5 rounded-xl border border-slate-700 font-bold transition-colors cursor-pointer"
+                  >
+                    {showRevisionForm ? "انصراف" : "افزودن دستور اصلاحی مدیر"}
+                  </button>
+                </div>
+
+                {revisionSuccessMsg && (
+                  <div className="p-3 bg-emerald-950/80 border border-emerald-800 text-emerald-300 text-xs rounded-xl flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    <span>{revisionSuccessMsg}</span>
+                  </div>
+                )}
+
+                {showRevisionForm && (
+                  <form onSubmit={handleRevise} className="space-y-3 pt-2">
+                    <textarea
+                      value={managerComment}
+                      onChange={(e) => setManagerComment(e.target.value)}
+                      placeholder="مثال: روی تأخیر پروژه خطوط BRT بیشتر تأکید شود یا شاخص‌های بخش آموزش باید وزن بیشتری داشته باشند..."
+                      rows={3}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-2xl p-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 leading-relaxed"
+                    />
+                    <div className="flex justify-end">
+                      <button
+                        type="submit"
+                        disabled={revisionLoading || !managerComment.trim()}
+                        className="flex items-center gap-2 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 disabled:opacity-50 text-white font-bold text-xs px-4 py-2 rounded-xl transition-all shadow-md cursor-pointer"
+                      >
+                        {revisionLoading ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                            <span>در حال بازنویسی تحلیل معاونت...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Send className="w-4 h-4" />
+                            <span>ارسال نظر و بازنویسی تحلیل</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
+
             </div>
           )}
         </div>
@@ -355,8 +982,24 @@ export default function ManagerDashboard({
   const [auditModalOpen, setAuditModalOpen] = useState<boolean>(false);
   const [selectedAuditReport, setSelectedAuditReport] = useState<{ id: number; title: string } | null>(null);
 
+  // استیت‌های ارزیابی هوشمند تفکیکی معاونت
+  const [deputyAiModalOpen, setDeputyAiModalOpen] = useState<boolean>(false);
+  const [selectedDeputyForAi, setSelectedDeputyForAi] = useState<{
+    deputy_name: string;
+    user_id?: number | null;
+    user_full_name?: string;
+  } | null>(null);
+
   // استیت‌های خروجی PDF
   const [pdfModalOpen, setPdfModalOpen] = useState<boolean>(false);
+
+  const currentPeriod = useMemo(() => {
+    return (periods || []).find((p) => p.id === selectedPeriodId);
+  }, [periods, selectedPeriodId]);
+
+  const isLastWeek = useMemo(() => {
+    return isLastWeekOfShamsiMonth(currentPeriod, periods);
+  }, [currentPeriod, periods]);
 
   useEffect(() => {
     if (periods && periods.length > 0) {
@@ -364,6 +1007,20 @@ export default function ManagerDashboard({
       setSelectedPeriodId(openPeriod ? openPeriod.id : periods[0].id);
     }
   }, [periods]);
+
+  useEffect(() => {
+    if (selectedProjectId && currentPeriod) {
+      const currentProj = (projects || []).find((p) => p.id === selectedProjectId);
+      if (currentProj) {
+        const pType = currentProj.project_type || "weekly";
+        if (currentPeriod.report_type === "weekly" && !isLastWeek && pType === "monthly") {
+          setSelectedProjectId(0);
+        } else if (currentPeriod.report_type === "monthly" && pType !== "monthly") {
+          setSelectedProjectId(0);
+        }
+      }
+    }
+  }, [selectedPeriodId, currentPeriod, isLastWeek, projects, selectedProjectId]);
 
   const fetchSummary = async () => {
     if (!selectedPeriodId) return;
@@ -401,7 +1058,7 @@ export default function ManagerDashboard({
     bubbleGroupBy,
   ]);
 
-  const handleRunAiAnalysis = async () => {
+  const handleRunAiAnalysis = async (forceRefresh = false) => {
     if (!summaryData || !summaryData.rows) return;
 
     const submittedReports = (summaryData.rows || [])
@@ -423,8 +1080,11 @@ export default function ManagerDashboard({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          period_id: summaryData.period ? summaryData.period.id : selectedPeriodId,
           period_title: summaryData.period ? summaryData.period.title : "دوره جاری",
+          period_end: summaryData.period ? summaryData.period.period_end : undefined,
           reports: submittedReports,
+          force_refresh: forceRefresh,
         }),
       });
 
@@ -465,7 +1125,9 @@ export default function ManagerDashboard({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          period_id: summaryData.period ? summaryData.period.id : selectedPeriodId,
           period_title: summaryData.period ? summaryData.period.title : "دوره جاری",
+          period_end: summaryData.period ? summaryData.period.period_end : undefined,
           reports: submittedReports,
           manager_comment: managerComment.trim(),
           previous_analysis: aiAnalysis,
@@ -699,10 +1361,16 @@ export default function ManagerDashboard({
     </div>
 
     <div class="card">
-      <div class="card-title">📈 خلاصه مدیریتی عملکرد سازمان</div>
-      <p style="font-size: 11.5px; color: #334155; line-height: 1.8; text-align: justify; white-space: pre-line;">
-        ${aiAnalysis.executive_summary}
-      </p>
+      <div class="card-title">📈 خلاصه مدیریتی عملکرد سازمان (به تفکیک معاونت‌ها)</div>
+      ${Array.isArray(aiAnalysis.executive_summary)
+        ? aiAnalysis.executive_summary.map((dep: any) => `
+            <div style="margin-bottom: 10px; padding: 8px 10px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;">
+              <div style="font-weight: 700; font-size: 11px; color: #0f172a; margin-bottom: 4px;">🏢 ${dep.deputy_name || "معاونت"}</div>
+              <div style="font-size: 10.5px; color: #334155; line-height: 1.7; text-align: justify;">${dep.summary}</div>
+            </div>
+          `).join("")
+        : `<p style="font-size: 11.5px; color: #334155; line-height: 1.8; text-align: justify; white-space: pre-line;">${aiAnalysis.executive_summary}</p>`
+      }
     </div>
   </div>
 
@@ -734,10 +1402,20 @@ export default function ManagerDashboard({
     </div>
 
     <div class="card">
-      <div class="card-title">💡 پیشنهادات و اقدام‌ها</div>
-      ${(aiAnalysis.actionable_recommendations || [])
-        .map((rec: string) => `<div class="list-item rec">${rec}</div>`)
-        .join("")}
+      <div class="card-title">⏳ اقدامات انجام‌نشده و معوق پروژه‌ها</div>
+      ${aiAnalysis.uncompleted_actions && aiAnalysis.uncompleted_actions.length > 0
+        ? aiAnalysis.uncompleted_actions.map((act: any) => `
+            <div class="risk-item" style="border-right-color: #f43f5e; background: #fff1f2;">
+              <div class="risk-header">
+                <span style="font-weight: 700; color: #9f1239;">${act.project_title}</span>
+                ${act.target_date ? `<span class="risk-badge" style="background: #ffe4e6; color: #be123c;">موعد: ${ensureShamsiDate(act.target_date)}</span>` : ""}
+              </div>
+              <div style="color: #334155; font-size: 10.5px; margin-top: 3px; line-height: 1.6;">${act.action_text}</div>
+              ${act.deputy_name ? `<div style="color: #64748b; font-size: 9.5px; margin-top: 4px;">حوزه مسئول: ${act.deputy_name}</div>` : ""}
+            </div>
+          `).join("")
+        : (aiAnalysis.actionable_recommendations || []).map((rec: string) => `<div class="list-item rec">${rec}</div>`).join("")
+      }
     </div>
   </div>
 
@@ -770,6 +1448,7 @@ export default function ManagerDashboard({
       if (!acc[pTitle]) {
         acc[pTitle] = {
           project_title: pTitle,
+          project_type: row.project_type || "weekly",
           total_staff: 0,
           submitted_count: 0,
           late_count: 0,
@@ -840,12 +1519,18 @@ export default function ManagerDashboard({
       statusLabel = "دارای گزارش تأخیری";
     }
 
+    // نسبت گزارش‌های تحویل‌شده به کل پروژه‌ها (برای رنگ‌بندی نسبتی حباب)
+    const totalProjects = person.projects.length;
+    const completionRatio =
+      totalProjects > 0 ? submittedCount / totalProjects : 0;
+
     return {
       ...person,
       submitted_count: submittedCount,
       late_count: lateCount,
       missing_count: missingCount,
-      total_projects: person.projects.length,
+      total_projects: totalProjects,
+      completion_ratio: completionRatio,
       status_key: statusKey,
       status_label: statusLabel,
     };
@@ -915,7 +1600,19 @@ export default function ManagerDashboard({
               onChange={(v) => setSelectedProjectId(Number(v))}
               options={[
                 { value: 0, label: "همه پروژه‌ها" },
-                ...(projects || []).map((p) => ({ value: p.id, label: p.title })),
+                ...(projects || [])
+                  .filter((p) => p.is_active !== false)
+                  .filter((p) => {
+                    if (!currentPeriod) return true;
+                    if (currentPeriod.report_type === "weekly" && !isLastWeek) {
+                      return (p.project_type || "weekly") === "weekly";
+                    }
+                    if (currentPeriod.report_type === "monthly") {
+                      return (p.project_type || "weekly") === "monthly";
+                    }
+                    return true;
+                  })
+                  .map((p) => ({ value: p.id, label: p.title })),
               ]}
             />
             <CustomSelect
@@ -997,7 +1694,7 @@ export default function ManagerDashboard({
           </div>
 
           <button
-            onClick={handleRunAiAnalysis}
+            onClick={() => handleRunAiAnalysis(Boolean(aiAnalysis))}
             disabled={aiLoading || loading}
             className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold px-5 py-2.5 rounded-2xl transition-all cursor-pointer flex items-center gap-2 text-xs shadow-md disabled:opacity-50 shrink-0"
           >
@@ -1009,7 +1706,7 @@ export default function ManagerDashboard({
             ) : (
               <>
                 <Sparkles className="w-4 h-4" />
-                <span>تحلیل هوشمند کارهای این دوره</span>
+                <span>{aiAnalysis ? "تولید مجدد تحلیل از ابتدا" : "تحلیل هوشمند کارهای این دوره"}</span>
               </>
             )}
           </button>
@@ -1155,14 +1852,38 @@ export default function ManagerDashboard({
               </div>
             </div>
 
-            <div className="md:col-span-8 bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-3">
-              <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2 border-b border-slate-100 pb-3">
-                <TrendingUp className="w-4 h-4 text-emerald-700" />
-                <span>خلاصه مدیریتی عملکرد سازمان</span>
+            <div className="md:col-span-8 bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-4">
+              <h4 className="font-bold text-slate-900 text-sm flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <TrendingUp className="w-4 h-4 text-emerald-700" />
+                  <span>خلاصه مدیریتی عملکرد سازمان (به تفکیک معاونت‌ها)</span>
+                </div>
+                {Array.isArray(aiAnalysis.executive_summary) && (
+                  <span className="text-[11px] font-medium text-slate-500 bg-slate-50 px-2.5 py-0.5 rounded-full border border-slate-200/60">
+                    {toPersianDigits(aiAnalysis.executive_summary.length)} معاونت / واحد سازمانی
+                  </span>
+                )}
               </h4>
-              <p className="text-slate-600 text-xs leading-relaxed whitespace-pre-line">
-                {aiAnalysis.executive_summary}
-              </p>
+              
+              {Array.isArray(aiAnalysis.executive_summary) ? (
+                <div className="space-y-3 max-h-[380px] overflow-y-auto pr-1">
+                  {aiAnalysis.executive_summary.map((dep, idx) => (
+                    <div key={idx} className="p-3.5 rounded-2xl bg-slate-50/80 border border-slate-200/60 space-y-1.5 transition-all hover:bg-slate-50">
+                      <div className="flex items-center gap-2">
+                        <Building2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span className="font-bold text-slate-800 text-xs">{dep.deputy_name || "معاونت نامشخص"}</span>
+                      </div>
+                      <p className="text-slate-600 text-xs leading-relaxed text-justify whitespace-pre-line">
+                        {dep.summary}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-slate-600 text-xs leading-relaxed whitespace-pre-line text-justify">
+                  {aiAnalysis.executive_summary}
+                </p>
+              )}
             </div>
           </div>
 
@@ -1207,18 +1928,65 @@ export default function ManagerDashboard({
             </div>
 
             <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs space-y-3">
-              <h4 className="font-bold text-slate-900 text-xs flex items-center gap-2 border-b border-slate-100 pb-2">
-                <Lightbulb className="w-4 h-4 text-amber-500" />
-                <span>پیشنهادات و اقدام‌های پیشنهادی</span>
+              <h4 className="font-bold text-slate-900 text-xs flex items-center justify-between border-b border-slate-100 pb-2">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-rose-500" />
+                  <span>اقدامات انجام‌نشده و معوق پروژه‌ها</span>
+                </div>
+                {((aiAnalysis.uncompleted_actions && aiAnalysis.uncompleted_actions.length > 0) ||
+                  (aiAnalysis.actionable_recommendations && aiAnalysis.actionable_recommendations.length > 0)) && (
+                  <span className="text-[10px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md border border-rose-100">
+                    {toPersianDigits(
+                      (aiAnalysis.uncompleted_actions && aiAnalysis.uncompleted_actions.length > 0)
+                        ? aiAnalysis.uncompleted_actions.length
+                        : (aiAnalysis.actionable_recommendations || []).length
+                    )} اقدام
+                  </span>
+                )}
               </h4>
-              <ul className="space-y-2 text-xs text-slate-600">
-                {(aiAnalysis.actionable_recommendations || []).map((rec, idx) => (
-                  <li key={idx} className="flex items-start gap-2 bg-amber-50/40 p-2.5 rounded-xl border border-amber-100/50 leading-relaxed">
-                    <span className="w-1.5 h-1.5 bg-amber-500 rounded-full mt-1.5 shrink-0"></span>
-                    <span>{rec}</span>
-                  </li>
-                ))}
-              </ul>
+
+              {aiAnalysis.uncompleted_actions && aiAnalysis.uncompleted_actions.length > 0 ? (
+                <div className="space-y-2.5 max-h-[340px] overflow-y-auto pr-1 text-xs">
+                  {aiAnalysis.uncompleted_actions.map((act, idx) => (
+                    <div key={idx} className="p-3 rounded-xl bg-rose-50/40 border border-rose-100/70 space-y-1.5 transition-all hover:bg-rose-50/70">
+                      <div className="flex justify-between items-start gap-2">
+                        <span className="font-bold text-slate-800 text-[11px] leading-tight">
+                          {act.project_title}
+                        </span>
+                        {act.target_date && (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-100 text-rose-700 shrink-0">
+                            موعد: {ensureShamsiDate(act.target_date)}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-slate-700 text-[11px] leading-relaxed">
+                        {act.action_text}
+                      </p>
+                      <div className="flex flex-wrap items-center justify-between gap-1 pt-1 text-[10px] text-slate-400 border-t border-rose-100/40">
+                        {act.deputy_name && (
+                          <span className="text-slate-500 font-medium">حوزه: {act.deputy_name}</span>
+                        )}
+                        {act.delay_status && (
+                          <span className="text-rose-600/90 font-medium">{act.delay_status}</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (aiAnalysis.actionable_recommendations && aiAnalysis.actionable_recommendations.length > 0) ? (
+                <ul className="space-y-2 text-xs text-slate-600">
+                  {aiAnalysis.actionable_recommendations.map((rec, idx) => (
+                    <li key={idx} className="flex items-start gap-2 bg-rose-50/40 p-2.5 rounded-xl border border-rose-100/50 leading-relaxed">
+                      <span className="w-1.5 h-1.5 bg-rose-500 rounded-full mt-1.5 shrink-0"></span>
+                      <span>{rec}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="p-4 text-center text-xs text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                  هیچ اقدام معوق یا انجام‌نشده‌ای برای این دوره یافت نشد.
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1359,28 +2127,55 @@ export default function ManagerDashboard({
                 {/* لایه اول: حباب‌های پرسنل */}
                 <div className="flex flex-wrap items-center justify-center gap-8 md:gap-12 pt-10">
                   {filteredUserRows.map((person: any, idx: number) => {
-                    const isSubmitted =
-                      person.status_key === "submitted";
-
                     const isLate =
                       person.status_key === "late";
 
                     const isExpanded =
                       expandedUserKey === person.user_key;
 
-                    const bubbleColor = isSubmitted
-                      ? "from-emerald-500 to-teal-600 shadow-emerald-500/40 border-emerald-400/50"
-                      : isLate
-                      ? "from-amber-500 to-yellow-600 shadow-amber-500/40 border-amber-400/50"
-                      : "from-rose-600 to-red-700 shadow-rose-600/40 border-rose-400/50";
+                    const completionRatio =
+                      typeof person.completion_ratio === "number"
+                        ? person.completion_ratio
+                        : 0;
 
-                    const icon = isSubmitted ? (
-                      <CheckCircle2 className="w-5 h-5 text-white" />
-                    ) : isLate ? (
-                      <AlertTriangle className="w-5 h-5 text-white" />
-                    ) : (
-                      <ShieldAlert className="w-5 h-5 text-white" />
+                    // قاچ‌بندی حباب: هر قاچ = یک پروژه، رنگ قاچ از وضعیت همان پروژه
+                    const sliceSegments = (person.projects || []).map(
+                      (p: any) => p.status_key
                     );
+                    const totalSlices = sliceSegments.length || 1;
+                    const sliceAngle = 360 / totalSlices;
+                    let sliceAcc = 0;
+                    const conicStops = sliceSegments.map((sk: string) => {
+                      const from = sliceAcc;
+                      sliceAcc += sliceAngle;
+                      const c =
+                        sk === "submitted"
+                          ? "#10b981" // سبز: تحویل‌شده
+                          : sk === "late"
+                          ? "#f59e0b" // کهربایی: تأخیری
+                          : "#e11d48"; // قرمز: فاقد گزارش
+                      return `${c} ${from}deg ${from + sliceAngle}deg`;
+                    });
+                    const conicBackground = conicStops.length
+                      ? `conic-gradient(${conicStops.join(", ")})`
+                      : "#e11d48";
+
+                    // کادر و هاله: بدترین وضعیت بین پروژه‌های این شخص
+                    const worstColor =
+                      person.status_key === "submitted"
+                        ? "#34d399" // سبز
+                        : person.status_key === "late"
+                        ? "#fbbf24" // کهربایی
+                        : "#fb7185"; // قرمز
+
+                    const icon =
+                      completionRatio >= 1 ? (
+                        <CheckCircle2 className="w-5 h-5 text-white" />
+                      ) : isLate ? (
+                        <AlertTriangle className="w-5 h-5 text-white" />
+                      ) : (
+                        <ShieldAlert className="w-5 h-5 text-white" />
+                      );
 
                     return (
                       <div
@@ -1401,13 +2196,14 @@ export default function ManagerDashboard({
                             animationDuration: `${
                               3.5 + (idx % 3) * 0.5
                             }s`,
+                            background: conicBackground,
+                            boxShadow: `0 20px 40px -10px ${worstColor}80`,
+                            borderColor: `${worstColor}b3`,
                           }}
                           className={`
                             bubble-floating
                             w-36 h-36 md:w-40 md:h-40
                             rounded-full
-                            bg-gradient-to-br
-                            ${bubbleColor}
                             border-2 shadow-2xl
                             flex flex-col items-center justify-center
                             text-center p-3 text-white
@@ -1468,14 +2264,32 @@ export default function ManagerDashboard({
                         </p>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => setExpandedUserKey(null)}
-                        className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-2 rounded-xl text-[11px] font-bold transition-colors cursor-pointer"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                        بستن پروژه‌ها
-                      </button>
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedDeputyForAi({
+                              deputy_name: expandedPerson.deputy_name || expandedPerson.user_job_title || expandedPerson.user_full_name,
+                              user_id: expandedPerson.user_id,
+                              user_full_name: expandedPerson.user_full_name,
+                            });
+                            setDeputyAiModalOpen(true);
+                          }}
+                          className="flex items-center gap-2 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 hover:from-amber-600 hover:to-orange-700 text-white shadow-lg shadow-amber-500/25 px-4 py-2 rounded-xl text-xs font-black transition-all hover:scale-105 cursor-pointer active:scale-95 border border-amber-400/40"
+                        >
+                          <Sparkles className="w-4 h-4 text-amber-200 animate-pulse" />
+                          <span>تحلیل هوشمند این معاونت</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setExpandedUserKey(null)}
+                          className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-2 rounded-xl text-[11px] font-bold transition-colors cursor-pointer"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                          بستن پروژه‌ها
+                        </button>
+                      </div>
                     </div>
 
                     <div className="flex flex-wrap items-center justify-center gap-7 md:gap-10">
@@ -1554,8 +2368,33 @@ export default function ManagerDashboard({
             projectAggregatedRows.length === 0 ? (
               <div className="text-slate-400 text-xs text-center">هیچ پروژه‌ای یافت نشد.</div>
             ) : (
-              <div className="relative z-10 w-full flex flex-wrap items-center justify-center gap-10 md:gap-14 pt-16 pb-8">
-                {projectAggregatedRows.map((proj: any, idx: number) => {
+              <div className="relative z-10 w-full space-y-12">
+                {([
+                  { type: "weekly", label: "پروژه‌های هفتگی" },
+                  { type: "monthly", label: "پروژه‌های ماهانه" },
+                ] as const).map((section) => {
+                  const sectionProjects = projectAggregatedRows.filter(
+                    (proj: any) => (proj.project_type || "weekly") === section.type
+                  );
+                  if (sectionProjects.length === 0) return null;
+
+                  return (
+                    <div key={section.type}>
+                      <div className="flex items-center justify-center gap-3 mb-6 pt-4">
+                        <span className="h-px w-16 bg-slate-700/60"></span>
+                        <span
+                          className={`text-xs font-black px-4 py-1.5 rounded-full border ${
+                            section.type === "monthly"
+                              ? "bg-indigo-500/15 text-indigo-300 border-indigo-500/30"
+                              : "bg-sky-500/15 text-sky-300 border-sky-500/30"
+                          }`}
+                        >
+                          {section.label}
+                        </span>
+                        <span className="h-px w-16 bg-slate-700/60"></span>
+                      </div>
+                      <div className="flex flex-wrap items-center justify-center gap-10 md:gap-14">
+                {sectionProjects.map((proj: any, idx: number) => {
                   const healthPercent = Math.round(((proj.submitted_count + proj.late_count) / proj.total_staff) * 100) || 0;
                   
                   const isHighHealth = healthPercent >= 80;
@@ -1619,6 +2458,10 @@ export default function ManagerDashboard({
                         </div>
                       </div>
 
+                    </div>
+                  );
+                })}
+                      </div>
                     </div>
                   );
                 })}
@@ -1703,12 +2546,23 @@ export default function ManagerDashboard({
         onClose={() => setAuditModalOpen(false)}
       />
 
+      {/* 🏢 رندر مودال تحلیل هوشمند تفکیکی معاونت */}
+      <DeputyAiAnalysisModal
+        isOpen={deputyAiModalOpen}
+        onClose={() => setDeputyAiModalOpen(false)}
+        periodId={selectedPeriodId}
+        periodTitle={summaryData?.period?.title || "دوره جاری"}
+        deputyName={selectedDeputyForAi?.deputy_name || ""}
+        userId={selectedDeputyForAi?.user_id || null}
+        deputyManagerName={selectedDeputyForAi?.user_full_name || ""}
+      />
+
       {/* 📄 رندر مودال خروجی PDF جامع تمام گزارش‌ها */}
       <ReportsPdfDocument
         isOpen={pdfModalOpen}
         onClose={() => setPdfModalOpen(false)}
         periods={periods}
-        projects={projects}
+        projects={(projects || []).filter((p) => p.is_active !== false)}
         users={users}
         defaultPeriodId={selectedPeriodId}
       />

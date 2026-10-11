@@ -1,5 +1,5 @@
 // src/App.tsx
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { User, Project, ReportPeriod, Report, DeadlineSetting } from "./types";
 import Sidebar from "./components/sidebar";
 import Login from "./views/Login";
@@ -11,15 +11,10 @@ import HomeDashboard from "./views/HomeDashboard";
 import SubmitReport from "./views/SubmitReport";
 import MyReports from "./views/MyReports";
 import ManagerDashboard from "./views/ManagerDashboard";
-import ManageProjects from "./views/ManageProjects";
-import DeadlineSettings from "./views/DeadlineSettings";
+import ManageProjectsHub from "./views/ManageProjectsHub";
 import ManageUsers from "./views/ManageUsers";
 import ReportPeriods from "./views/ReportPeriods";
-import ProjectAllocations from "./views/ProjectAllocations";
-import ProjectKpiManagement from "./views/ProjectKpiManagement";
-import ProjectKpiAnalytics from "./views/ProjectKpiAnalytics";
-import WbsUpload from "./views/WbsUpload";
-import WbsViewer from "./views/WbsViewer";
+import ProjectKpiHub from "./views/ProjectKpiHub";
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -37,12 +32,15 @@ export default function App() {
   const [deadlineSettings, setDeadlineSettings] = useState<DeadlineSetting[]>([]);
   const [allReports, setAllReports] = useState<Report[]>([]);
 
+  // منحصراً پروژه‌های فعال برای کلیه فرم‌ها، داشبوردها و فیلترها
+  const activeProjects = useMemo(() => projects.filter((p) => p.is_active !== false), [projects]);
+
   // لود دیتای سراسری از بک‌اند
   const fetchData = async () => {
     try {
       const [uRes, pRes, peRes, dRes, rRes] = await Promise.all([
         fetch("/api/users"),
-        fetch("/api/projects"),
+        fetch("/api/projects?include_inactive=true"),
         fetch("/api/report-periods"),
         fetch("/api/deadline-settings"),
         fetch("/api/reports"),
@@ -54,6 +52,21 @@ export default function App() {
       if (rRes.ok) setAllReports(await rRes.json());
     } catch (err) {
       console.error("Error fetching data:", err);
+    }
+  };
+
+  // به‌روزرسانی سریع لوکال بدون ارسال درخواست‌های سنگین و موازی (PERF-001)
+  const handleReportUpsert = (newOrUpdatedReport?: any) => {
+    if (newOrUpdatedReport && newOrUpdatedReport.id) {
+      setAllReports((prev) => {
+        const exists = prev.some((r) => r.id === newOrUpdatedReport.id);
+        if (exists) {
+          return prev.map((r) => (r.id === newOrUpdatedReport.id ? newOrUpdatedReport : r));
+        }
+        return [newOrUpdatedReport, ...prev];
+      });
+    } else {
+      fetchData();
     }
   };
 
@@ -135,13 +148,13 @@ export default function App() {
       {/* سایدبار ناوبری سیستم */}
       <Sidebar user={user} currentView={currentView} setCurrentView={setCurrentView} onLogout={handleLogout} />
 
-      {/* بخش نمایش داینامیک ویوها براساس انتخاب کاربر */}
-      <main className="flex-1 p-6 md:p-8 max-w-7xl mx-auto w-full overflow-y-auto h-screen">
+      {/* بخش نمایش داینامیک ویوها براساس ابعاد مانیتور (تمام‌عرض با پدینگ واکنش‌گرا) */}
+      <main className="flex-1 p-4 sm:p-6 lg:p-8 w-full max-w-full overflow-x-hidden min-w-0">
         {currentView === "home" && (
           <HomeDashboard
             user={user}
             users={users}
-            projects={projects}
+            projects={activeProjects}
             periods={periods}
             allReports={allReports}
           />
@@ -149,12 +162,12 @@ export default function App() {
 
         {currentView === "submit_report" && (
           <SubmitReport
-            projects={projects}
+            projects={activeProjects}
             periods={periods}
             user={user}
             allReports={allReports}
-            onRefresh={fetchData}
-            onNavigate={(view) => setCurrentView(view)} // 🟢 اصلاح‌شده به setCurrentView
+            onRefresh={handleReportUpsert}
+            onNavigate={(view) => setCurrentView(view)}
           />
         )}
 
@@ -162,26 +175,61 @@ export default function App() {
           <MyReports
             currentUser={user}
             reports={allReports}
-            projects={projects}
+            projects={activeProjects}
             periods={periods}
-            onRefresh={fetchData}
+            onRefresh={handleReportUpsert}
           />
         )}
-        {currentView === "wbs_upload" && (
-          <WbsUpload projects={projects} />
-        )}
+
         {/* روت‌های مدیریتی */}
         {user.role === "manager" && (
           <>
-            {currentView === "manager_dashboard" && <ManagerDashboard periods={periods} projects={projects} users={users} />}
-            {currentView === "manage_projects" && <ManageProjects projects={projects} onRefresh={fetchData} />}
-            {currentView === "deadline_settings" && <DeadlineSettings settings={deadlineSettings} onRefresh={fetchData} />}
-            {currentView === "manage_users" && <ManageUsers users={users} onRefresh={fetchData} />}
-            {currentView === "report_periods" && <ReportPeriods periods={periods} onRefresh={fetchData} />}
-            {currentView === "project_allocations" && <ProjectAllocations users={users} projects={projects} />}
-            {currentView === "project_kpi_management" && <ProjectKpiManagement projects={projects} onRefresh={fetchData} />}
-            {currentView === "project_kpi_analytics" && <ProjectKpiAnalytics projects={projects} />}
-            {currentView === "wbs_viewer" && <WbsViewer />}
+            {currentView === "manager_dashboard" && (
+              <ManagerDashboard periods={periods} projects={activeProjects} users={users} />
+            )}
+            {(currentView === "manage_projects" || currentView === "project_allocations" || currentView === "wbs") && (
+              <ManageProjectsHub
+                projects={projects}
+                users={users}
+                onRefresh={fetchData}
+                initialTab={
+                  currentView === "project_allocations"
+                    ? "allocations"
+                    : currentView === "wbs"
+                    ? "wbs"
+                    : "projects"
+                }
+              />
+            )}
+            {(currentView === "report_periods" || currentView === "deadline_settings") && (
+              <ReportPeriods
+                periods={periods}
+                deadlineSettings={deadlineSettings}
+                onRefresh={fetchData}
+                initialTab={currentView === "deadline_settings" ? "settings" : "periods"}
+              />
+            )}
+            {(currentView === "project_kpis" ||
+              currentView === "project_kpi_management" ||
+              currentView === "project_kpi_analytics" ||
+              currentView === "composite_kpis") && (
+              <ProjectKpiHub
+                projects={activeProjects}
+                onRefresh={fetchData}
+                currentUser={user}
+                initialTab={
+                  currentView === "project_kpi_management"
+                    ? "management"
+                    : currentView === "composite_kpis"
+                    ? "composite"
+                    : "analytics"
+                }
+              />
+            )}
+            {currentView === "manage_users" && (
+              <ManageUsers users={users} onRefresh={fetchData} />
+            )}
+>>>>>>> main
           </>
         )}
       </main>

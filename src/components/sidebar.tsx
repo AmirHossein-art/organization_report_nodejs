@@ -5,16 +5,14 @@ import {
   ClipboardList,
   FileText,
   BarChart3,
-  Clock,
   Users,
   Calendar,
-  Settings,
   LogOut,
   Menu,
+  X,
   Target,
-  TrendingUp,
-  Upload,
-  ListTree,
+  ChevronRight,
+  ChevronLeft,
 } from "lucide-react";
 import { User } from "../types";
 
@@ -27,237 +25,381 @@ interface SidebarProps {
 
 export default function Sidebar({ user, currentView, setCurrentView, onLogout }: SidebarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("report_sidebar_collapsed") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleCollapse = () => {
+    setIsCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("report_sidebar_collapsed", String(next));
+      } catch (_) {}
+      return next;
+    });
+  };
+
+  // کمکی برای تشخیص فعال بودن تب‌های ادغام‌شده
+  const handleNavClick = (view: string) => {
+    setCurrentView(view);
+    setMobileMenuOpen(false);
+  };
+
+  const isProjectsActive =
+    currentView === "manage_projects" ||
+    currentView === "project_allocations" ||
+    currentView === "wbs";
+  const isCalendarActive = currentView === "report_periods" || currentView === "deadline_settings";
+  const isKpiActive =
+    currentView === "project_kpis" ||
+    currentView === "project_kpi_management" ||
+    currentView === "project_kpi_analytics" ||
+    currentView === "composite_kpis";
 
   return (
     <>
-      {/* Mobile Top Header - دقیقاً مطابق با ساختار کدهای اصلی */}
-      <header className="md:hidden bg-slate-900 text-white px-4 py-3 flex items-center justify-between shadow-md">
-        <div className="flex items-center gap-2">
-          <img src="/logo.png" alt="لوگوی سازمان" className="h-10 w-10 object-contain inline-block" />
-          <span className="font-bold text-lg">پیگیری استراتژیک سازمانی</span>
+      {/* ============================================================== */}
+      {/* 📱 ۱. هدر بالای صفحه در گوشی موبایل (کاملاً مستقل و زیبا) */}
+      {/* ============================================================== */}
+      <header className="md:hidden bg-slate-900 text-white px-4 py-3 flex items-center justify-between shadow-md sticky top-0 z-40 border-b border-slate-800">
+        <div className="flex items-center gap-2.5">
+          <img src="/logo.png" alt="لوگوی سازمان" className="h-10 w-10 object-contain shrink-0" />
+          <div>
+            <span className="font-extrabold text-sm block leading-tight">پیگیری استراتژیک سازمانی</span>
+            <span className="text-[11px] text-slate-400 block font-normal">پورتال خدمات هوشمند</span>
+          </div>
         </div>
         <button
-          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          className="p-1 hover:bg-slate-800 rounded transition-colors"
+          onClick={() => setMobileMenuOpen(true)}
+          className="p-2 hover:bg-slate-800 rounded-xl transition-colors cursor-pointer text-slate-200 hover:text-white"
+          aria-label="باز کردن منو"
         >
           <Menu className="w-6 h-6" />
         </button>
       </header>
 
-      {/* Sidebar Navigation */}
+      {/* منوی کشویی در موبایل (با دراور استاندارد و خوانا) */}
+      {mobileMenuOpen && (
+        <div className="md:hidden fixed inset-0 z-50 flex" dir="rtl">
+          {/* پس‌زمینه تیره و مات */}
+          <div
+            className="fixed inset-0 bg-slate-950/75 backdrop-blur-xs transition-opacity"
+            onClick={() => setMobileMenuOpen(false)}
+          />
+
+          {/* دراور موبایل */}
+          <aside className="relative w-72 max-w-[85vw] bg-slate-900 text-slate-200 z-10 flex flex-col shadow-2xl border-l border-slate-800 h-full overflow-hidden">
+            {/* هدر دراور موبایل */}
+            <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/80">
+              <div className="flex items-center gap-2.5">
+                <img src="/logo.png" alt="لوگو" className="h-10 w-10 object-contain" />
+                <div>
+                  <span className="font-extrabold text-sm text-white block">پیگیری استراتژیک</span>
+                  <span className="text-[10px] text-slate-400 block">پورتال هوشمند</span>
+                </div>
+              </div>
+              <button
+                onClick={() => setMobileMenuOpen(false)}
+                className="p-1.5 rounded-xl hover:bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* مشخصات کاربر در موبایل (بدون دایره «ع») */}
+            <div className="p-4 bg-slate-950/50 border-b border-slate-800 text-right">
+              <h4 className="font-extrabold text-white text-sm">{user.full_name}</h4>
+              <p className="text-xs text-slate-400 mt-1 font-medium">
+                نقش: {user.role === "manager" ? "مدیر سیستم" : "کاربر عادی"}
+              </p>
+            </div>
+
+            {/* لیست گزینه‌های منو در موبایل */}
+            <nav className="flex-1 p-3 space-y-1.5 overflow-y-auto font-sans">
+              <button
+                onClick={() => handleNavClick("home")}
+                className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-2xl text-sm font-semibold transition-colors text-right cursor-pointer ${
+                  currentView === "home" ? "bg-white/10 text-amber-400 font-bold" : "hover:bg-white/5 text-slate-300"
+                }`}
+              >
+                <Folder className="w-5 h-5 shrink-0 text-amber-400" />
+                <span>پیشخوان کاربری</span>
+              </button>
+
+              <button
+                onClick={() => handleNavClick("submit_report")}
+                className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-2xl text-sm font-semibold transition-colors text-right cursor-pointer ${
+                  currentView === "submit_report" ? "bg-white/10 text-amber-400 font-bold" : "hover:bg-white/5 text-slate-300"
+                }`}
+              >
+                <ClipboardList className="w-5 h-5 shrink-0" />
+                <span>ثبت گزارش عملکرد</span>
+              </button>
+
+              <button
+                onClick={() => handleNavClick("my_reports")}
+                className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-2xl text-sm font-semibold transition-colors text-right cursor-pointer ${
+                  currentView === "my_reports" ? "bg-white/10 text-amber-400 font-bold" : "hover:bg-white/5 text-slate-300"
+                }`}
+              >
+                <FileText className="w-5 h-5 shrink-0" />
+                <span>گزارش‌های من</span>
+              </button>
+
+              {user.role === "manager" && (
+                <>
+                  <div className="pt-3 pb-1 px-3 text-xs uppercase tracking-wider font-bold text-slate-400 border-t border-slate-800 mt-2">
+                    بخش مدیریت سازمان
+                  </div>
+
+                  <button
+                    onClick={() => handleNavClick("manager_dashboard")}
+                    className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-2xl text-sm font-semibold transition-colors text-right cursor-pointer ${
+                      currentView === "manager_dashboard" ? "bg-white/10 text-amber-400 font-bold" : "hover:bg-white/5 text-slate-300"
+                    }`}
+                  >
+                    <BarChart3 className="w-5 h-5 shrink-0" />
+                    <span>داشبورد نظارتی مدیر</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleNavClick("manage_projects")}
+                    className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-2xl text-sm font-semibold transition-colors text-right cursor-pointer ${
+                      isProjectsActive ? "bg-white/10 text-amber-400 font-bold" : "hover:bg-white/5 text-slate-300"
+                    }`}
+                  >
+                    <Folder className="w-5 h-5 shrink-0" />
+                    <span>مدیریت پروژه‌ها</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleNavClick("report_periods")}
+                    className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-2xl text-sm font-semibold transition-colors text-right cursor-pointer ${
+                      isCalendarActive ? "bg-white/10 text-amber-400 font-bold" : "hover:bg-white/5 text-slate-300"
+                    }`}
+                  >
+                    <Calendar className="w-5 h-5 shrink-0" />
+                    <span>تقویم و مهلت‌های گزارش‌دهی</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleNavClick("project_kpis")}
+                    className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-2xl text-sm font-semibold transition-colors text-right cursor-pointer ${
+                      isKpiActive ? "bg-white/10 text-amber-400 font-bold" : "hover:bg-white/5 text-slate-300"
+                    }`}
+                  >
+                    <Target className="w-5 h-5 shrink-0" />
+                    <span>شاخص‌های عملکرد (KPI)</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleNavClick("manage_users")}
+                    className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-2xl text-sm font-semibold transition-colors text-right cursor-pointer ${
+                      currentView === "manage_users" ? "bg-white/10 text-amber-400 font-bold" : "hover:bg-white/5 text-slate-300"
+                    }`}
+                  >
+                    <Users className="w-5 h-5 shrink-0" />
+                    <span>مدیریت کاربران</span>
+                  </button>
+                </>
+              )}
+            </nav>
+
+            {/* دکمه خروج در موبایل */}
+            <div className="p-3 border-t border-slate-800 bg-slate-950/60">
+              <button
+                onClick={onLogout}
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-bold text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors cursor-pointer text-right"
+              >
+                <LogOut className="w-5 h-5 shrink-0" />
+                <span>خروج از حساب کاربری</span>
+              </button>
+            </div>
+          </aside>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* 🖥️ ۲. سایدبار دسکتاپ (ایستا، بدون Wiggle، با چیدمان عمودی آرم و دکمه) */}
+      {/* ============================================================== */}
       <aside
-        className={`${
-          mobileMenuOpen ? "block" : "hidden"
-        } md:block w-full md:w-64 bg-slate-900 text-slate-300 flex flex-col border-l border-slate-800 md:min-h-screen flex-shrink-0 z-30`}
+        className={`hidden md:flex md:sticky md:top-0 md:h-screen md:overflow-hidden bg-slate-900 text-slate-300 flex-col border-l border-slate-800 flex-shrink-0 z-30 transition-[width] duration-300 ease-in-out ${
+          isCollapsed ? "md:w-20" : "md:w-64"
+        }`}
       >
-        {/* Desktop Sidebar Header - پدینگ پدینگ p-6 و ابعاد h-15 اصلاح شد */}
-        <div className="p-6 hidden md:flex items-center gap-3 border-b border-slate-800">
-          <img src="/logo.png" alt="لوگوی سازمان" className="h-15 w-15 object-contain inline-block" />
-          <div>
-            <h1 className="font-bold text-white text-base">پیگیری استراتژیک سازمانی</h1>
-            <p className="text-xs text-slate-400 mt-0.5">پورتال خدمات هوشمند</p>
+        {/* هدر دسکتاپ: آرم سازمان در بالای دکمه، بدون له شدن یا تداخل */}
+        <div className="p-4 border-b border-slate-800 shrink-0 flex flex-col items-center">
+          {/* آرم سازمان در بالاترین نقطه */}
+          <div className="mb-2">
+            <img
+              src="/logo.png"
+              alt="لوگوی سازمان"
+              className={`object-contain transition-all duration-300 ${
+                isCollapsed ? "h-11 w-11 mx-auto" : "h-14 w-14 mx-auto"
+              }`}
+            />
           </div>
+
+          {/* عناوین پورتال در صورت باز بودن */}
+          {!isCollapsed && (
+            <div className="mb-3 text-center">
+              <h1 className="font-extrabold text-white text-base leading-snug">پیگیری استراتژیک سازمانی</h1>
+              <p className="text-xs text-slate-400 mt-0.5">پورتال خدمات هوشمند</p>
+            </div>
+          )}
+
+          {/* دکمه جمع و باز کردن سایدبار (دقیقاً در زیر آرم، بدون تداخل افقی) */}
+          <button
+            type="button"
+            onClick={toggleCollapse}
+            className={`rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-all cursor-pointer flex items-center justify-center ${
+              isCollapsed ? "w-10 h-8 mt-1" : "w-full py-1.5 px-3 gap-2 text-xs font-medium"
+            }`}
+            title={isCollapsed ? "باز کردن سایدبار" : "جمع کردن سایدبار"}
+          >
+            {isCollapsed ? (
+              <ChevronLeft className="w-4 h-4" />
+            ) : (
+              <>
+                <ChevronRight className="w-4 h-4" />
+                <span>جمع کردن سایدبار</span>
+              </>
+            )}
+          </button>
         </div>
 
-        {/* User Info Badge - پیشوند «نقش:» بازگردانده شد */}
-        <div className="p-4 bg-slate-950 border-b border-slate-800 flex items-center gap-3">
-          <div className="w-10 h-10 bg-slate-800 text-white rounded-full flex items-center justify-center font-bold">
-            {user.full_name.charAt(0)}
-          </div>
-          <div className="overflow-hidden">
-            <h4 className="font-semibold text-white text-sm truncate">{user.full_name}</h4>
-            <p className="text-xs text-slate-400 mt-0.5">
+        {/* مشخصات کاربر در دسکتاپ (بدون دایره «ع») */}
+        {!isCollapsed && (
+          <div className="px-4 py-3 bg-slate-950/70 border-b border-slate-800 text-right shrink-0">
+            <h4 className="font-extrabold text-white text-sm leading-snug truncate">
+              {user.full_name}
+            </h4>
+            <p className="text-xs text-slate-400 mt-0.5 truncate font-medium">
               نقش: {user.role === "manager" ? "مدیر سیستم" : "کاربر عادی"}
             </p>
           </div>
-        </div>
+        )}
 
-        {/* Navigation Links - به همراه تم طلایی به جای آبی برای وضعیت فعال */}
-        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+        {/* لینک‌های ناوبری دسکتاپ با فونت درشت‌تر (text-sm) و آیکون‌های متناسب (w-5 h-5) */}
+        <nav className="flex-1 p-2.5 space-y-1.5 overflow-y-auto overflow-x-hidden font-sans">
           {/* Public Views */}
           <button
-            onClick={() => {
-              setCurrentView("home");
-              setMobileMenuOpen(false);
-            }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
-              currentView === "home" ? "bg-white/10 text-amber-400 font-semibold" : "hover:bg-white/5 hover:text-white"
+            onClick={() => handleNavClick("home")}
+            title="پیشخوان کاربری"
+            className={`w-full flex items-center ${isCollapsed ? "justify-center px-0 py-3" : "gap-3 px-3.5 py-3"} rounded-2xl text-sm font-semibold transition-colors cursor-pointer ${
+              currentView === "home" ? "bg-white/10 text-amber-400 font-bold shadow-xs" : "hover:bg-white/5 hover:text-white"
             }`}
           >
-            <Folder className="w-4 h-4" />
-            <span>پیشخوان کاربری</span>
+            <Folder className="w-5 h-5 shrink-0 text-amber-400" />
+            {!isCollapsed && <span>پیشخوان کاربری</span>}
           </button>
 
           <button
-            onClick={() => {
-              setCurrentView("submit_report");
-              setMobileMenuOpen(false);
-            }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
-              currentView === "submit_report" ? "bg-white/10 text-amber-400 font-semibold" : "hover:bg-white/5 hover:text-white"
+            onClick={() => handleNavClick("submit_report")}
+            title="ثبت گزارش عملکرد"
+            className={`w-full flex items-center ${isCollapsed ? "justify-center px-0 py-3" : "gap-3 px-3.5 py-3"} rounded-2xl text-sm font-semibold transition-colors cursor-pointer ${
+              currentView === "submit_report" ? "bg-white/10 text-amber-400 font-bold shadow-xs" : "hover:bg-white/5 hover:text-white"
             }`}
           >
-            <ClipboardList className="w-4 h-4" />
-            <span> ثبت گزارش عملکرد</span>
-          </button>
-                    <button
-            onClick={() => {
-              setCurrentView("wbs_upload");
-              setMobileMenuOpen(false);
-            }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
-              currentView === "wbs_upload" ? "bg-white/10 text-amber-400 font-semibold" : "hover:bg-white/5 hover:text-white"
-            }`}
-          >
-            <Upload className="w-4 h-4" />
-            <span> بارگذاری ساختار شکست</span>
-          </button>
-          <button
-            onClick={() => {
-              setCurrentView("my_reports");
-              setMobileMenuOpen(false);
-            }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
-              currentView === "my_reports" ? "bg-white/10 text-amber-400 font-semibold" : "hover:bg-white/5 hover:text-white"
-            }`}
-          >
-            <FileText className="w-4 h-4" />
-            <span> گزارش‌های من</span>
+            <ClipboardList className="w-5 h-5 shrink-0" />
+            {!isCollapsed && <span>ثبت گزارش عملکرد</span>}
           </button>
 
-          {/* Manager-only Views - هدر تفکیک‌کننده بخش مدیریت مو به مو احیا شد */}
+          <button
+            onClick={() => handleNavClick("my_reports")}
+            title="گزارش‌های من"
+            className={`w-full flex items-center ${isCollapsed ? "justify-center px-0 py-3" : "gap-3 px-3.5 py-3"} rounded-2xl text-sm font-semibold transition-colors cursor-pointer ${
+              currentView === "my_reports" ? "bg-white/10 text-amber-400 font-bold shadow-xs" : "hover:bg-white/5 hover:text-white"
+            }`}
+          >
+            <FileText className="w-5 h-5 shrink-0" />
+            {!isCollapsed && <span>گزارش‌های من</span>}
+          </button>
+
+          {/* Manager-only Views */}
           {user.role === "manager" && (
             <>
-              <div className="pt-4 pb-2 text-[10px] uppercase tracking-wider font-bold text-slate-500 border-t border-slate-800 mt-4">
-                بخش مدیریت سازمان
-              </div>
+              {isCollapsed ? (
+                <div className="border-t border-slate-800 my-2" />
+              ) : (
+                <div className="pt-3 pb-1.5 px-3 text-xs uppercase tracking-wider font-bold text-slate-400 border-t border-slate-800 mt-2">
+                  بخش مدیریت سازمان
+                </div>
+              )}
 
               <button
-                onClick={() => {
-                  setCurrentView("manager_dashboard");
-                  setMobileMenuOpen(false);
-                }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
-                  currentView === "manager_dashboard" ? "bg-white/10 text-amber-400 font-semibold" : "hover:bg-white/5 hover:text-white"
+                onClick={() => handleNavClick("manager_dashboard")}
+                title="داشبورد نظارتی مدیر"
+                className={`w-full flex items-center ${isCollapsed ? "justify-center px-0 py-3" : "gap-3 px-3.5 py-3"} rounded-2xl text-sm font-semibold transition-colors cursor-pointer ${
+                  currentView === "manager_dashboard" ? "bg-white/10 text-amber-400 font-bold shadow-xs" : "hover:bg-white/5 hover:text-white"
                 }`}
               >
-                <BarChart3 className="w-4 h-4" />
-                <span> داشبورد نظارتی مدیر</span>
-              </button>
-              <button
-                onClick={() => {
-                  setCurrentView("wbs_viewer");
-                  setMobileMenuOpen(false);
-                }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
-                  currentView === "wbs_viewer" ? "bg-white/10 text-amber-400 font-semibold" : "hover:bg-white/5 hover:text-white"
-                }`}
-              >
-                <ListTree className="w-4 h-4" />
-                <span> مشاهده ساختار شکست پروژه‌ها</span>
-              </button>
-              <button
-                onClick={() => {
-                  setCurrentView("manage_projects");
-                  setMobileMenuOpen(false);
-                }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
-                  currentView === "manage_projects" ? "bg-white/10 text-amber-400 font-semibold" : "hover:bg-white/5 hover:text-white"
-                }`}
-              >
-                <Folder className="w-4 h-4" />
-                <span> مدیریت پروژه‌ها</span>
+                <BarChart3 className="w-5 h-5 shrink-0" />
+                {!isCollapsed && <span>داشبورد نظارتی مدیر</span>}
               </button>
 
               <button
-                onClick={() => {
-                  setCurrentView("deadline_settings");
-                  setMobileMenuOpen(false);
-                }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
-                  currentView === "deadline_settings" ? "bg-white/10 text-amber-400 font-semibold" : "hover:bg-white/5 hover:text-white"
+                onClick={() => handleNavClick("manage_projects")}
+                title="مدیریت پروژه‌ها"
+                className={`w-full flex items-center ${isCollapsed ? "justify-center px-0 py-3" : "gap-3 px-3.5 py-3"} rounded-2xl text-sm font-semibold transition-colors cursor-pointer ${
+                  isProjectsActive ? "bg-white/10 text-amber-400 font-bold shadow-xs" : "hover:bg-white/5 hover:text-white"
                 }`}
               >
-                <Clock className="w-4 h-4" />
-                <span> تنظیمات ددلاین</span>
+                <Folder className="w-5 h-5 shrink-0" />
+                {!isCollapsed && <span>مدیریت پروژه‌ها</span>}
+              </button>
+
+              {/* هاب تقویم و مهلت‌های گزارش‌دهی */}
+              <button
+                onClick={() => handleNavClick("report_periods")}
+                title="تقویم و مهلت‌های گزارش‌دهی"
+                className={`w-full flex items-center ${isCollapsed ? "justify-center px-0 py-3" : "gap-3 px-3.5 py-3"} rounded-2xl text-sm font-semibold transition-colors cursor-pointer ${
+                  isCalendarActive ? "bg-white/10 text-amber-400 font-bold shadow-xs" : "hover:bg-white/5 hover:text-white"
+                }`}
+              >
+                <Calendar className="w-5 h-5 shrink-0" />
+                {!isCollapsed && <span>تقویم و مهلت‌های گزارش‌دهی</span>}
+              </button>
+
+              {/* هاب شاخص‌های عملکرد (KPI) */}
+              <button
+                onClick={() => handleNavClick("project_kpis")}
+                title="شاخص‌های کلیدی عملکرد (KPI)"
+                className={`w-full flex items-center ${isCollapsed ? "justify-center px-0 py-3" : "gap-3 px-3.5 py-3"} rounded-2xl text-sm font-semibold transition-colors cursor-pointer ${
+                  isKpiActive ? "bg-white/10 text-amber-400 font-bold shadow-xs" : "hover:bg-white/5 hover:text-white"
+                }`}
+              >
+                <Target className="w-5 h-5 shrink-0" />
+                {!isCollapsed && <span>شاخص‌های عملکرد (KPI)</span>}
               </button>
 
               <button
-                onClick={() => {
-                  setCurrentView("manage_users");
-                  setMobileMenuOpen(false);
-                }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
-                  currentView === "manage_users" ? "bg-white/10 text-amber-400 font-semibold" : "hover:bg-white/5 hover:text-white"
+                onClick={() => handleNavClick("manage_users")}
+                title="مدیریت کاربران"
+                className={`w-full flex items-center ${isCollapsed ? "justify-center px-0 py-3" : "gap-3 px-3.5 py-3"} rounded-2xl text-sm font-semibold transition-colors cursor-pointer ${
+                  currentView === "manage_users" ? "bg-white/10 text-amber-400 font-bold" : "hover:bg-white/5 hover:text-white"
                 }`}
               >
-                <Users className="w-4 h-4" />
-                <span> مدیریت کاربران</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  setCurrentView("report_periods");
-                  setMobileMenuOpen(false);
-                }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
-                  currentView === "report_periods" ? "bg-white/10 text-amber-400 font-semibold" : "hover:bg-white/5 hover:text-white"
-                }`}
-              >
-                <Calendar className="w-4 h-4" />
-                <span> بازه‌های گزارش‌دهی</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  setCurrentView("project_allocations");
-                  setMobileMenuOpen(false);
-                }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
-                  currentView === "project_allocations" ? "bg-white/10 text-amber-400 font-semibold" : "hover:bg-white/5 hover:text-white"
-                }`}
-              >
-                <Settings className="w-4 h-4" />
-                <span> تخصیص پروژه به پرسنل</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  setCurrentView("project_kpi_management");
-                  setMobileMenuOpen(false);
-                }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
-                  currentView === "project_kpi_management" ? "bg-white/10 text-amber-400 font-semibold" : "hover:bg-white/5 hover:text-white"
-                }`}
-              >
-                <Target className="w-4 h-4" />
-                <span> مدیریت شاخص‌های KPI</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  setCurrentView("project_kpi_analytics");
-                  setMobileMenuOpen(false);
-                }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer ${
-                  currentView === "project_kpi_analytics" ? "bg-white/10 text-amber-400 font-semibold" : "hover:bg-white/5 hover:text-white"
-                }`}
-              >
-                <TrendingUp className="w-4 h-4" />
-                <span> تحلیل و روند شاخص‌ها</span>
+                <Users className="w-5 h-5 shrink-0" />
+                {!isCollapsed && <span>مدیریت کاربران</span>}
               </button>
             </>
           )}
         </nav>
 
-        {/* Sidebar Footer Logout */}
-        <div className="p-4 border-t border-slate-800">
+        {/* دکمه خروج در دسکتاپ */}
+        <div className={`p-3 border-t border-slate-800 shrink-0 ${isCollapsed ? "flex justify-center" : ""}`}>
           <button
             onClick={onLogout}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors cursor-pointer"
+            title="خروج از حساب کاربری"
+            className={`flex items-center ${isCollapsed ? "justify-center p-2.5" : "w-full gap-3 px-3.5 py-2.5"} rounded-2xl text-sm font-bold text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors cursor-pointer`}
           >
-            <LogOut className="w-4 h-4" />
-            <span>خروج از حساب</span>
+            <LogOut className="w-5 h-5 shrink-0" />
+            {!isCollapsed && <span>خروج از حساب</span>}
           </button>
         </div>
       </aside>

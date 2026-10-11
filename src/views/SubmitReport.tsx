@@ -1,5 +1,5 @@
 // src/views/SubmitReport.tsx
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { 
   Plus, 
   X, 
@@ -17,10 +17,13 @@ import {
   Square, 
   Crown, 
   Calendar, 
-  FileCheck2
+  FileCheck2,
+  Trash2
 } from "lucide-react";
 import { Project, ReportPeriod, User, Report } from "../types";
 import { CustomSelect, ShamsiDatePicker } from "../components";
+import { KpiInteractiveInput } from "../components/KpiInteractiveInput";
+import { isLastWeekOfShamsiMonth } from "../dateUtils";
 
 // 🌐 تبدیل اعداد به فارسی
 const toPersianDigits = (n: string | number | undefined | null): string => {
@@ -60,7 +63,7 @@ interface SubmitReportProps {
   periods: ReportPeriod[];
   user: User;
   allReports: Report[];
-  onRefresh: () => void;
+  onRefresh: (newReport?: any) => void;
   onNavigate?: (tab: string) => void; // 🟢 اضافه شدن پروپ تغییر تب
 }
 
@@ -70,7 +73,6 @@ interface NextActionInput {
 }
 
 export default function SubmitReport({ projects, periods, user, allReports, onRefresh, onNavigate }: SubmitReportProps) {
-  const [subReportType, setSubReportType] = useState<"weekly" | "monthly">("weekly");
   const [subPeriodId, setSubPeriodId] = useState<number>(0);
   const [subProjectId, setSubProjectId] = useState<number>(0);
   const [activitiesDone, setActivitiesDone] = useState("");
@@ -98,15 +100,13 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
     { action_text: "", target_date: "" }
   ]);
 
-  // تنظیم خودکار بازه زمانی باز متناسب با نوع گزارش
-  useEffect(() => {
-    const openP = periods.filter((p) => p.report_type === subReportType && p.is_open);
-    if (openP.length > 0) {
-      setSubPeriodId(openP[0].id);
-    } else {
-      setSubPeriodId(0);
-    }
-  }, [subReportType, periods]);
+  const currentPeriod = useMemo(() => {
+    return (periods || []).find((p) => p.id === subPeriodId);
+  }, [periods, subPeriodId]);
+
+  const isLastWeek = useMemo(() => {
+    return isLastWeekOfShamsiMonth(currentPeriod, periods);
+  }, [currentPeriod, periods]);
 
   // واکشی پروژه‌های تخصیص‌یافته به کاربر
   const [userAssignedProjects, setUserAssignedProjects] = useState<Project[]>([]);
@@ -120,12 +120,52 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
             .map((a) => a.project_id);
           const assigned = projects.filter((p) => myProjectIds.includes(p.id) && p.is_active);
           setUserAssignedProjects(assigned);
-          if (assigned.length > 0) {
-            setSubProjectId(assigned[0].id);
-          }
         });
     }
   }, [user, projects]);
+
+  // پروژه‌های مجاز برای انتخاب در این بازه:
+  // در هفته‌های عادی فقط پروژه‌های هفتگی، در هفته پایانی ماه هر دو
+  const availableProjects = useMemo(() => {
+    if (!currentPeriod) return userAssignedProjects;
+    if (currentPeriod.report_type === "weekly") {
+      if (!isLastWeek) {
+        return userAssignedProjects.filter((p) => (p.project_type || "weekly") === "weekly");
+      }
+      return userAssignedProjects;
+    }
+    if (currentPeriod.report_type === "monthly") {
+      return userAssignedProjects.filter((p) => (p.project_type || "weekly") === "monthly");
+    }
+    return userAssignedProjects;
+  }, [currentPeriod, isLastWeek, userAssignedProjects]);
+
+  const selectedProject = useMemo(() => {
+    return userAssignedProjects.find((p) => p.id === subProjectId);
+  }, [userAssignedProjects, subProjectId]);
+
+  const currentReportType: "weekly" | "monthly" = selectedProject?.project_type === "monthly" ? "monthly" : "weekly";
+
+  // تنظیم خودکار بازه زمانی باز
+  useEffect(() => {
+    const openP = (periods || []).filter((p) => p.is_open);
+    if (openP.length > 0) {
+      setSubPeriodId((prev) => (prev && openP.some((p) => p.id === prev) ? prev : openP[0].id));
+    } else {
+      setSubPeriodId(0);
+    }
+  }, [periods]);
+
+  // تنظیم خودکار پروژه انتخابی متناسب با پروژه‌های مجاز در این بازه
+  useEffect(() => {
+    if (availableProjects.length > 0) {
+      if (!availableProjects.some((p) => p.id === subProjectId)) {
+        setSubProjectId(availableProjects[0].id);
+      }
+    } else {
+      setSubProjectId(0);
+    }
+  }, [availableProjects, subProjectId]);
 
   const existingReportForSelection = allReports.find(
     (r) => r.project_id === subProjectId && r.period_id === subPeriodId
@@ -158,7 +198,7 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
       return;
     }
     setKpisLoading(true);
-    fetch(`/api/projects/${subProjectId}/kpis?report_type=${subReportType}`)
+    fetch(`/api/projects/${subProjectId}/kpis?report_type=${currentReportType}`)
       .then((r) => (r.ok ? r.json() : []))
       .then((data: any[]) => {
         setKpis(Array.isArray(data) ? data : []);
@@ -178,7 +218,7 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
         setKpis([]);
       })
       .finally(() => setKpisLoading(false));
-  }, [subProjectId, subPeriodId, subReportType]);
+  }, [subProjectId, subPeriodId, currentReportType]);
 
   const updateKpiValue = (kpiId: number, patch: Partial<any>) => {
     setKpiValues((prev) => ({
@@ -191,6 +231,34 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
     setSelectedActionIds((prev) =>
       prev.includes(actionId) ? prev.filter((id) => id !== actionId) : [...prev, actionId]
     );
+  };
+
+  const handleCancelAction = async (actionId: number) => {
+    const reason = prompt("لطفاً دلیل حذف یا لغو این اقدام را بنویسید (الزامی جهت درج در گزارش رسمی PDF):");
+    if (reason === null) return;
+    const trimmedReason = reason.trim();
+    if (!trimmedReason) {
+      alert("ثبت دلیل برای حذف اقدام الزامی است.");
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/next-actions/${actionId}/cancel`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: trimmedReason }),
+      });
+      if (res.ok) {
+        setPendingActions((prev) => prev.filter((a) => a.id !== actionId));
+        setSelectedActionIds((prev) => prev.filter((id) => id !== actionId));
+        flashSuccess("اقدام با موفقیت لغو شد و در گزارش رسمی با ذکر دلیل مستند گردید.");
+      } else {
+        const data = await res.json();
+        alert(data.error || "خطا در لغو اقدام.");
+      }
+    } catch (err) {
+      alert("خطا در برقراری ارتباط با سرور جهت لغو اقدام.");
+    }
   };
 
   // بررسی تکمیل بودن تمام شاخص‌های اعمال‌شده
@@ -250,6 +318,17 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
       return;
     }
 
+    const hasRegressedKpi = kpis.some((k) => {
+      const v = kpiValues[k.id];
+      if (!v || v.not_measured) return false;
+      const bNum = (k.baseline_value !== null && k.baseline_value !== undefined) ? Number(k.baseline_value) : null;
+      return bNum !== null && v.current_value !== "" && !isNaN(Number(v.current_value)) && Number(v.current_value) < bNum;
+    });
+    if (hasRegressedKpi) {
+      flashError("درصد پیشرفت تجمیعی پروژه‌ها نمی‌تواند کمتر از پیشرفت قبلی ثبت‌شده باشد.");
+      return;
+    }
+
     if (kpiIncomplete) {
       flashError("لطفاً مقادیر تمامی شاخص‌های نمایش‌داده‌شده را تکمیل کنید یا عدم اندازه‌گیری را مشخص نمایید.");
       return;
@@ -259,7 +338,7 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
     const formData = new FormData();
     formData.append("user_id", user.id.toString());
     formData.append("project_id", subProjectId.toString());
-    formData.append("report_type", subReportType);
+    formData.append("report_type", currentReportType);
     formData.append("period_id", subPeriodId.toString());
     formData.append("activities_done", activitiesDone);
     formData.append("results_achieved", extraResultsNotes);
@@ -299,6 +378,7 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
     try {
       const res = await fetch("/api/reports", { method: "POST", body: formData });
       if (res.ok) {
+        const createdReport = await res.json();
         flashSuccess("گزارش شما با موفقیت ثبت شد.");
         setActivitiesDone("");
         setExtraResultsNotes("");
@@ -308,7 +388,7 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
         setSubFiles(null);
         const fileInput = document.getElementById("report_files_input") as HTMLInputElement;
         if (fileInput) fileInput.value = "";
-        onRefresh();
+        if (onRefresh) onRefresh(createdReport);
       } else {
         const err = await res.json();
         flashError(err.error || "خطا در ثبت گزارش.");
@@ -436,19 +516,7 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
         <form onSubmit={handleSubmit} className="bg-white rounded-3xl p-6 md:p-8 border border-slate-200 shadow-sm space-y-6">
           
           {/* منوهای بالایی انتخاب بازه و پروژه */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div>
-              <label className="block text-slate-700 text-sm font-medium mb-1.5">نوع گزارش</label>
-              <CustomSelect
-                value={subReportType}
-                onChange={(val) => setSubReportType(val as "weekly" | "monthly")}
-                options={[
-                  { value: "weekly", label: "گزارش هفتگی" },
-                  { value: "monthly", label: "گزارش ماهانه" }
-                ]}
-              />
-            </div>
-
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <label className="block text-slate-700 text-sm font-medium mb-1.5">بازه گزارش‌دهی</label>
               <CustomSelect
@@ -457,7 +525,7 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
                 options={[
                   { value: 0, label: "-- انتخاب بازه --" },
                   ...periods
-                    .filter((p) => p.report_type === subReportType && p.is_open)
+                    .filter((p) => p.is_open)
                     .map((p) => ({
                       value: p.id,
                       label: p.title
@@ -471,11 +539,16 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
               <CustomSelect
                 value={subProjectId}
                 onChange={(val) => setSubProjectId(Number(val))}
-                options={userAssignedProjects.map((p) => ({
+                options={availableProjects.map((p) => ({
                   value: p.id,
-                  label: p.title
+                  label: p.project_type === "monthly" ? `${p.title} (پروژه ماهانه)` : p.title
                 }))}
               />
+              {userAssignedProjects.some((p) => p.project_type === "monthly") && !isLastWeek && currentPeriod?.report_type === "weekly" && (
+                <p className="text-[11px] text-slate-500 mt-1.5 font-medium">
+                  📌 پروژه‌های ماهانه شما در هفته پایانی هر ماه برای ثبت گزارش فعال خواهند شد.
+                </p>
+              )}
             </div>
           </div>
 
@@ -573,9 +646,6 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
                         </span>
                       )}
                     </div>
-                    <p className="text-[11px] text-slate-500 font-medium">
-                      اقداماتی که در این بازه تکمیل و محقق کرده‌اید را علامت بزنید (جهت بررسی و تایید نهایی توسط مدیر).
-                    </p>
                   </div>
 
                   <button
@@ -612,14 +682,16 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
                       return (
                         <div
                           key={action.id}
-                          onClick={() => toggleActionSelected(action.id)}
-                          className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex items-start justify-between gap-3 ${
+                          className={`p-3.5 rounded-2xl border transition-all flex items-start justify-between gap-3 ${
                             isSelected
                               ? "bg-emerald-50/90 border-emerald-400 shadow-xs ring-1 ring-emerald-400"
                               : "bg-white hover:bg-slate-50 border-slate-200/80 shadow-2xs"
                           }`}
                         >
-                          <div className="flex items-start gap-3 flex-1 min-w-0">
+                          <div
+                            onClick={() => toggleActionSelected(action.id)}
+                            className="flex items-start gap-3 flex-1 min-w-0 cursor-pointer"
+                          >
                             <div className="pt-0.5 shrink-0">
                               {isSelected ? (
                                 <CheckSquare className="w-5 h-5 text-emerald-600" />
@@ -654,6 +726,19 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
                               </div>
                             </div>
                           </div>
+
+                          {/* دکمه لغو یا حذف اقدام با ثبت دلیل اجباری */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCancelAction(action.id);
+                            }}
+                            className="p-1.5 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer shrink-0"
+                            title="لغو یا حذف اقدام با ذکر دلیل الزامی"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       );
                     })}
@@ -779,108 +864,16 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
                     {kpis
                       .filter((k) => selectedKpiFilter === 0 || k.id === selectedKpiFilter)
                       .map((k) => {
-                      const v = kpiValues[k.id] || { current_value: "", baseline_value: "", not_measured: false, missing_reason: "" };
-                      const disabled = v.not_measured;
-                      // پیش‌نمایش محاسبه درصد برای کلاینت (منبع حقیقت سرور است)
-                      let preview: string | null = null;
-                      if (k.input_type === "percentage_change" && !disabled && v.baseline_value && v.current_value &&
-                          Number(v.baseline_value) !== 0 && !isNaN(Number(v.current_value)) && !isNaN(Number(v.baseline_value))) {
-                        const pct = ((Number(v.current_value) - Number(v.baseline_value)) / Number(v.baseline_value)) * 100;
-                        preview = `${toPersianDigits(pct.toFixed(1))}٪`;
-                      }
-                      let directDiffPreview: string | null = null;
-                      if (k.input_type === "direct" && !disabled && k.baseline_value !== null && k.baseline_value !== undefined &&
-                          v.current_value && !isNaN(Number(v.current_value))) {
-                        const diff = Number(v.current_value) - Number(k.baseline_value);
-                        const sign = diff > 0 ? "+" : "";
-                        directDiffPreview = `${sign}${toPersianDigits(diff.toFixed(2))} ${k.unit}`;
-                      }
-                      return (
-                        <div key={k.id} className="bg-slate-50/50 p-4 rounded-2xl border border-slate-200/70 space-y-3">
-                          <div className="flex items-start justify-between gap-2">
-                            <div>
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <h5 className="text-sm font-bold text-slate-800">{k.name}</h5>
-                                {k.baseline_value !== null && k.baseline_value !== undefined && (
-                                  <span className="font-semibold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-200 text-[10px]">
-                                    مبنا: {toPersianDigits(k.baseline_value)} {k.unit}
-                                  </span>
-                                )}
-                              </div>
-                              {k.description && (
-                                <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">{k.description}</p>
-                              )}
-                              <p className="text-[11px] text-slate-600 mt-1">
-                                هدف: {k.target_direction === "minimum" ? "حداقل" : "حداکثر"} {toPersianDigits(k.target_value)} {k.unit}
-                              </p>
-                            </div>
-                            <label className="flex items-center gap-1.5 shrink-0 cursor-pointer text-[11px] text-slate-600">
-                              <input
-                                type="checkbox"
-                                checked={disabled}
-                                onChange={(e) => updateKpiValue(k.id, { not_measured: e.target.checked })}
-                                className="w-4 h-4 accent-rose-600"
-                              />
-                              اندازه‌گیری نشده
-                            </label>
-                          </div>
-
-                          {disabled ? (
-                            <div className="space-y-1.5">
-                              <label className="text-[11px] font-medium text-slate-500 block">
-                                دلیل عدم اندازه‌گیری شاخص *
-                              </label>
-                              <textarea
-                                value={v.missing_reason}
-                                onChange={(e) => updateKpiValue(k.id, { missing_reason: e.target.value })}
-                                rows={2}
-                                placeholder="دلیل عدم اندازه‌گیری شاخص را وارد کنید..."
-                                className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-rose-500"
-                              />
-                            </div>
-                          ) : (
-                            <div className={k.input_type === "percentage_change" ? "grid grid-cols-1 sm:grid-cols-2 gap-3" : ""}>
-                              {k.input_type === "percentage_change" && (
-                                <div className="space-y-1.5">
-                                  <label className="text-[11px] font-medium text-slate-500 block">مقدار مبنا *</label>
-                                  <input
-                                    type="number"
-                                    step="any"
-                                    value={v.baseline_value}
-                                    onChange={(e) => updateKpiValue(k.id, { baseline_value: e.target.value })}
-                                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:border-emerald-600"
-                                    placeholder="مقدار مبنا"
-                                  />
-                                </div>
-                              )}
-                              <div className="space-y-1.5">
-                                <label className="text-[11px] font-medium text-slate-500 block">
-                                  {k.input_type === "direct" ? "مقدار این دوره *" : "مقدار دوره جاری *"}
-                                </label>
-                                <input
-                                  type="number"
-                                  step="any"
-                                  value={v.current_value}
-                                  onChange={(e) => updateKpiValue(k.id, { current_value: e.target.value })}
-                                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:border-emerald-600"
-                                  placeholder="مقدار این دوره"
-                                />
-                              </div>
-                              {k.input_type === "percentage_change" && preview !== null && (
-                                <div className="sm:col-span-2 text-[11px] text-slate-500">
-                                  درصد تغییر (پیش‌نمایش): <span className="font-bold text-emerald-700">{preview}</span>
-                                </div>
-                              )}
-                              {k.input_type === "direct" && directDiffPreview !== null && (
-                                <div className="text-[11px] text-slate-500">
-                                  رشد نسبت به مبنا (پیش‌نمایش): <span className={`font-bold ${Number(v.current_value) >= Number(k.baseline_value) ? "text-emerald-700" : "text-rose-600"}`}>{directDiffPreview}</span>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
+                        const v = kpiValues[k.id] || { current_value: "", baseline_value: "", not_measured: false, missing_reason: "" };
+                        return (
+                          <KpiInteractiveInput
+                            key={k.id}
+                            kpi={k}
+                            value={v}
+                            onChange={(updated) => updateKpiValue(k.id, updated)}
+                          />
+                        );
+                      })}
                   </div>
                 )}
               </div>

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import {
   Plus,
   Trash2,
@@ -8,14 +8,13 @@ import {
   FileSpreadsheet,
   FolderKanban,
   RefreshCw,
-  Printer,
   ArrowUp,
   ArrowDown,
   Power,
-  PowerOff
+  GripVertical,
 } from "lucide-react";
-import { Project } from "../types";
-import ReportsPdfDocument from "../components/ReportsPdfDocument";
+import { Project, User } from "../types";
+import { CustomSelect } from "../components";
 
 // 🌐 تابع کمکی تبدیل اعداد به فارسی
 export const toPersianDigits = (n: string | number | undefined | null): string => {
@@ -26,14 +25,39 @@ export const toPersianDigits = (n: string | number | undefined | null): string =
 
 interface ManageProjectsProps {
   projects: Project[];
+  users?: User[];
   onRefresh: () => void;
+  onNavigateToAllocations?: () => void;
 }
 
-export default function ManageProjects({ projects = [], onRefresh }: ManageProjectsProps) {
+export default function ManageProjects({
+  projects = [],
+  users = [],
+  onRefresh,
+  onNavigateToAllocations,
+}: ManageProjectsProps) {
+  // --- استیت‌های تخصیص پروژه به پرسنل ---
+  const [allocations, setAllocations] = useState<Array<{ user_id: number; project_id: number }>>([]);
+
+  const fetchAllocations = async () => {
+    try {
+      const res = await fetch("/api/user-projects");
+      if (res.ok) {
+        const data = await res.json();
+        setAllocations(Array.isArray(data) ? data : []);
+      }
+    } catch (_) {}
+  };
+
+  useEffect(() => {
+    fetchAllocations();
+  }, []);
+
   // --- استیت‌های فرم ساخت پروژه ---
   const [code, setCode] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [projectType, setProjectType] = useState<"weekly" | "monthly">("weekly");
   const [wbsFile, setWbsFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -43,6 +67,7 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
   const [editTitle, setEditTitle] = useState("");
   const [editCode, setEditCode] = useState("");
   const [editDescription, setEditDescription] = useState("");
+  const [editProjectType, setEditProjectType] = useState<"weekly" | "monthly">("weekly");
   const [editIsActive, setEditIsActive] = useState(true);
   const [editWbsFile, setEditWbsFile] = useState<File | null>(null);
   const [removeEditWbsFile, setRemoveEditWbsFile] = useState(false);
@@ -50,19 +75,74 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
   const editFileInputRef = useRef<HTMLInputElement>(null);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [pdfModalOpen, setPdfModalOpen] = useState<boolean>(false);
+
+  // --- تفکیک تب‌های پروژه‌های فعال و غیرفعال ---
+  const [filterTab, setFilterTab] = useState<"active" | "inactive">("active");
+
+  const activeProjects = useMemo(() => projects.filter((p) => p.is_active !== false), [projects]);
+  const inactiveProjects = useMemo(() => projects.filter((p) => p.is_active === false), [projects]);
+  const displayedProjects = filterTab === "active" ? activeProjects : inactiveProjects;
+
+  // --- وضعیت‌های کشیدن و رها کردن (Drag and Drop) ---
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    if (filterTab !== "active") return;
+    setDraggedIndex(index);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", index.toString());
+  };
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    if (filterTab !== "active") return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (dragOverIndex !== index) {
+      setDragOverIndex(index);
+    }
+  };
+
+  const handleDrop = async (e: React.DragEvent, targetIndex: number) => {
+    e.preventDefault();
+    if (filterTab !== "active" || draggedIndex === null || draggedIndex === targetIndex) {
+      setDraggedIndex(null);
+      setDragOverIndex(null);
+      return;
+    }
+
+    const newActiveList = [...activeProjects];
+    const [moved] = newActiveList.splice(draggedIndex, 1);
+    newActiveList.splice(targetIndex, 0, moved);
+
+    setDraggedIndex(null);
+    setDragOverIndex(null);
+
+    const orderedIds = [...newActiveList.map((p: Project) => p.id), ...inactiveProjects.map((p: Project) => p.id)];
+    try {
+      const res = await fetch("/api/projects/reorder", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ordered_ids: orderedIds }),
+      });
+      if (res.ok && onRefresh) onRefresh();
+    } catch (e) {
+      console.error("Error reordering projects via drag & drop:", e);
+    }
+  };
 
   // 🔢 توابع جابجایی و مرتب‌سازی پروژه‌ها برای خروجی
   const handleMoveProject = async (index: number, direction: "up" | "down") => {
+    if (filterTab !== "active") return;
     const targetIndex = direction === "up" ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= projects.length) return;
+    if (targetIndex < 0 || targetIndex >= activeProjects.length) return;
 
-    const newProjects = [...projects];
-    const temp = newProjects[index];
-    newProjects[index] = newProjects[targetIndex];
-    newProjects[targetIndex] = temp;
+    const newActiveList = [...activeProjects];
+    const temp = newActiveList[index];
+    newActiveList[index] = newActiveList[targetIndex];
+    newActiveList[targetIndex] = temp;
 
-    const orderedIds = newProjects.map((p) => p.id);
+    const orderedIds = [...newActiveList.map((p: Project) => p.id), ...inactiveProjects.map((p: Project) => p.id)];
     try {
       const res = await fetch("/api/projects/reorder", {
         method: "PATCH",
@@ -135,6 +215,7 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
       formData.append("code", code);
       formData.append("title", title);
       formData.append("description", description);
+      formData.append("project_type", projectType);
       if (wbsFile) formData.append("wbs_file", wbsFile);
 
       const res = await fetch("/api/projects", {
@@ -146,6 +227,7 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
         setCode("");
         setTitle("");
         setDescription("");
+        setProjectType("weekly");
         handleRemoveFile();
         if (onRefresh) onRefresh();
       } else {
@@ -204,6 +286,7 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
     setEditTitle(proj.title);
     setEditCode(proj.code);
     setEditDescription(proj.description || "");
+    setEditProjectType(proj.project_type === "monthly" ? "monthly" : "weekly");
     setEditIsActive(proj.is_active !== false);
     setEditWbsFile(null);
     setRemoveEditWbsFile(false);
@@ -231,6 +314,7 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
       formData.append("code", editCode);
       formData.append("title", editTitle);
       formData.append("description", editDescription);
+      formData.append("project_type", editProjectType);
       formData.append("is_active", String(editIsActive));
 
       if (editWbsFile) {
@@ -262,26 +346,16 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
     <div className="space-y-6 animate-fade-in text-xs font-sans dir-rtl text-right">
 
       {/* هدر */}
-      <div className="border-b border-slate-200 pb-4 flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+      <div className="border-b border-slate-200 pb-4">
         <div>
           <h1 className="text-xl font-bold text-slate-950 flex items-center gap-2">
             <FolderKanban className="w-6 h-6 text-emerald-700" />
             <span>مدیریت پروژه‌ها و سندهای WBS</span>
           </h1>
           <p className="text-slate-500 text-xs mt-1">
-            تعریف پروژه‌های جدید، بارگذاری ساختار شکست کار (WBS)، تنظیم چیدمان و صدور نسخه PDF گزارش‌ها.
+            تعریف پروژه‌های جدید، بارگذاری ساختار شکست کار (WBS) و تنظیم چیدمان و اولویت پروژه‌ها.
           </p>
         </div>
-
-        <button
-          type="button"
-          onClick={() => setPdfModalOpen(true)}
-          className="bg-emerald-800 hover:bg-emerald-700 active:scale-95 text-white font-extrabold text-xs px-4 py-2.5 rounded-2xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer border border-emerald-600/40 whitespace-nowrap shrink-0"
-          title="صدور نسخه رسمی PDF از تمامی گزارش‌ها با امکان تنظیم ترتیب چینش"
-        >
-          <Printer className="w-4 h-4 text-emerald-300" />
-          <span>خروجی PDF تمام گزارش‌ها</span>
-        </button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -314,6 +388,18 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="مثلاً: توسعه خطوط بی‌آرتی"
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-emerald-600"
+              />
+            </div>
+
+            <div>
+              <label className="block text-slate-600 font-bold mb-1">نوع پروژه (نوع گزارش‌دهی):</label>
+              <CustomSelect
+                value={projectType}
+                onChange={(val) => setProjectType(val as "weekly" | "monthly")}
+                options={[
+                  { value: "weekly", label: "هفتگی" },
+                  { value: "monthly", label: "ماهانه" },
+                ]}
               />
             </div>
 
@@ -386,29 +472,102 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
 
         {/* 📊 لیست پروژه‌ها */}
         <div className="lg:col-span-2 bg-white rounded-3xl border border-slate-200 shadow-2xs overflow-hidden">
-          <div className="p-4 bg-slate-50 border-b border-slate-200 font-bold text-slate-700 flex justify-between items-center">
-            <span>لیست پروژه‌های سازمان</span>
-            <span className="bg-slate-200 text-slate-700 px-2.5 py-0.5 rounded-full text-[11px]">
-              {toPersianDigits(projects.length)} پروژه
-            </span>
+          <div className="p-3 sm:p-4 bg-slate-50 border-b border-slate-200 font-bold text-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span>لیست پروژه‌های سازمان</span>
+              <span className="bg-slate-200 text-slate-700 px-2.5 py-0.5 rounded-full text-[11px]">
+                {toPersianDigits(displayedProjects.length)} پروژه
+              </span>
+            </div>
+
+            {/* سوئیچر تب‌های پروژه‌های فعال / غیرفعال */}
+            <div className="flex items-center bg-slate-200/80 p-1 rounded-2xl text-xs shrink-0">
+              <button
+                type="button"
+                onClick={() => setFilterTab("active")}
+                className={`px-3.5 py-1.5 rounded-xl font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  filterTab === "active"
+                    ? "bg-white text-emerald-800 shadow-sm"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                <span>پروژه‌های فعال</span>
+                <span className="bg-emerald-100 text-emerald-800 px-2 py-0.2 rounded-full text-[11px]">
+                  {toPersianDigits(activeProjects.length)}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterTab("inactive")}
+                className={`px-3.5 py-1.5 rounded-xl font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  filterTab === "inactive"
+                    ? "bg-white text-rose-800 shadow-sm"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                <span>غیرفعال / بایگانی</span>
+                {inactiveProjects.length > 0 && (
+                  <span className="bg-rose-100 text-rose-800 px-2 py-0.2 rounded-full text-[11px]">
+                    {toPersianDigits(inactiveProjects.length)}
+                  </span>
+                )}
+              </button>
+            </div>
           </div>
 
           <div className="divide-y divide-slate-100">
-            {projects.length === 0 ? (
-              <div className="p-8 text-center text-slate-400">هیچ پروژه‌ای ثبت نشده است.</div>
+            {displayedProjects.length === 0 ? (
+              <div className="p-8 text-center text-slate-400">
+                {filterTab === "active"
+                  ? "هیچ پروژه فعالی ثبت نشده است."
+                  : "هیچ پروژه غیرفعالی در بایگانی وجود ندارد."}
+              </div>
             ) : (
-              projects.map((proj, idx) => (
-                <div key={proj.id} className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 hover:bg-slate-50/50 transition-colors">
+              displayedProjects.map((proj: Project, idx: number) => (
+                <div
+                  key={proj.id}
+                  draggable={filterTab === "active"}
+                  onDragStart={(e) => filterTab === "active" && handleDragStart(e, idx)}
+                  onDragOver={(e) => filterTab === "active" && handleDragOver(e, idx)}
+                  onDrop={(e) => filterTab === "active" && handleDrop(e, idx)}
+                  className={`p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 transition-all select-none ${
+                    draggedIndex === idx ? "opacity-30 bg-slate-100 ring-2 ring-emerald-400 rounded-xl" : "hover:bg-slate-50/70"
+                  } ${dragOverIndex === idx ? "border-t-2 border-emerald-500" : ""}`}
+                >
                   <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="w-5 h-5 rounded-full bg-slate-900 text-white font-bold text-[10px] flex items-center justify-center font-sans shrink-0">
-                        {proj.order_index || idx + 1}
+                    <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                      {/* دستگیره Drag and Drop فقط برای پروژه‌های فعال */}
+                      {filterTab === "active" && (
+                        <div
+                          className="cursor-grab active:cursor-grabbing p-1 -mr-1 text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 rounded transition-colors shrink-0"
+                          title="برای تغییر ترتیب، بگیرید و بکشید (Drag & Drop)"
+                        >
+                          <GripVertical className="w-4 h-4" />
+                        </div>
+                      )}
+
+                      {/* ردیف ترتیبی مستمر لیست (بدون تکرار) */}
+                      <span
+                        className="w-5 h-5 rounded-full bg-slate-900 text-white font-bold text-[10px] flex items-center justify-center font-sans shrink-0"
+                        title={`ردیف ${toPersianDigits(idx + 1)}`}
+                      >
+                        {toPersianDigits(idx + 1)}
                       </span>
                       <h4 className={`font-bold text-sm ${proj.is_active ? "text-slate-900" : "text-slate-400 line-through"}`}>
                         {proj.title}
                       </h4>
                       <span className="font-mono text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md border border-slate-200 font-bold">
                         {toPersianDigits(proj.code)}
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                          proj.project_type === "monthly"
+                            ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+                            : "bg-sky-50 text-sky-700 border-sky-200"
+                        }`}
+                        title="نوع گزارش‌دهی این پروژه"
+                      >
+                        {proj.project_type === "monthly" ? "ماهانه" : "هفتگی"}
                       </span>
                       {proj.is_active ? (
                         <span className="text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full">
@@ -420,6 +579,47 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
                         </span>
                       )}
                     </div>
+
+                    {/* نمایش مسئول / معاونت تخصیص‌یافته */}
+                    {(() => {
+                      const assignedUsers = allocations
+                        .filter((a) => a.project_id === proj.id)
+                        .map((a) => (users || []).find((u) => u.id === a.user_id))
+                        .filter(Boolean);
+
+                      if (assignedUsers.length > 0) {
+                        return (
+                          <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                            {assignedUsers.map((u: any) => (
+                              <span
+                                key={u.id}
+                                onClick={() => onNavigateToAllocations && onNavigateToAllocations()}
+                                className="inline-flex items-center gap-1 text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200/80 px-2.5 py-0.5 rounded-full cursor-pointer hover:bg-emerald-100 transition-colors"
+                                title={`مسئول نظارت: ${u.full_name} (${u.job_title || ""}) - کلیک برای تغییر تخصیص`}
+                              >
+                                <span> {u.full_name}</span>
+                                {u.job_title && <span className="text-emerald-600 font-normal">({u.job_title})</span>}
+                              </span>
+                            ))}
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="pt-0.5">
+                          <button
+                            type="button"
+                            onClick={() => onNavigateToAllocations && onNavigateToAllocations()}
+                            className="inline-flex items-center gap-1 text-[10px] font-medium bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200/80 px-2 py-0.5 rounded-full transition-colors cursor-pointer"
+                            title="کلیک برای تخصیص به مسئول"
+                          >
+                            <span>⚠️ بدون تخصیص به مسئول</span>
+                            <span className="text-[9px] underline mr-1">تخصیص</span>
+                          </button>
+                        </div>
+                      );
+                    })()}
+
                     <p className="text-slate-500 text-[11px] line-clamp-1">{proj.description}</p>
                     {proj.wbs_file_name && (
                       <a
@@ -437,66 +637,77 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
                   {/* کنترل‌های رتبه‌بندی، وضعیت، ویرایش و حذف پروژه */}
                   <div className="flex items-center gap-2 shrink-0 bg-slate-100/90 p-1.5 rounded-2xl border border-slate-200/80 shadow-2xs">
 
-                    {/* فیلد وارد کردن عدد ترتیب خروجی */}
-                    <div className="flex items-center gap-1 text-[10px] text-slate-600 font-bold px-1.5" title="ترتیب این پروژه در خروجی PDF">
-                      <span className="hidden sm:inline">ترتیب:</span>
-                      <input
-                        type="number"
-                        min={1}
-                        max={99}
-                        defaultValue={proj.order_index || idx + 1}
-                        key={`${proj.id}-${proj.order_index}`}
-                        onBlur={(e) => {
-                          const val = parseInt(e.target.value);
-                          if (!isNaN(val)) handleSetOrderIndex(proj.id, val);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            const val = parseInt((e.target as HTMLInputElement).value);
-                            if (!isNaN(val)) handleSetOrderIndex(proj.id, val);
-                          }
-                        }}
-                        className="w-10 h-7 bg-white border border-slate-300 rounded-lg text-center font-bold text-xs text-slate-900 focus:outline-none focus:border-emerald-600 font-sans shadow-2xs"
-                      />
-                    </div>
+                    {filterTab === "active" ? (
+                      <>
+                        {/* فیلد وارد کردن عدد ترتیب خروجی */}
+                        <div className="flex items-center gap-1 text-[10px] text-slate-600 font-bold px-1.5" title="ترتیب این پروژه در خروجی PDF">
+                          <span className="hidden sm:inline">ترتیب:</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={99}
+                            defaultValue={proj.order_index || idx + 1}
+                            key={`${proj.id}-${proj.order_index}`}
+                            onBlur={(e) => {
+                              const val = parseInt(e.target.value);
+                              if (!isNaN(val)) handleSetOrderIndex(proj.id, val);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                const val = parseInt((e.target as HTMLInputElement).value);
+                                if (!isNaN(val)) handleSetOrderIndex(proj.id, val);
+                              }
+                            }}
+                            className="w-10 h-7 bg-white border border-slate-300 rounded-lg text-center font-bold text-xs text-slate-900 focus:outline-none focus:border-emerald-600 font-sans shadow-2xs"
+                          />
+                        </div>
 
-                    {/* دکمه‌های بالا و پایین برای جابجایی سریع */}
-                    <div className="flex flex-col gap-0.5">
+                        {/* دکمه‌های بالا و پایین برای جابجایی سریع */}
+                        <div className="flex flex-col gap-0.5">
+                          <button
+                            type="button"
+                            onClick={() => handleMoveProject(idx, "up")}
+                            disabled={idx === 0}
+                            className="p-1 text-slate-600 hover:text-emerald-700 hover:bg-white rounded transition-colors disabled:opacity-20 cursor-pointer"
+                            title="انتقال به ردیف بالا در خروجی"
+                          >
+                            <ArrowUp className="w-3 h-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleMoveProject(idx, "down")}
+                            disabled={idx === displayedProjects.length - 1}
+                            className="p-1 text-slate-600 hover:text-emerald-700 hover:bg-white rounded transition-colors disabled:opacity-20 cursor-pointer"
+                            title="انتقال به ردیف پایین در خروجی"
+                          >
+                            <ArrowDown className="w-3 h-3" />
+                          </button>
+                        </div>
+
+                        <div className="w-[1px] h-6 bg-slate-300 mx-0.5"></div>
+
+                        {/* دکمه غیرفعال‌سازی سریع */}
+                        <button
+                          type="button"
+                          onClick={() => handleToggleProjectStatus(proj)}
+                          className="p-2 rounded-xl transition-colors cursor-pointer border border-slate-200/60 text-emerald-600 bg-white hover:bg-emerald-50"
+                          title="غیرفعال‌سازی پروژه"
+                        >
+                          <Power className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    ) : (
+                      /* دکمه فعال‌سازی مجدد پروژه در تب غیرفعال */
                       <button
                         type="button"
-                        onClick={() => handleMoveProject(idx, "up")}
-                        disabled={idx === 0}
-                        className="p-1 text-slate-600 hover:text-emerald-700 hover:bg-white rounded transition-colors disabled:opacity-20 cursor-pointer"
-                        title="انتقال به ردیف بالا در خروجی"
+                        onClick={() => handleToggleProjectStatus(proj)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
+                        title="فعال‌سازی مجدد پروژه جهت ورود به سیستم و گزارش‌ها"
                       >
-                        <ArrowUp className="w-3 h-3" />
+                        <Power className="w-3.5 h-3.5" />
+                        <span>فعال‌سازی مجدد</span>
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => handleMoveProject(idx, "down")}
-                        disabled={idx === projects.length - 1}
-                        className="p-1 text-slate-600 hover:text-emerald-700 hover:bg-white rounded transition-colors disabled:opacity-20 cursor-pointer"
-                        title="انتقال به ردیف پایین در خروجی"
-                      >
-                        <ArrowDown className="w-3 h-3" />
-                      </button>
-                    </div>
-
-                    <div className="w-[1px] h-6 bg-slate-300 mx-0.5"></div>
-
-                    {/* دکمه فعال/غیرفعال‌سازی سریع */}
-                    <button
-                      type="button"
-                      onClick={() => handleToggleProjectStatus(proj)}
-                      className={`p-2 rounded-xl transition-colors cursor-pointer border border-slate-200/60 ${
-                        proj.is_active
-                          ? "text-emerald-600 bg-white hover:bg-emerald-50"
-                          : "text-slate-400 bg-white hover:bg-slate-100"
-                      }`}
-                      title={proj.is_active ? "غیرفعال‌سازی پروژه" : "فعال‌سازی مجدد پروژه"}
-                    >
-                      {proj.is_active ? <Power className="w-3.5 h-3.5" /> : <PowerOff className="w-3.5 h-3.5" />}
-                    </button>
+                    )}
 
                     {/* دکمه ویرایش */}
                     <button
@@ -557,6 +768,18 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
                   value={editTitle}
                   onChange={(e) => setEditTitle(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-600 font-bold mb-1">نوع پروژه (نوع گزارش‌دهی):</label>
+                <CustomSelect
+                  value={editProjectType}
+                  onChange={(val) => setEditProjectType(val as "weekly" | "monthly")}
+                  options={[
+                    { value: "weekly", label: "هفتگی" },
+                    { value: "monthly", label: "ماهانه" },
+                  ]}
                 />
               </div>
 
@@ -681,13 +904,6 @@ export default function ManageProjects({ projects = [], onRefresh }: ManageProje
           </div>
         </div>
       )}
-
-      {/* 📄 رندر مودال خروجی PDF جامع تمام گزارش‌ها با قابلیت تنظیم ترتیب چینش */}
-      <ReportsPdfDocument
-        isOpen={pdfModalOpen}
-        onClose={() => setPdfModalOpen(false)}
-        projects={projects}
-      />
 
     </div>
   );

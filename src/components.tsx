@@ -20,11 +20,21 @@ interface CustomSelectProps {
   options: Option[];
   className?: string;
   dir?: "rtl" | "ltr";
+  searchable?: boolean;
 }
 
-export function CustomSelect({ value, onChange, options, className = "", dir = "rtl" }: CustomSelectProps) {
+export function CustomSelect({
+  value,
+  onChange,
+  options,
+  className = "",
+  dir = "rtl",
+  searchable,
+}: CustomSelectProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Find selected option
   const selectedOption = options.find((opt) => String(opt.value) === String(value));
@@ -41,16 +51,30 @@ export function CustomSelect({ value, onChange, options, className = "", dir = "
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    if (isOpen) {
+      setSearchTerm("");
+      setTimeout(() => {
+        searchInputRef.current?.focus();
+      }, 50);
+    }
+  }, [isOpen]);
+
+  const isSearchEnabled = searchable !== false && options.length > 4;
+  const filteredOptions = isSearchEnabled && searchTerm.trim()
+    ? options.filter((opt) => opt.label.toLowerCase().includes(searchTerm.trim().toLowerCase()))
+    : options;
+
   return (
     <div ref={containerRef} className={`relative w-full ${className}`} dir={dir}>
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between bg-slate-50 border border-slate-300 text-slate-900 rounded-xl px-3 py-2 text-xs text-right cursor-pointer focus:outline-none focus:ring-2 focus:ring-slate-900 transition-all hover:bg-slate-100"
+        className="w-full flex items-center justify-between bg-slate-50 border border-slate-300 text-slate-900 rounded-xl px-3 py-2 text-xs text-right cursor-pointer focus:outline-none focus:ring-2 focus:ring-emerald-600 transition-all hover:bg-slate-100"
       >
         <span className="truncate">{displayLabel || "انتخاب کنید..."}</span>
         <svg
-          className={`w-4 h-4 text-slate-500 mr-2 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
+          className={`w-4 h-4 text-slate-500 mr-2 transition-transform duration-200 shrink-0 ${isOpen ? "rotate-180" : ""}`}
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -60,25 +84,69 @@ export function CustomSelect({ value, onChange, options, className = "", dir = "
       </button>
 
       {isOpen && (
-        <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-1 duration-100 max-h-60 overflow-y-auto">
-          <div className="py-1">
-            {options.map((option) => {
-              const isSelected = String(option.value) === String(value);
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => {
-                    onChange(option.value);
-                    setIsOpen(false);
-                  }}
-                  className={`w-full text-right px-4 py-2 text-xs transition-colors hover:bg-slate-50 cursor-pointer ${isSelected ? "bg-slate-100 text-blue-600 font-semibold" : "text-slate-800"
+        <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-1 duration-100 max-h-64 flex flex-col">
+          {isSearchEnabled && (
+            <div className="p-2 border-b border-slate-100 bg-slate-50/90 shrink-0 sticky top-0">
+              <div className="relative flex items-center">
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="جستجو در گزینه‌ها..."
+                  className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs text-right dir-rtl font-sans focus:outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600"
+                  onClick={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => e.stopPropagation()}
+                />
+                {searchTerm && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSearchTerm("");
+                      searchInputRef.current?.focus();
+                    }}
+                    className="absolute left-2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                  >
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                      <path
+                        fillRule="evenodd"
+                        d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div className="py-1 overflow-y-auto max-h-52">
+            {filteredOptions.length === 0 ? (
+              <div className="py-4 text-center text-slate-400 text-xs">
+                موردی یافت نشد
+              </div>
+            ) : (
+              filteredOptions.map((option) => {
+                const isSelected = String(option.value) === String(value);
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => {
+                      onChange(option.value);
+                      setIsOpen(false);
+                      setSearchTerm("");
+                    }}
+                    className={`w-full text-right px-4 py-2 text-xs transition-colors hover:bg-slate-50 cursor-pointer ${
+                      isSelected ? "bg-emerald-50 text-emerald-800 font-bold" : "text-slate-800"
                     }`}
-                >
-                  {option.label}
-                </button>
-              );
-            })}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })
+            )}
           </div>
         </div>
       )}
@@ -307,15 +375,29 @@ interface DeadlineSetting {
 
 interface DeadlineCardProps {
   dl: DeadlineSetting;
-  onUpdate: (id: number, day: number, time: string, graceDays: number) => void;
+  onUpdate: (id: number, day: number, time: string, graceDays: number) => Promise<boolean> | void;
 }
 
 export function DeadlineCard({ dl, onUpdate }: DeadlineCardProps) {
   const [day, setDay] = useState(dl.deadline_day);
   const [time, setTime] = useState(dl.deadline_time);
   const [graceDays, setGraceDays] = useState(dl.grace_days ?? 0);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   const daysOfWeek = ["شنبه", "یک‌شنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه"];
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    setSaveSuccess(false);
+    try {
+      await onUpdate(dl.id, day, time, graceDays);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3500);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   return (
     <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4 font-sans text-right dir-rtl">
@@ -410,12 +492,32 @@ export function DeadlineCard({ dl, onUpdate }: DeadlineCardProps) {
           </div>
         </div>
 
+        {saveSuccess && (
+          <div className="p-3 bg-emerald-50 border border-emerald-300 text-emerald-800 rounded-2xl text-xs font-bold flex items-center gap-2 animate-fade-in">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-600 inline-block animate-ping" />
+            <span>✓ تنظیمات ددلاین با موفقیت ذخیره و در سرور اعمال شد.</span>
+          </div>
+        )}
+
         <div className="pt-2">
           <button
-            onClick={() => onUpdate(dl.id, day, time, graceDays)}
-            className="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium py-2.5 rounded-xl text-xs cursor-pointer text-center transition-all shadow-sm"
+            onClick={handleSave}
+            disabled={isSaving}
+            className={`w-full text-white font-bold py-2.5 rounded-xl text-xs cursor-pointer text-center transition-all shadow-sm flex items-center justify-center gap-2 ${
+              saveSuccess
+                ? "bg-emerald-700 hover:bg-emerald-800"
+                : isSaving
+                ? "bg-slate-700 cursor-not-allowed"
+                : "bg-slate-900 hover:bg-slate-800 active:scale-[0.99]"
+            }`}
           >
-            ذخیره تنظیمات ددلاین
+            {isSaving ? (
+              <span>در حال ذخیره‌سازی...</span>
+            ) : saveSuccess ? (
+              <span>✓ تغییرات با موفقیت ثبت شد</span>
+            ) : (
+              <span>ذخیره تنظیمات ددلاین</span>
+            )}
           </button>
         </div>
       </div>

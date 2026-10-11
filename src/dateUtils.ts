@@ -119,3 +119,110 @@ export function formatToShamsi(dateStr: string): string {
   const pad = (num: number) => String(num).padStart(2, '0');
   return toPersianDigits(`${shamsi.year}/${pad(shamsi.month)}/${pad(shamsi.day)}`);
 }
+
+/**
+ * تشخیص هوشمند اینکه آیا یک بازه گزارش‌دهی، آخرین هفته ماه شمسی است یا خیر.
+ * در آخرین هفته ماه، هم پروژه‌های هفتگی و هم پروژه‌های ماهانه موعد گزارش دارند.
+ */
+export function isLastWeekOfShamsiMonth(
+  period: { id?: number; title?: string; period_end?: Date | string | null; report_type?: string } | null | undefined,
+  allPeriods?: Array<{ id?: number; title?: string; period_end?: Date | string | null; report_type?: string }>
+): boolean {
+  if (!period) return false;
+  if (period.report_type && period.report_type !== "weekly") {
+    return true; // بازه‌های ماهانه همیشه مشمول گزارش ماهانه هستند
+  }
+
+  let shamsi: { year: number; month: number; day: number } | null = null;
+  const match = toEnglishDigits(period.title || "").match(/(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
+  if (match) {
+    shamsi = {
+      year: parseInt(match[1]),
+      month: parseInt(match[2]),
+      day: parseInt(match[3]),
+    };
+  } else if (period.period_end) {
+    const endStr = typeof period.period_end === "string"
+      ? period.period_end.split("T")[0]
+      : period.period_end.toISOString().split("T")[0];
+    shamsi = gregorianToShamsi(endStr);
+  }
+
+  if (!shamsi) return false;
+
+  const totalDays = getShamsiMonthDays(shamsi.year, shamsi.month);
+
+  // اگر روز سررسید در ۴ روز پایانی ماه باشد (۲۸، ۲۹، ۳۰ یا ۳۱)، قطعاً هفته پایانی ماه است
+  if (shamsi.day >= totalDays - 3) {
+    return true;
+  }
+
+  // اگر روز کمتر از ۲۵ باشد، قطعاً هفته پایانی ماه نیست (هفته‌های اول، دوم یا سوم)
+  if (shamsi.day < 25) {
+    return false;
+  }
+
+  // برای روزهای بین ۲۵ تا ۲۷: در صورتی که هفته دیگری در همان ماه با روز بزرگتر وجود نداشته باشد، آخرین هفته است
+  if (allPeriods && allPeriods.length > 0) {
+    const hasLaterInSameMonth = allPeriods.some((other) => {
+      if (other.id && period.id && other.id === period.id) return false;
+      if (other.report_type && other.report_type !== "weekly") return false;
+
+      let otherShamsi: { year: number; month: number; day: number } | null = null;
+      const otherMatch = toEnglishDigits(other.title || "").match(/(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
+      if (otherMatch) {
+        otherShamsi = {
+          year: parseInt(otherMatch[1]),
+          month: parseInt(otherMatch[2]),
+          day: parseInt(otherMatch[3]),
+        };
+      } else if (other.period_end) {
+        const oEndStr = typeof other.period_end === "string"
+          ? other.period_end.split("T")[0]
+          : other.period_end.toISOString().split("T")[0];
+        otherShamsi = gregorianToShamsi(oEndStr);
+      }
+
+      if (!otherShamsi) return false;
+      return (
+        otherShamsi.year === shamsi!.year &&
+        otherShamsi.month === shamsi!.month &&
+        otherShamsi.day > shamsi!.day
+      );
+    });
+
+    if (hasLaterInSameMonth) return false;
+  }
+
+  return true;
+}
+
+/**
+ * دریافت هر نوع فرمت تاریخ (میلادی یا شمسی، انگلیسی یا فارسی)
+ * و تبدیل تضمینی و بی‌نقص آن به تاریخ شمسی با ارقام فارسی (مثال: ۱۴۰۵/۰۵/۱۶)
+ */
+export function ensureShamsiDate(dateVal: string | Date | null | undefined): string {
+  if (!dateVal) return "نامشخص";
+  const str = String(dateVal).trim();
+  if (!str || str === "null" || str === "undefined") return "نامشخص";
+
+  const engStr = toEnglishDigits(str);
+  const gregMatch = engStr.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  if (gregMatch) {
+    const y = parseInt(gregMatch[1]);
+    const m = parseInt(gregMatch[2]);
+    const d = parseInt(gregMatch[3]);
+    if (y > 1700) {
+      // تاریخ میلادی است، تبدیل به هجری شمسی
+      const converted = gregorianToShamsi(`${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
+      if (converted) {
+        return toPersianDigits(`${converted.year}/${String(converted.month).padStart(2, '0')}/${String(converted.day).padStart(2, '0')}`);
+      }
+    } else {
+      // از قبل تاریخ شمسی است (مثلاً سال ۱۴۰۵)
+      return toPersianDigits(`${y}/${String(m).padStart(2, '0')}/${String(d).padStart(2, '0')}`);
+    }
+  }
+
+  return toPersianDigits(str);
+}

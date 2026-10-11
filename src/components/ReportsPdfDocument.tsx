@@ -6,9 +6,10 @@ import {
   FileText,
   RefreshCw,
 } from "lucide-react";
-import { Report, ReportPeriod, Project, User } from "../types";
+import { Report, ReportPeriod, Project, User, ProjectKpi } from "../types";
 import { CustomSelect } from "../components";
 import { toPersianDigits } from "../dateUtils";
+import { KpiMatrixTable } from "./KpiMatrixTable";
 
 const formatPersianDate = (value: string | null | undefined): string => {
   if (!value) return "بدون تاریخ مشخص";
@@ -56,20 +57,400 @@ interface ReportsPdfDocumentProps {
   defaultPeriodId?: number;
 }
 
-interface PageSection {
-  heading: string;
-  items: Array<{
-    text: string;
-    date?: string | null;
-  }>;
+export interface PageSectionItem {
+  text: string;
+  date?: string | null;
+  status?: "completed" | "overdue" | "upcoming" | "cancelled";
+  cancellationReason?: string | null;
+  badgeTag?: string | null;
 }
 
-interface ReportPageData {
+interface PageSection {
+  heading: string;
+  type?: "bullets" | "kpi_table";
+  items: Array<PageSectionItem>;
+  kpiValues?: any[];
+  kpiText?: string | null;
+}
+
+interface PageBlock {
   reportId: number;
   projectTitle: string;
   isContinuation: boolean;
   sections: PageSection[];
 }
+
+interface ReportPageData {
+  blocks: PageBlock[];
+}
+
+const PDF_DOCUMENT_STYLES = `
+  /* ==========================================================================
+     گزارش جامع عملکرد - استایل‌های استاندارد مشترک بین وب و پرینت کروم
+     Single Source of Truth: Web Preview & Chrome Print
+     ========================================================================== */
+
+  * {
+    box-sizing: border-box !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  #printable-pdf-document {
+    direction: rtl !important;
+    text-align: right !important;
+    font-family: 'Vazirmatn', Sahel, Vazir, Shabnam, Tahoma, system-ui, -apple-system, sans-serif !important;
+    color: #0f172a !important;
+    -webkit-font-smoothing: antialiased !important;
+  }
+
+  /* ۱. ابعاد و کانتینر استاندارد برگه A4 */
+  .pdf-page-container {
+    width: 210mm !important;
+    max-width: 210mm !important;
+    height: 296.5mm !important;
+    min-height: 296.5mm !important;
+    max-height: 296.5mm !important;
+    padding: 10mm 14mm 10mm 14mm !important;
+    box-sizing: border-box !important;
+    background-color: #ffffff !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+    position: relative !important;
+    overflow: hidden !important;
+    direction: rtl !important;
+  }
+
+  /* استایل اختصاصی پیش‌نمایش در وب (داخل مودال سایت) */
+  @media screen {
+    .pdf-page-container {
+      margin: 0 auto 28px auto !important;
+      border-radius: 20px !important;
+      border: 1px solid #cbd5e1 !important;
+      box-shadow: 0 12px 30px -6px rgba(15, 23, 42, 0.15), 0 4px 12px -2px rgba(15, 23, 42, 0.08) !important;
+    }
+  }
+
+  /* استایل اختصاصی چاپ در کروم (Print / Save as PDF) */
+  @media print {
+    @page {
+      size: A4;
+      margin: 0;
+    }
+
+    html, body {
+      width: 210mm !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      background-color: #ffffff !important;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+
+    #printable-pdf-document {
+      width: 210mm !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+
+    .pdf-page-container {
+      width: 210mm !important;
+      max-width: 210mm !important;
+      height: 296.5mm !important;
+      min-height: 296.5mm !important;
+      max-height: 296.5mm !important;
+      padding: 10mm 14mm 10mm 14mm !important;
+      margin: 0 auto !important;
+      border: none !important;
+      border-radius: 0 !important;
+      box-shadow: none !important;
+      box-sizing: border-box !important;
+      page-break-after: always !important;
+      break-after: page !important;
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+    }
+
+    .pdf-page-container:first-child {
+      page-break-before: avoid !important;
+      break-before: avoid !important;
+      margin-top: 0 !important;
+    }
+
+    .pdf-page-container:last-child {
+      page-break-after: auto !important;
+      break-after: auto !important;
+    }
+  }
+
+  /* ۲. استایل‌های صفحه کاور اول */
+  .cover-page-box {
+    background-color: #55913e !important;
+    border-radius: 20px !important;
+    width: 100% !important;
+    height: 100% !important;
+    padding: 36px 32px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+    color: #ffffff !important;
+    box-sizing: border-box !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .cover-subtitle {
+    font-size: 20px !important;
+    font-weight: 700 !important;
+    color: #ffffff !important;
+    opacity: 0.95 !important;
+    margin-bottom: 6px !important;
+  }
+
+  .cover-title {
+    font-size: 28px !important;
+    font-weight: 900 !important;
+    color: #ffffff !important;
+    letter-spacing: -0.5px !important;
+    margin-bottom: 16px !important;
+  }
+
+  .cover-divider {
+    width: 100% !important;
+    height: 2px !important;
+    background-color: rgba(255, 255, 255, 0.85) !important;
+    margin-bottom: 24px !important;
+  }
+
+  .cover-center {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    text-align: center !important;
+    margin: auto 0 !important;
+  }
+
+  .cover-logo-circle {
+    background-color: #ffffff !important;
+    border-radius: 50% !important;
+    width: 120px !important;
+    height: 120px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    margin-bottom: 20px !important;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.12) !important;
+  }
+
+  .cover-logo-circle img {
+    width: 82px !important;
+    height: 82px !important;
+    object-fit: contain !important;
+  }
+
+  .cover-org-title {
+    font-size: 20px !important;
+    font-weight: 800 !important;
+    color: #ffffff !important;
+  }
+
+  .cover-bottom-date {
+    font-size: 15px !important;
+    font-weight: 700 !important;
+    color: #ffffff !important;
+    text-align: right !important;
+  }
+
+  /* ۳. استایل‌های صفحات گزارش */
+  .page-top-content {
+    width: 100% !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 10px !important;
+    flex: 1 1 auto !important;
+  }
+
+  .page-header-banner {
+    background-color: #4a8b38 !important;
+    color: #ffffff !important;
+    font-weight: 800 !important;
+    font-size: 14.5px !important;
+    text-align: center !important;
+    padding: 6px 14px !important;
+    border-radius: 6px !important;
+    margin-bottom: 8px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .page-project-title {
+    font-size: 17px !important;
+    font-weight: 900 !important;
+    color: #0f172a !important;
+    margin: 0 0 8px 0 !important;
+    text-align: right !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+  }
+
+  .page-project-title .continuation-tag {
+    font-size: 13.5px !important;
+    font-weight: 700 !important;
+    color: #64748b !important;
+  }
+
+  .project-main-card {
+    border: 1.5px solid #1e293b !important;
+    border-radius: 16px !important;
+    padding: 14px 18px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 10px !important;
+    background-color: #ffffff !important;
+    box-sizing: border-box !important;
+  }
+
+  .section-block {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 4px !important;
+  }
+
+  .section-heading {
+    font-size: 14.5px !important;
+    font-weight: 800 !important;
+    color: #0f172a !important;
+    margin-bottom: 4px !important;
+  }
+
+  .bullet-list {
+    list-style: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 5px !important;
+  }
+
+  .bullet-item {
+    position: relative !important;
+    padding-right: 18px !important;
+    font-size: 14px !important;
+    line-height: 1.55 !important;
+    color: #1e293b !important;
+    text-align: justify !important;
+    word-break: break-word !important;
+  }
+
+  .bullet-item .bullet-dot {
+    position: absolute !important;
+    right: 0 !important;
+    top: 1px !important;
+    font-size: 14px !important;
+    font-weight: bold !important;
+    line-height: 1 !important;
+  }
+
+  .action-status-badge {
+    display: inline-block !important;
+    padding: 2px 7px !important;
+    border-radius: 4px !important;
+    font-size: 11.5px !important;
+    font-weight: 700 !important;
+    margin-left: 8px !important;
+    vertical-align: middle !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .action-status-badge.completed {
+    background-color: #ecfdf5 !important;
+    color: #065f46 !important;
+    border: 1px solid #6ee7b7 !important;
+  }
+
+  .action-status-badge.overdue {
+    background-color: #fefce8 !important;
+    color: #b45309 !important;
+    border: 1px solid #fde047 !important;
+  }
+
+  .action-status-badge.cancelled {
+    background-color: #fff1f2 !important;
+    color: #be123c !important;
+    border: 1px solid #fecdd3 !important;
+  }
+
+  .action-status-badge.prev-week {
+    background-color: #f1f5f9 !important;
+    color: #334155 !important;
+    border: 1px solid #cbd5e1 !important;
+    font-weight: 800 !important;
+  }
+
+  .action-target-date {
+    display: inline-block !important;
+    direction: ltr !important;
+    font-weight: 700 !important;
+    color: #475569 !important;
+    margin-right: 6px !important;
+    font-size: 12.5px !important;
+  }
+
+  .action-cancellation-reason {
+    color: #9f1239 !important;
+    font-weight: 700 !important;
+    font-size: 12px !important;
+    margin-right: 6px !important;
+  }
+
+  .kpi-matrix-table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    border: 1px solid #cbd5e1 !important;
+    font-size: 11.5px !important;
+    line-height: 1.35 !important;
+  }
+
+  .kpi-matrix-table th, .kpi-matrix-table td {
+    border: 1px solid #cbd5e1 !important;
+    padding: 4px 6px !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .kpi-matrix-table thead tr {
+    background-color: #f1f5f9 !important;
+    color: #1e293b !important;
+    font-weight: bold !important;
+  }
+
+  /* ۴. نوار فوتر امن در پایین برگه A4 */
+  .page-footer-bar {
+    width: 100% !important;
+    height: 24px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border-top: 1px solid #e2e8f0 !important;
+    padding-top: 4px !important;
+    margin-top: auto !important;
+    flex-shrink: 0 !important;
+    box-sizing: border-box !important;
+  }
+
+  .page-footer-text {
+    font-size: 12px !important;
+    font-weight: 700 !important;
+    color: #64748b !important;
+    letter-spacing: -0.2px !important;
+  }
+`;
 
 export default function ReportsPdfDocument({
   isOpen,
@@ -89,6 +470,8 @@ export default function ReportsPdfDocument({
   const [localPeriods, setLocalPeriods] = useState<ReportPeriod[]>([]);
   const [localProjects, setLocalProjects] = useState<Project[]>([]);
   const [localUsers, setLocalUsers] = useState<User[]>([]);
+  const [localKpis, setLocalKpis] = useState<ProjectKpi[]>([]);
+  const [localNextActions, setLocalNextActions] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
 
   const printAreaRef = useRef<HTMLDivElement>(null);
@@ -115,11 +498,12 @@ export default function ReportsPdfDocument({
     return Array.from(set);
   }, [localUsers, localReports, currentUser, isManager]);
 
-  // پروژه‌های در دسترس (برای پرسنل عادی فقط پروژه‌های مربوط به گزارش‌های خودش)
+  // پروژه‌های در دسترس (منحصراً پروژه‌های فعال)
   const availableProjects = useMemo(() => {
-    if (isManager) return localProjects;
+    const activeProjects = localProjects.filter((p) => p.is_active !== false);
+    if (isManager) return activeProjects;
     const projectIdsInReports = new Set(localReports.map((r) => r.project_id));
-    return localProjects.filter((p) => projectIdsInReports.has(p.id));
+    return activeProjects.filter((p) => projectIdsInReports.has(p.id));
   }, [localProjects, localReports, isManager]);
 
   // دوره‌های در دسترس (برای پرسنل عادی فقط دوره‌هایی که گزارش دارند)
@@ -129,7 +513,7 @@ export default function ReportsPdfDocument({
     return localPeriods.filter((p) => periodIdsInReports.has(p.id));
   }, [localPeriods, localReports, isManager]);
 
-  // بارگذاری داده‌ها هنگام باز شدن مودال
+  // بارگذاری داده‌ها هنگام باز شدن مودال — با اولویت نمایش بلادرنگ و کش محلی
   useEffect(() => {
     if (!isOpen) {
       isFetchingRef.current = false;
@@ -140,47 +524,88 @@ export default function ReportsPdfDocument({
       setSelectedPeriodId(defaultPeriodId);
     }
 
+    // ۱. همگام‌سازی بلادرنگ داده‌های ارسال‌شده از صفحه والد (نمایش بدون ۱ میلی‌ثانیه تاخیر)
+    const hasPropsReports = Array.isArray(reports) && reports.length > 0;
+    const hasPropsPeriods = Array.isArray(periods) && periods.length > 0;
+    const hasPropsProjects = Array.isArray(projects) && projects.length > 0;
+    const hasPropsUsers = Array.isArray(users) && users.length > 0;
+
+    if (hasPropsReports) setLocalReports(reports);
+    if (hasPropsPeriods) {
+      setLocalPeriods(periods);
+      if (defaultPeriodId === undefined) {
+        const openPeriod = periods.find((p: any) => p.is_open) || periods[0];
+        if (openPeriod) setSelectedPeriodId(openPeriod.id);
+      }
+    }
+    if (hasPropsProjects) setLocalProjects(projects);
+    if (hasPropsUsers) setLocalUsers(users);
+
+    // تنها در صورتی که هیچ گزارشی از قبل موجود نباشد لودینگ نمایش داده می‌شود
+    if (!hasPropsReports && localReports.length === 0) {
+      setLoading(true);
+    }
+
+    // جلوگیری از ارسال مکرر درخواست‌های همزمان به سرور Railway
     if (isFetchingRef.current) return;
     isFetchingRef.current = true;
 
-    const needFetchReports = !reports || reports.length === 0;
-    const needFetchPeriods = !periods || periods.length === 0;
-    const needFetchProjects = !projects || projects.length === 0;
-    const needFetchUsers = !users || users.length === 0;
-
-    if (reports && reports.length > 0) setLocalReports(reports);
-    if (periods && periods.length > 0) setLocalPeriods(periods);
-    if (projects && projects.length > 0) setLocalProjects(projects);
-    if (users && users.length > 0) setLocalUsers(users);
-
-    if (needFetchReports || needFetchPeriods || needFetchProjects || needFetchUsers) {
-      setLoading(true);
-      Promise.all([
-        needFetchReports ? fetch("/api/reports").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(reports || []),
-        needFetchPeriods ? fetch("/api/report-periods").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(periods || []),
-        needFetchProjects ? fetch("/api/projects").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(projects || []),
-        needFetchUsers ? fetch("/api/users").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(users || []),
-      ])
-        .then(([reps, pers, projs, usrs]) => {
-          if (Array.isArray(reps)) setLocalReports(reps);
-          if (Array.isArray(pers)) {
-            setLocalPeriods(pers);
-            if (defaultPeriodId === undefined && pers.length > 0) {
-              const openPeriod = pers.find((p: any) => p.is_open) || pers[0];
-              setSelectedPeriodId(openPeriod.id);
-            }
+    // واکشی موازی داده‌های تکمیلی بدون بلاک کردن نمایش گزارش‌ها
+    Promise.all([
+      !hasPropsReports && localReports.length === 0 ? fetch("/api/reports").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(null),
+      !hasPropsPeriods && localPeriods.length === 0 ? fetch("/api/report-periods").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(null),
+      !hasPropsProjects && localProjects.length === 0 ? fetch("/api/projects").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(null),
+      !hasPropsUsers && localUsers.length === 0 ? fetch("/api/users").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(null),
+      localKpis.length === 0 ? fetch("/api/project-kpis").then((r) => (r.ok ? r.json() : [])).catch(() => []) : Promise.resolve(null),
+      localNextActions.length === 0 ? fetch("/api/next-actions").then((r) => (r.ok ? r.json() : [])).catch(() => []) : Promise.resolve(null),
+    ])
+      .then(([reps, pers, projs, usrs, kps, acts]) => {
+        if (Array.isArray(reps)) setLocalReports(reps);
+        if (Array.isArray(pers) && pers.length > 0) {
+          setLocalPeriods(pers);
+          if (defaultPeriodId === undefined) {
+            const openPeriod = pers.find((p: any) => p.is_open) || pers[0];
+            if (openPeriod) setSelectedPeriodId(openPeriod.id);
           }
-          if (Array.isArray(projs)) setLocalProjects(projs);
-          if (Array.isArray(usrs)) setLocalUsers(usrs);
-        })
-        .catch((err) => console.error("Error fetching data in PDF modal:", err))
-        .finally(() => setLoading(false));
-    }
+        }
+        if (Array.isArray(projs)) setLocalProjects(projs);
+        if (Array.isArray(usrs)) setLocalUsers(usrs);
+        if (Array.isArray(kps) && kps.length > 0) setLocalKpis(kps);
+        if (Array.isArray(acts) && acts.length > 0) setLocalNextActions(acts);
+      })
+      .catch((err) => console.error("Error fetching supplemental PDF data:", err))
+      .finally(() => setLoading(false));
   }, [isOpen, defaultPeriodId]);
+
+  // نقشه‌بندی اقدامات آتی تعریف‌شده به تفکیک پروژه (شامل تمام اقدامات فعال، گذشته و لغوشده)
+  const projectActionsMap = useMemo(() => {
+    const map: Record<number, any[]> = {};
+    (localNextActions || []).forEach((action: any) => {
+      const pid = action.project_id || action.report?.project_id;
+      if (pid) {
+        if (!map[pid]) map[pid] = [];
+        map[pid].push(action);
+      }
+    });
+    return map;
+  }, [localNextActions]);
+
+  // مپ سریع شاخص‌ها برای دسترسی به نام، واحد و هدف
+  const kpiMap = useMemo(() => {
+    const map: Record<number, ProjectKpi> = {};
+    (localKpis || []).forEach((k) => {
+      map[k.id] = k;
+    });
+    return map;
+  }, [localKpis]);
 
   // لیست فیلترشده و مرتب‌شده بر اساس اولویت پروژه‌ها
   const orderedReports = useMemo(() => {
     const filtered = localReports.filter((r) => {
+      // عدم نمایش گزارش‌های مربوط به پروژه‌های غیرفعال در خروجی PDF
+      const proj = localProjects.find((p) => p.id === r.project_id);
+      if (proj && proj.is_active === false) return false;
+
       if (selectedPeriodId > 0 && r.period_id !== selectedPeriodId) return false;
       if (selectedProjectId > 0 && r.project_id !== selectedProjectId) return false;
       if (selectedDeputy) {
@@ -205,120 +630,302 @@ export default function ReportsPdfDocument({
     });
   }, [localReports, localProjects, localUsers, selectedPeriodId, selectedProjectId, selectedDeputy]);
 
-  // کمکی برای تفکیک خطوط به بالت‌ها
+  // کمکی برای تفکیک خطوط به بالت‌ها (با شکستن پاراگراف‌های بسیار طولانی جهت جلوگیری از سرریز در صفحه A4)
   const parseBulletPoints = (text: string | null | undefined): string[] => {
     if (!text) return [];
-    return text
+    const lines = text
       .split("\n")
       .map((l) => l.trim())
       .filter(Boolean)
       .map((l) => l.replace(/^([•\-\*\d+\.\s\u06F0-\u06F9\.\-\–\—])+\s*/, "").trim())
       .filter((l) => l.length > 0);
+
+    const result: string[] = [];
+    lines.forEach((line) => {
+      // اگر یک پاراگراف بدون اینتر طولانی باشد (بیش از ۱۸۰ کاراکتر)،
+      // آن را بر اساس علائم نگارشی به جملات کوچکتر تفکیک کن تا در صورت لزوم بین صفحات بشکند
+      if (line.length > 180) {
+        const sentences = line.split(/(?<=[.!?؛؟\n])\s+/).filter((s) => s.trim().length > 0);
+        if (sentences.length > 1) {
+          result.push(...sentences);
+          return;
+        }
+      }
+      result.push(line);
+    });
+    return result;
   };
 
-  // الگوریتم صفحه‌بندی هوشمند پروژه‌های طولانی بر اساس ظرفیت واقعی برگه A4
+  // الگوریتم صفحه‌بندی هوشمند: چند گزارش کوتاه در یک صفحه، گزارش‌های بلند به چند صفحه
   const paginatedReportPages = useMemo(() => {
+    // 📏 محاسبات استاندارد صفحه A4 (فونت ۱۴ و فاصله‌بندی متوازن)
     const pages: ReportPageData[] = [];
-    const MAX_PAGE_LINES = 68; // گنجایش واقعی تعداد خطوط در یک صفحه A4
+    const MAX_PAGE_LINES = 38; // گنجایش ایمن و استاندارد صفحه A4 با فونت ۱۴
+    const BLOCK_OVERHEAD_LINES = 3.5; // هزینه عنوان پروژه، کادر و حاشیه‌ها
+    const BLOCK_GAP_LINES = 1.5; // فاصله بین دو گزارش در یک صفحه مشترک
+    const MAX_PAGE_CONTENT_LINES = MAX_PAGE_LINES - BLOCK_OVERHEAD_LINES; // گنجایش محتوای مفید (۳۴.۵ خط)
 
     const estimateItemLines = (text: string): number => {
       if (!text) return 1;
-      const len = text.length;
-      if (len <= 85) return 1.1;
-      if (len <= 170) return 2.1;
-      if (len <= 255) return 3.1;
-      return Math.max(1, Math.ceil(len / 85)) + 0.1;
+      const lines = Math.max(1, Math.ceil(text.length / 80));
+      return lines + 0.25;
     };
 
-    orderedReports.forEach((report) => {
+    // هزینه هر گزارش به خطوط معادل صفحه‌ای
+    const measureReport = (report: Report) => {
       const activitiesList = parseBulletPoints(report.activities_done);
-      const resultsList =
-        report.achievedActions && report.achievedActions.length > 0
-          ? report.achievedActions.map((a) => a.action_text)
-          : parseBulletPoints(report.results_achieved);
 
-      const nextActionsList =
-        report.nextActions && report.nextActions.length > 0
-          ? report.nextActions.map((na) => ({
-            text: na.action_text,
-            date: na.target_date_raw || (na.target_date ? formatPersianDate(na.target_date) : null),
-          }))
-          : [];
+      // ۱. جمع‌آوری تمامی اقدامات مرتبط با پروژه (شامل دوره‌های گذشته و جاری و لغوشده‌ها)
+      const allProjectActions = [
+        ...(projectActionsMap[report.project_id] || []),
+        ...(report.nextActions || []),
+      ];
+
+      // ۱-۱. نتایج اقدامات:
+      // الف) دستاوردهای هفته جاری (ثبت‌شده در همین گزارش)
+      const currentWeekItems: PageSectionItem[] = [];
+      if (report.achievedActions && report.achievedActions.length > 0) {
+        report.achievedActions.forEach((act: any) => {
+          currentWeekItems.push({
+            text: act.action_text,
+            status: "completed",
+            date: act.target_date_raw || (act.target_date ? formatPersianDate(act.target_date) : null),
+          });
+        });
+      } else if (report.results_achieved) {
+        const lines = parseBulletPoints(report.results_achieved);
+        lines.forEach((text) => {
+          currentWeekItems.push({ text });
+        });
+      }
+
+      // در صورت وجود یادداشت‌های تکمیلی علاوه بر چک‌لیست اقدامات
+      if (
+        report.achievedActions &&
+        report.achievedActions.length > 0 &&
+        report.results_achieved &&
+        !report.results_achieved.startsWith("•")
+      ) {
+        const extraLines = parseBulletPoints(report.results_achieved.replace(/^توضیحات تکمیلی:\s*/, ""));
+        extraLines.forEach((text) => {
+          currentWeekItems.push({ text: `توضیحات تکمیلی: ${text}` });
+        });
+      }
+
+      // ب) اقدامات تکمیل‌شده هفته گذشته (دوره قبل همین پروژه) با تگ «اقدامات هفته قبل»
+      const prevWeekItems: PageSectionItem[] = [];
+      const projectReports = localReports.filter((r) => r.project_id === report.project_id);
+      const sortedProjectReports = [...projectReports].sort(
+        (a, b) => new Date(a.period_end || a.submitted_at).getTime() - new Date(b.period_end || b.submitted_at).getTime()
+      );
+      const currIdx = sortedProjectReports.findIndex((r) => r.id === report.id);
+      const prevReport = currIdx > 0 ? sortedProjectReports[currIdx - 1] : null;
+
+      if (prevReport) {
+        if (prevReport.achievedActions && prevReport.achievedActions.length > 0) {
+          prevReport.achievedActions.forEach((act: any) => {
+            prevWeekItems.push({
+              text: act.action_text,
+              status: "completed",
+              badgeTag: "اقدامات هفته قبل",
+              date: act.target_date_raw || (act.target_date ? formatPersianDate(act.target_date) : null),
+            });
+          });
+        } else if (prevReport.results_achieved) {
+          const lines = parseBulletPoints(prevReport.results_achieved);
+          lines.forEach((text) => {
+            prevWeekItems.push({
+              text,
+              badgeTag: "اقدامات هفته قبل",
+            });
+          });
+        }
+      }
+
+      // ج) اقدامات لغوشده این هفته / دوره (با باکس قرمز ✕ حذف‌شده در انتها)
+      const cancelledItems: PageSectionItem[] = [];
+      const seenCancelled = new Set<string>();
+
+      allProjectActions.forEach((act: any) => {
+        if (!act || !act.is_cancelled) return;
+        const key = `${act.id || act.action_text}`;
+        if (seenCancelled.has(key)) return;
+
+        let isCurrentPeriodCancel = false;
+        if (act.canelled_period_id && act.canelled_period_id === report.period_id) {
+          isCurrentPeriodCancel = true;
+        } else if (act.cancelled_at && report.period_start && report.period_end) {
+          const cancelTime = new Date(act.cancelled_at).getTime();
+          const pStartTime = new Date(report.period_start).getTime() - 24 * 3600 * 1000;
+          const pEndTime = new Date(report.period_end).getTime() + 7 * 24 * 3600 * 1000;
+          if (cancelTime >= pStartTime && cancelTime <= pEndTime) {
+            isCurrentPeriodCancel = true;
+          }
+        } else if (act.report_id === report.id) {
+          isCurrentPeriodCancel = true;
+        }
+
+        if (isCurrentPeriodCancel) {
+          seenCancelled.add(key);
+          cancelledItems.push({
+            text: act.action_text,
+            status: "cancelled",
+            cancellationReason: act.cancellation_reason,
+          });
+        }
+      });
+
+      // ترکیب همه موارد در بخش نتایج اقدامات
+      const resultsSectionItems: PageSectionItem[] = [
+        ...currentWeekItems,
+        ...prevWeekItems,
+        ...cancelledItems,
+      ];
+
+      // ۲. اقدامات آتی (فقط مواردی که هنوز انجام‌نشده و لغونشده‌اند)
+      const nextActionsList: PageSectionItem[] = [];
+      const seenActionTexts = new Set<string>();
+
+      allProjectActions.forEach((na: any) => {
+        if (!na) return;
+        // حذف کامل تکمیل‌شده‌ها و لغوشده‌ها از این بخش
+        if (na.is_completed || na.is_cancelled) return;
+
+        const textKey = (na.action_text || "").trim();
+        if (!textKey || seenActionTexts.has(textKey)) return;
+        seenActionTexts.add(textKey);
+
+        const isOverdue = na.target_date && new Date(na.target_date).getTime() < Date.now();
+
+        nextActionsList.push({
+          text: na.action_text,
+          date: na.target_date_raw || (na.target_date ? formatPersianDate(na.target_date) : null),
+          status: isOverdue ? "overdue" : "upcoming",
+        });
+      });
+
+      // مرتب‌سازی: ابتدا هشدارهای ددلاین رد شده (باکس زرد)، سپس اقدامات دارای مهلت
+      nextActionsList.sort((a, b) => {
+        if (a.status === "overdue" && b.status !== "overdue") return -1;
+        if (a.status !== "overdue" && b.status === "overdue") return 1;
+        return 0;
+      });
 
       // ایجاد بخش‌های خام
-      const rawSections: Array<{ heading: string; items: Array<{ text: string; date?: string | null }> }> = [];
+      const rawSections: Array<PageSection> = [];
 
       if (activitiesList.length > 0) {
         rawSections.push({
-          heading: ".۱ مهم‌ترین اقدامات انجام‌شده در هفته جاری:",
+          heading: "۱. مهم‌ترین اقدامات انجام‌شده در هفته جاری:",
           items: activitiesList.map((text) => ({ text })),
         });
       } else if (report.activities_done) {
         rawSections.push({
-          heading: ".۱ مهم‌ترین اقدامات انجام‌شده در هفته جاری:",
+          heading: "۱. مهم‌ترین اقدامات انجام‌شده در هفته جاری:",
           items: [{ text: report.activities_done }],
         });
       }
 
-      if (resultsList.length > 0) {
+      if (resultsSectionItems.length > 0) {
         rawSections.push({
-          heading: "نتایج اقدامات:",
-          items: resultsList.map((text) => ({ text })),
+          heading: "۱-۱. نتایج اقدامات:",
+          items: resultsSectionItems,
         });
       }
 
       if (nextActionsList.length > 0) {
         rawSections.push({
-          heading: ".۲ اقدامات آتی:",
+          heading: "۲. اقدامات آتی:",
           items: nextActionsList,
         });
       }
 
-      if (rawSections.length === 0) {
-        pages.push({
-          reportId: report.id,
-          projectTitle: report.project_title,
-          isContinuation: false,
-          sections: [],
+      // بخش ۳: شاخص‌های کلیدی عملکرد (KPI) با جدول ماتریسی فشرده
+      const hasStructuredKpis = Array.isArray(report.kpiValues) && report.kpiValues.length > 0;
+      const hasKpiText = Boolean(report.kpi_text && report.kpi_text.trim());
+
+      if (hasStructuredKpis || hasKpiText) {
+        rawSections.push({
+          heading: "۳. شاخص‌های کلیدی عملکرد (KPI):",
+          type: "kpi_table",
+          items: [],
+          kpiValues: report.kpiValues || [],
+          kpiText: report.kpi_text,
         });
-        return;
+      } else {
+        rawSections.push({
+          heading: "۳. شاخص‌های کلیدی عملکرد (KPI):",
+          type: "bullets",
+          items: [{ text: "شاخص عملکردی برای این دوره ثبت نشده است." }],
+        });
       }
 
-      // محاسبه کل خطوط گزارش
       let totalLinesInReport = 0;
       rawSections.forEach((sec) => {
-        totalLinesInReport += 1.3; // عنوان بخش
-        sec.items.forEach((item) => {
-          totalLinesInReport += estimateItemLines(item.text);
-        });
+        totalLinesInReport += 1.4; // عنوان بخش
+        if (sec.type === "kpi_table") {
+          const rowCount = sec.kpiValues && sec.kpiValues.length > 0 ? sec.kpiValues.length : 1;
+          totalLinesInReport += 3.0 + (rowCount * 2.1);
+        } else {
+          sec.items.forEach((item) => {
+            totalLinesInReport += estimateItemLines(item.text);
+          });
+        }
       });
 
-      // اگر کل گزارش در یک صفحه A4 جا می‌شود، تماماً در یک صفحه قرار گیرد
-      if (totalLinesInReport <= MAX_PAGE_LINES) {
-        pages.push({
-          reportId: report.id,
-          projectTitle: report.project_title,
-          isContinuation: false,
-          sections: rawSections,
-        });
-        return;
-      }
+      return { rawSections, totalLinesInReport };
+    };
 
-      // تقسیم‌بندی روی صفحات A4 در صورت بسیار طولانی بودن
+    // ساخت بلوک‌های صفحات یک گزارش طولانی
+    const splitLongReport = (
+      report: Report,
+      rawSections: PageSection[]
+    ): PageBlock[] => {
+      const blocks: PageBlock[] = [];
       let currentPageSections: PageSection[] = [];
       let currentLines = 0;
       let isContinuation = false;
 
       rawSections.forEach((section) => {
+        const headingLines = 1.4;
+
+        if (section.type === "kpi_table") {
+          const rowCount = section.kpiValues && section.kpiValues.length > 0 ? section.kpiValues.length : 1;
+          const tableLines = 3.0 + (rowCount * 2.1);
+
+          if (
+            currentLines + headingLines + tableLines > MAX_PAGE_CONTENT_LINES &&
+            currentPageSections.length > 0
+          ) {
+            blocks.push({
+              reportId: report.id,
+              projectTitle: report.project_title,
+              isContinuation,
+              sections: currentPageSections,
+            });
+            currentPageSections = [];
+            currentLines = 0;
+            isContinuation = true;
+          }
+
+          currentPageSections.push({
+            heading: isContinuation && currentPageSections.length === 0 ? `${section.heading} (ادامه)` : section.heading,
+            type: "kpi_table",
+            items: [],
+            kpiValues: section.kpiValues,
+            kpiText: section.kpiText,
+          });
+          currentLines += headingLines + tableLines;
+          return;
+        }
+
         if (section.items.length === 0) return;
 
-        const headingLines = 1.3;
-
         if (
-          currentLines + headingLines + estimateItemLines(section.items[0].text) > MAX_PAGE_LINES &&
+          currentLines + headingLines + estimateItemLines(section.items[0].text) > MAX_PAGE_CONTENT_LINES &&
           currentPageSections.length > 0
         ) {
-          pages.push({
+          blocks.push({
             reportId: report.id,
             projectTitle: report.project_title,
             isContinuation,
@@ -330,7 +937,7 @@ export default function ReportsPdfDocument({
         }
 
         let currentSection: PageSection = {
-          heading: section.heading,
+          heading: isContinuation && currentPageSections.length === 0 ? `${section.heading} (ادامه)` : section.heading,
           items: [],
         };
         currentLines += headingLines;
@@ -339,14 +946,14 @@ export default function ReportsPdfDocument({
           const l = estimateItemLines(item.text);
 
           if (
-            currentLines + l > MAX_PAGE_LINES &&
+            currentLines + l > MAX_PAGE_CONTENT_LINES &&
             (currentSection.items.length > 0 || currentPageSections.length > 0)
           ) {
             if (currentSection.items.length > 0) {
               currentPageSections.push(currentSection);
             }
 
-            pages.push({
+            blocks.push({
               reportId: report.id,
               projectTitle: report.project_title,
               isContinuation,
@@ -357,7 +964,7 @@ export default function ReportsPdfDocument({
             currentLines = headingLines;
             isContinuation = true;
             currentSection = {
-              heading: section.heading + " (ادامه)",
+              heading: `${section.heading} (ادامه)`,
               items: [],
             };
           }
@@ -372,17 +979,84 @@ export default function ReportsPdfDocument({
       });
 
       if (currentPageSections.length > 0) {
-        pages.push({
+        blocks.push({
           reportId: report.id,
           projectTitle: report.project_title,
           isContinuation,
           sections: currentPageSections,
         });
       }
+
+      return blocks;
+    };
+
+    let currentPage: ReportPageData = { blocks: [] };
+    let currentPageLines = 0;
+
+    const flushPage = () => {
+      if (currentPage.blocks.length > 0) {
+        pages.push(currentPage);
+      }
+      currentPage = { blocks: [] };
+      currentPageLines = 0;
+    };
+
+    orderedReports.forEach((report) => {
+      const { rawSections, totalLinesInReport } = measureReport(report);
+
+      if (rawSections.length === 0) {
+        // گزارش خالی: بلوک ساده در صفحه جاری
+        const emptyBlockCost = BLOCK_OVERHEAD_LINES + 2;
+        if (currentPageLines + emptyBlockCost > MAX_PAGE_LINES) {
+          flushPage();
+        }
+        currentPage.blocks.push({
+          reportId: report.id,
+          projectTitle: report.project_title,
+          isContinuation: false,
+          sections: [],
+        });
+        currentPageLines += emptyBlockCost + (currentPage.blocks.length > 1 ? BLOCK_GAP_LINES : 0);
+        return;
+      }
+
+      // گزارشی که کلش در یک صفحه جا می‌شود: در صورت امکان به صفحه جاری اضافه شود
+      if (totalLinesInReport + BLOCK_OVERHEAD_LINES <= MAX_PAGE_LINES) {
+        const blockCost =
+          BLOCK_OVERHEAD_LINES + totalLinesInReport + (currentPage.blocks.length > 0 ? BLOCK_GAP_LINES : 0);
+
+        if (currentPageLines + blockCost <= MAX_PAGE_LINES) {
+          currentPage.blocks.push({
+            reportId: report.id,
+            projectTitle: report.project_title,
+            isContinuation: false,
+            sections: rawSections,
+          });
+          currentPageLines += blockCost;
+        } else {
+          flushPage();
+          currentPage.blocks.push({
+            reportId: report.id,
+            projectTitle: report.project_title,
+            isContinuation: false,
+            sections: rawSections,
+          });
+          currentPageLines += BLOCK_OVERHEAD_LINES + totalLinesInReport;
+        }
+        return;
+      }
+
+      // گزارش بسیار طولانی است: صفحه جاری بسته شود و گزارش روی صفحات متعدد شکسته شود
+      flushPage();
+      splitLongReport(report, rawSections).forEach((block) => {
+        pages.push({ blocks: [block] });
+      });
     });
 
+    flushPage();
+
     return pages;
-  }, [orderedReports]);
+  }, [orderedReports, localReports, projectActionsMap]);
 
   if (!isOpen) return null;
 
@@ -395,18 +1069,39 @@ export default function ReportsPdfDocument({
 
   const reportTypeName = activePeriod?.report_type === "monthly" ? "گزارش ماهانه" : "گزارش هفتگی";
 
-  // پرینت خروجی PDF با تمپلیت استاندارد سایز A4
+  // پرینت خروجی PDF با تمپلیت استاندارد سایز A4 بدون سرریز و با لود آنی
   const handlePrint = () => {
     if (!printAreaRef.current) return;
     const content = printAreaRef.current.innerHTML;
 
+    // استخراج تمامی کدهای CSS کامپایل‌شده اپلیکیشن بدون نیاز به دانلود مجدد شبکه
+    let combinedCss = "";
+    Array.from(document.styleSheets).forEach((sheet) => {
+      try {
+        const rules = sheet.cssRules || sheet.rules;
+        if (rules) {
+          for (let i = 0; i < rules.length; i++) {
+            combinedCss += rules[i].cssText + "\n";
+          }
+        }
+      } catch (e) {
+        // نادیده گرفتن استایل‌های cross-origin
+      }
+    });
+
+    // پاک‌سازی پرینت‌فریم قبلی در صورت وجود
+    const existingFrame = document.getElementById("reports-a4-print-iframe");
+    if (existingFrame) existingFrame.remove();
+
     const printFrame = document.createElement("iframe");
+    printFrame.id = "reports-a4-print-iframe";
     printFrame.style.position = "fixed";
     printFrame.style.right = "0";
     printFrame.style.bottom = "0";
     printFrame.style.width = "0";
     printFrame.style.height = "0";
     printFrame.style.border = "0";
+    printFrame.style.visibility = "hidden";
     document.body.appendChild(printFrame);
 
     const doc = printFrame.contentWindow?.document;
@@ -418,236 +1113,33 @@ export default function ReportsPdfDocument({
       <html dir="rtl" lang="fa">
       <head>
         <meta charset="utf-8">
+        <base href="${window.location.origin}">
         <title>گزارش پروژه‌های استراتژیک - ${formatPersianDateTime(new Date())}</title>
-        <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css" />
         <style>
-          * {
-            box-sizing: border-box;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
-            color-adjust: exact !important;
-          }
-          @page {
-            size: A4 portrait;
-            margin: 0;
-          }
-          html, body {
-            width: 210mm;
-            height: 297mm;
-            margin: 0;
-            padding: 0;
-            background-color: #ffffff;
-            font-family: 'Vazirmatn', Sahel, Vazir, Shabnam, Tahoma, system-ui, -apple-system, sans-serif;
-            direction: rtl;
-            text-align: right;
-            color: #0f172a;
-            font-size: 11.5px;
-            line-height: 1.55;
-          }
-
-          /* ساختار دقیق صفحه استاندارد A4 */
-          .pdf-page-container {
-            width: 210mm;
-            height: 297mm;
-            min-height: 297mm;
-            max-height: 297mm;
-            padding: 12mm 14mm 10mm 14mm;
-            margin: 0 auto;
-            position: relative;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            page-break-after: always;
-            break-after: page;
-            page-break-inside: avoid;
-            break-inside: avoid;
-            background-color: #ffffff;
-            box-sizing: border-box;
-            overflow: hidden;
-          }
-
-          /* صفحه اول / کاور استارتر */
-          .cover-page-box {
-            background-color: #55913e;
-            border-radius: 20px;
-            width: 100%;
-            height: 100%;
-            padding: 44px 36px 36px 36px;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            color: #ffffff;
-            box-sizing: border-box;
-          }
-
-          .cover-subtitle {
-            font-size: 20px;
-            font-weight: 700;
-            color: #ffffff;
-            margin-bottom: 6px;
-          }
-
-          .cover-title {
-            font-size: 30px;
-            font-weight: 900;
-            color: #ffffff;
-            letter-spacing: -0.5px;
-            margin-bottom: 24px;
-          }
-
-          .cover-divider {
-            width: 100%;
-            height: 2px;
-            background-color: rgba(255, 255, 255, 0.85);
-            margin-bottom: 40px;
-          }
-
-          .cover-center {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            text-align: center;
-            margin: auto 0;
-          }
-
-          .cover-logo-circle {
-            background-color: #ffffff;
-            border-radius: 50%;
-            width: 145px;
-            height: 145px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-bottom: 26px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.15);
-          }
-
-          .cover-logo-circle img {
-            width: 100px;
-            height: 100px;
-            object-fit: contain;
-          }
-
-          .cover-org-title {
-            font-size: 21px;
-            font-weight: 800;
-            color: #ffffff;
-          }
-
-          .cover-bottom-date {
-            font-size: 16px;
-            font-weight: 700;
-            color: #ffffff;
-            text-align: right;
-            padding-right: 8px;
-          }
-
-          /* هدر سبز بالای صفحات گزارش */
-          .page-header-banner {
-            background-color: #4a8b38;
-            color: #ffffff;
-            font-weight: 800;
-            font-size: 13.5px;
-            text-align: center;
-            padding: 7px 14px;
-            border-radius: 4px;
-            margin-bottom: 10px;
-            width: 100%;
-          }
-
-          /* عنوان پروژه */
-          .page-project-title {
-            font-size: 14.5px;
-            font-weight: 900;
-            color: #0f172a;
-            margin: 0 0 8px 0;
-            text-align: right;
-          }
-
-          /* باکس دور پروژه متناسب با حجم متن */
-          .project-main-card {
-            border: 1.5px solid #1e293b;
-            border-radius: 18px;
-            padding: 16px 20px;
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            background-color: #ffffff;
-          }
-
-          .section-block {
-            margin-bottom: 4px;
-          }
-
-          .section-heading {
-            font-size: 11.5px;
-            font-weight: 900;
-            color: #0f172a;
-            margin-bottom: 5px;
-          }
-
-          .bullet-list {
-            list-style: none;
-            padding: 0;
-            margin: 0;
-          }
-
-          .bullet-item {
-            position: relative;
-            padding-right: 14px;
-            margin-bottom: 5px;
-            font-size: 10.8px;
-            line-height: 1.55;
-            color: #1e293b;
-            text-align: justify;
-          }
-
-          .bullet-item::before {
-            content: "•";
-            position: absolute;
-            right: 0;
-            top: -1px;
-            font-size: 13px;
-            font-weight: bold;
-            color: #0f172a;
-          }
-
-          .target-date-tag {
-            display: inline-block;
-            direction: ltr;
-            font-weight: bold;
-            color: #334155;
-            margin-right: 4px;
-          }
-
-          /* شماره صفحه در وسط و پایین */
-          .page-bottom-number {
-            text-align: center;
-            font-size: 13.5px;
-            font-weight: 800;
-            color: #0f172a;
-            padding-top: 8px;
-            margin-top: auto;
-          }
+          ${combinedCss}
+          ${PDF_DOCUMENT_STYLES}
         </style>
       </head>
       <body>
-        ${content}
+        <div id="printable-pdf-document">
+          ${content}
+        </div>
       </body>
       </html>
     `);
     doc.close();
 
-    setTimeout(() => {
+    // اجرای فوری چاپ به محض آماده شدن سند بدون معطلی لودینگ مرورگر
+    const executePrint = () => {
       printFrame.contentWindow?.focus();
       printFrame.contentWindow?.print();
-      setTimeout(() => {
-        if (document.body.contains(printFrame)) {
-          document.body.removeChild(printFrame);
-        }
-      }, 1500);
-    }, 450);
+    };
+
+    if (doc.readyState === "complete") {
+      setTimeout(executePrint, 60);
+    } else {
+      printFrame.onload = () => setTimeout(executePrint, 60);
+    }
   };
 
   return (
@@ -738,6 +1230,9 @@ export default function ReportsPdfDocument({
 
         {/* بدنه پیش‌نمایش سند PDF با ابعاد استاندارد A4 */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-slate-300/80 space-y-6 flex flex-col items-center">
+          {/* استایل‌های جامع مشترک خروجی و پیش‌نمایش A4 */}
+          <style dangerouslySetInnerHTML={{ __html: PDF_DOCUMENT_STYLES }} />
+
           {loading ? (
             <div className="py-20 text-center text-slate-500 text-xs flex items-center justify-center gap-2">
               <RefreshCw className="w-6 h-6 animate-spin text-emerald-700" />
@@ -747,38 +1242,36 @@ export default function ReportsPdfDocument({
             <div
               id="printable-pdf-document"
               ref={printAreaRef}
-              className="space-y-6"
             >
               {/* ۱. صفحه کاور و شروع گزارش (Starter Page) با سایز A4 */}
-              <div className="pdf-page-container w-[210mm] h-[297mm] min-h-[297mm] max-h-[297mm] bg-white p-[12mm_14mm_10mm_14mm] rounded-2xl shadow-xl border border-slate-300 overflow-hidden box-border">
-                <div className="cover-page-box bg-[#55913e] rounded-3xl p-10 flex flex-col justify-between text-white h-full box-border">
+              <div className="pdf-page-container">
+                <div className="cover-page-box">
                   {/* بخش بالا */}
                   <div>
-                    <div className="cover-subtitle text-xl font-bold opacity-95">
+                    <div className="cover-subtitle">
                       {reportTypeName}
                     </div>
-                    <div className="cover-title text-3xl font-black mt-1 mb-4">
+                    <div className="cover-title">
                       پروژه‌های استراتژیک
                     </div>
-                    <div className="cover-divider w-full h-[2px] bg-white/80 my-4" />
+                    <div className="cover-divider" />
                   </div>
 
                   {/* بخش میانی با لوگوی رسمی سازمان */}
-                  <div className="cover-center flex flex-col items-center justify-center text-center my-auto">
-                    <div className="cover-logo-circle bg-white rounded-full p-4 w-36 h-36 flex items-center justify-center shadow-xl mb-6">
+                  <div className="cover-center">
+                    <div className="cover-logo-circle">
                       <img
                         src="/logo.png"
                         alt="سازمان حمل و نقل و ترافیک شهرداری تهران"
-                        className="w-24 h-24 object-contain"
                       />
                     </div>
-                    <div className="cover-org-title text-xl font-extrabold text-white">
+                    <div className="cover-org-title">
                       سازمان حمل‌و‌نقل و ترافیک شهرداری تهران
                     </div>
                   </div>
 
                   {/* تاریخ پایین صفحه */}
-                  <div className="cover-bottom-date text-base font-bold text-white text-right">
+                  <div className="cover-bottom-date">
                     {coverDate}
                   </div>
                 </div>
@@ -794,64 +1287,140 @@ export default function ReportsPdfDocument({
                 paginatedReportPages.map((pageData, pageIdx) => {
                   return (
                     <div
-                      key={`${pageData.reportId}-p${pageIdx}`}
-                      className="pdf-page-container w-[210mm] h-[297mm] min-h-[297mm] max-h-[297mm] bg-white p-[12mm_14mm_10mm_14mm] rounded-2xl shadow-xl border border-slate-300 flex flex-col justify-between overflow-hidden box-border"
+                      key={`page-${pageIdx}`}
+                      className="pdf-page-container"
                     >
                       {/* محتوای بالا و اصلی صفحه */}
-                      <div className="w-full">
+                      <div className="page-top-content">
                         {/* نوار هدر سبز سراسری */}
-                        <div className="page-header-banner bg-[#4a8b38] text-white font-extrabold text-xs sm:text-sm text-center py-2 px-4 rounded mb-2.5 shadow-2xs shrink-0">
+                        <div className="page-header-banner">
                           گزارش پروژه‌های استراتژیک سازمان حمل‌و‌نقل وترافیک شهرداری تهران
                         </div>
 
-                        {/* عنوان پروژه */}
-                        <h2 className="page-project-title text-sm sm:text-base font-black text-slate-900 mb-2 text-right shrink-0">
-                          {pageData.projectTitle}
-                          {pageData.isContinuation && (
-                            <span className="text-xs font-bold text-slate-500 mr-2">
-                              (ادامه)
-                            </span>
-                          )}
-                        </h2>
+                        {/* چند گزارش می‌توانند در یک صفحه باشند */}
+                        {pageData.blocks.map((block, bIdx) => (
+                          <div key={`p${pageIdx}-b${bIdx}`}>
+                            {/* عنوان پروژه */}
+                            <h2 className="page-project-title">
+                              <span>{block.projectTitle}</span>
+                              {block.isContinuation && (
+                                <span className="continuation-tag">
+                                  (ادامه)
+                                </span>
+                              )}
+                            </h2>
 
-                        {/* کادر احاطه‌کننده محتوای پروژه متناسب با حجم متن */}
-                        <div className="project-main-card border-[1.5px] border-slate-800 rounded-2xl p-4 sm:p-5 space-y-3 bg-white">
-                          {pageData.sections.length === 0 ? (
-                            <p className="text-[11px] text-slate-400 italic">
-                              موردی برای این پروژه ثبت نشده است.
-                            </p>
-                          ) : (
-                            pageData.sections.map((sec, sIdx) => (
-                              <div key={sIdx} className="section-block space-y-1">
-                                <div className="section-heading text-xs font-black text-slate-900">
-                                  {sec.heading}
-                                </div>
+                            {/* کادر احاطه‌کننده محتوای پروژه */}
+                            <div className="project-main-card">
+                              {block.sections.length === 0 ? (
+                                <p style={{ fontSize: "13px", color: "#94a3b8", fontStyle: "italic" }}>
+                                  موردی برای این پروژه ثبت نشده است.
+                                </p>
+                              ) : (
+                                block.sections.map((sec, sIdx) => (
+                                  <div key={sIdx} className="section-block">
+                                    <div className="section-heading">
+                                      {sec.heading}
+                                    </div>
 
-                                <ul className="bullet-list space-y-1 pr-1">
-                                  {sec.items.map((it, itIdx) => (
-                                    <li
-                                      key={itIdx}
-                                      className="bullet-item text-[10.8px] leading-relaxed text-slate-800 text-justify relative pr-3.5"
-                                    >
-                                      <span className="absolute right-0 top-0 font-bold">•</span>
-                                      <span>{it.text}</span>
-                                      {it.date && (
-                                        <span className="target-date-tag text-slate-700 font-bold mr-1">
-                                          ({toPersianDigits(it.date)})
-                                        </span>
-                                      )}
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-                            ))
-                          )}
-                        </div>
+                                    {sec.type === "kpi_table" ? (
+                                      <KpiMatrixTable
+                                        kpiValues={sec.kpiValues}
+                                        kpiMap={kpiMap}
+                                        kpiText={sec.kpiText}
+                                        compactForPrint={true}
+                                      />
+                                    ) : (
+                                      <ul className="bullet-list">
+                                        {sec.items.map((it, itIdx) => {
+                                          if (it.status === "cancelled") {
+                                            return (
+                                              <li key={itIdx} className="bullet-item">
+                                                <span className="bullet-dot" style={{ color: "#e11d48" }}>•</span>
+                                                <span className="action-status-badge cancelled">
+                                                  ✕ حذف‌شده
+                                                </span>
+                                                <span>{it.text}</span>
+                                                {it.cancellationReason && (
+                                                  <span className="action-cancellation-reason">
+                                                    (علت حذف: {it.cancellationReason})
+                                                  </span>
+                                                )}
+                                              </li>
+                                            );
+                                          }
+
+                                          if (it.status === "completed") {
+                                            return (
+                                              <li key={itIdx} className="bullet-item">
+                                                <span className="bullet-dot" style={{ color: "#059669" }}>•</span>
+                                                {it.badgeTag && (
+                                                  <span className="action-status-badge prev-week">
+                                                    {it.badgeTag}
+                                                  </span>
+                                                )}
+                                                <span className="action-status-badge completed">
+                                                  ✓ تکمیل‌شده
+                                                </span>
+                                                <span>{it.text}</span>
+                                                {it.date && (
+                                                  <span className="action-target-date">
+                                                    ({toPersianDigits(it.date)})
+                                                  </span>
+                                                )}
+                                              </li>
+                                            );
+                                          }
+
+                                          if (it.status === "overdue") {
+                                            return (
+                                              <li key={itIdx} className="bullet-item">
+                                                <span className="bullet-dot" style={{ color: "#d97706" }}>•</span>
+                                                <span className="action-status-badge overdue">
+                                                  ⚠️ گذشته از موعد
+                                                </span>
+                                                <span>{it.text}</span>
+                                                {it.date && (
+                                                  <span className="action-target-date" style={{ color: "#b45309" }}>
+                                                    ({toPersianDigits(it.date)})
+                                                  </span>
+                                                )}
+                                              </li>
+                                            );
+                                          }
+
+                                          return (
+                                            <li key={itIdx} className="bullet-item">
+                                              <span className="bullet-dot" style={{ color: "#475569" }}>•</span>
+                                              {it.badgeTag && (
+                                                <span className="action-status-badge prev-week">
+                                                  {it.badgeTag}
+                                                </span>
+                                              )}
+                                              <span>{it.text}</span>
+                                              {it.date && (
+                                                <span className="action-target-date">
+                                                  ({toPersianDigits(it.date)})
+                                                </span>
+                                              )}
+                                            </li>
+                                          );
+                                        })}
+                                      </ul>
+                                    )}
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                        ))}
                       </div>
 
-                      {/* ۳. شماره صفحه به اعداد فارسی در وسط و پایین صفحه */}
-                      <div className="page-bottom-number text-center font-bold text-sm text-slate-900 pt-2 shrink-0">
-                        {toPersianDigits(pageIdx + 1)}
+                      {/* ۳. نوار فوتر امن در پایین برگه A4 */}
+                      <div className="page-footer-bar">
+                        <span className="page-footer-text">
+                          صفحه {toPersianDigits(pageIdx + 1)} از {toPersianDigits(paginatedReportPages.length)}
+                        </span>
                       </div>
                     </div>
                   );

@@ -20,6 +20,7 @@ import { config } from "./src/config/env";
 import { parseExcelWBS } from "./src/utils/wbsParser";
 import { parseWbsWorkbook } from "./src/utils/wbsDataParser";
 import { getDeadlineState } from "./src/deadline";
+import { ensureShamsiDate, isLastWeekOfShamsiMonth, shamsiToGregorian } from "./src/dateUtils";
 
 const SALT_ROUNDS = 10;
 const app = express();
@@ -197,11 +198,94 @@ function sanitizeUser(user: any) {
   };
 }
 
+// اطمینان از وجود ستون‌ها و ساختار دیتابیس در استقرار پروداکشن (Railway Self-Healing Migrations)
+async function ensureDatabaseSchema() {
+  try {
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "NextAction" ADD COLUMN IF NOT EXISTS "is_cancelled" BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE "NextAction" ADD COLUMN IF NOT EXISTS "cancelled_at" TIMESTAMP(3);
+      ALTER TABLE "NextAction" ADD COLUMN IF NOT EXISTS "cancellation_reason" TEXT;
+      ALTER TABLE "NextAction" ADD COLUMN IF NOT EXISTS "cancelled_by_user_id" INTEGER;
+      ALTER TABLE "NextAction" ADD COLUMN IF NOT EXISTS "cancelled_by_user_name" TEXT;
+      ALTER TABLE "NextAction" ADD COLUMN IF NOT EXISTS "canelled_period_id" INTEGER;
+      CREATE INDEX IF NOT EXISTS "NextAction_is_cancelled_idx" ON "NextAction"("is_cancelled");
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "ProjectKpi" ADD COLUMN IF NOT EXISTS "baseline_value" DOUBLE PRECISION;
+      ALTER TABLE "ProjectKpi" ALTER COLUMN "target_value" DROP NOT NULL;
+      ALTER TABLE "ReportKpiValue" ADD COLUMN IF NOT EXISTS "baseline_value" DOUBLE PRECISION;
+      ALTER TABLE "ReportKpiValue" ADD COLUMN IF NOT EXISTS "calculated_value" DOUBLE PRECISION;
+      ALTER TABLE "ReportKpiValue" ADD COLUMN IF NOT EXISTS "not_measured" BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE "ReportKpiValue" ADD COLUMN IF NOT EXISTS "missing_reason" TEXT;
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      DO $$ BEGIN
+        CREATE TYPE "CompositeOperator" AS ENUM ('sum', 'average', 'difference', 'multiply', 'ratio_percentage');
+      EXCEPTION
+        WHEN duplicate_object THEN null;
+      END $$;
+
+      CREATE TABLE IF NOT EXISTS "CompositeKpi" (
+        "id" SERIAL PRIMARY KEY,
+        "name" TEXT NOT NULL,
+        "description" TEXT,
+        "unit" TEXT NOT NULL,
+        "target_value" DOUBLE PRECISION,
+        "target_direction" "KpiTargetDirection" NOT NULL DEFAULT 'minimum',
+        "operator" "CompositeOperator" NOT NULL DEFAULT 'sum',
+        "is_active" BOOLEAN NOT NULL DEFAULT true,
+        "sort_order" INTEGER NOT NULL DEFAULT 0,
+        "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS "CompositeKpiItem" (
+        "id" SERIAL PRIMARY KEY,
+        "composite_kpi_id" INTEGER NOT NULL REFERENCES "CompositeKpi"("id") ON DELETE CASCADE,
+        "project_kpi_id" INTEGER NOT NULL REFERENCES "ProjectKpi"("id") ON DELETE CASCADE,
+        "order_index" INTEGER NOT NULL DEFAULT 0,
+        CONSTRAINT "CompositeKpiItem_composite_kpi_id_project_kpi_id_key" UNIQUE ("composite_kpi_id", "project_kpi_id")
+      );
+
+      CREATE INDEX IF NOT EXISTS "CompositeKpiItem_composite_kpi_id_idx" ON "CompositeKpiItem"("composite_kpi_id");
+      CREATE INDEX IF NOT EXISTS "CompositeKpiItem_project_kpi_id_idx" ON "CompositeKpiItem"("project_kpi_id");
+
+      CREATE TABLE IF NOT EXISTS "CompositeKpiValue" (
+        "id" SERIAL PRIMARY KEY,
+        "composite_kpi_id" INTEGER NOT NULL REFERENCES "CompositeKpi"("id") ON DELETE CASCADE,
+        "period_id" INTEGER NOT NULL REFERENCES "ReportPeriod"("id") ON DELETE CASCADE,
+        "calculated_value" DOUBLE PRECISION,
+        "status" TEXT NOT NULL DEFAULT 'computed',
+        "details" JSONB,
+        "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT "CompositeKpiValue_composite_kpi_id_period_id_key" UNIQUE ("composite_kpi_id", "period_id")
+      );
+
+      CREATE INDEX IF NOT EXISTS "CompositeKpiValue_composite_kpi_id_idx" ON "CompositeKpiValue"("composite_kpi_id");
+      CREATE INDEX IF NOT EXISTS "CompositeKpiValue_period_id_idx" ON "CompositeKpiValue"("period_id");
+    `);
+
+    console.log("Database schema checked and verified successfully.");
+  } catch (error) {
+    console.error("Warning: Error verifying database schema updates:", error);
+  }
+}
+ensureDatabaseSchema();
+
 // تمیزکاری خودکار وضعیت اقداماتی که در گزارش تیک نخورده بودند
 prisma.nextAction.updateMany({
   where: { claimed_report_id: null, claimed_completed: true },
-  data: { claimed_completed: false }
+  data: { claimed_completed: false },
 }).catch((e) => console.error("Error auto-sanitizing unlinked actions:", e));
+
+// تبدیل خودکار اقدامات اعلام‌شده توسط پرسنل به اقدامات تکمیل‌شده
+
+prisma.nextAction.updateMany({
+  where: { claimed_completed: true, is_completed: false },
+  data: { is_completed: true, completed_at: new Date() },
+}).catch((e) => console.error("Error auto-updating claimed actions to completed:", e));
 
 // -----------------------------
 // Middlewares: احراز هویت و کنترل دسترسی
@@ -438,24 +522,42 @@ function parseNextActions(
   });
 }
 
+function safeIsoDate(val: any): string | null {
+  if (!val) return null;
+  if (typeof val === "string") return val.split("T")[0] || null;
+  if (val instanceof Date && !isNaN(val.getTime())) {
+    return val.toISOString().split("T")[0];
+  }
+  try {
+    const d = new Date(val);
+    if (!isNaN(d.getTime())) return d.toISOString().split("T")[0];
+  } catch (_) {}
+  return String(val).split("T")[0] || null;
+}
+
+function safeIsoDateTime(val: any): string | null {
+  if (!val) return null;
+  if (typeof val === "string") return val;
+  if (val instanceof Date && !isNaN(val.getTime())) {
+    return val.toISOString();
+  }
+  try {
+    const d = new Date(val);
+    if (!isNaN(d.getTime())) return d.toISOString();
+  } catch (_) {}
+  return String(val) || null;
+}
+
 function serializeAction(action: any) {
   const hasClaimedReport = action.claimed_report_id !== null && action.claimed_report_id !== undefined;
   return {
     ...action,
     claimed_completed: hasClaimedReport ? Boolean(action.claimed_completed) : false,
-    target_date: action.target_date
-      ? action.target_date.toISOString().split("T")[0]
-      : null,
+    target_date: safeIsoDate(action.target_date),
     target_date_raw: action.target_date_raw ?? null,
-    claimed_at: action.claimed_at
-      ? action.claimed_at.toISOString()
-      : null,
-    completed_at: action.completed_at
-      ? action.completed_at.toISOString()
-      : null,
-    verified_at: action.verified_at
-      ? action.verified_at.toISOString()
-      : null,
+    claimed_at: safeIsoDateTime(action.claimed_at),
+    completed_at: safeIsoDateTime(action.completed_at),
+    verified_at: safeIsoDateTime(action.verified_at),
   };
 }
 
@@ -466,13 +568,11 @@ function serializeReport(report: any) {
     user_job_title: report.user?.job_title || null,
     deputy_name: report.user?.job_title || report.user_full_name,
 
-    period_start: report.period_start.toISOString().split("T")[0],
-    period_end: report.period_end.toISOString().split("T")[0],
-    submitted_at: report.submitted_at.toISOString(),
+    period_start: safeIsoDate(report.period_start) || "",
+    period_end: safeIsoDate(report.period_end) || "",
+    submitted_at: safeIsoDateTime(report.submitted_at) || new Date().toISOString(),
 
-    imported_at: report.imported_at
-      ? report.imported_at.toISOString()
-      : null,
+    imported_at: safeIsoDateTime(report.imported_at),
 
     nextActions: Array.isArray(report.nextActions)
       ? report.nextActions.map(serializeAction)
@@ -486,12 +586,17 @@ function serializeReport(report: any) {
       ? report.kpiValues.map((v: any) => ({
         id: v.id,
         project_kpi_id: v.project_kpi_id,
+        name: v.kpi?.name,
+        unit: v.kpi?.unit,
+        target_value: v.kpi?.target_value,
+        target_direction: v.kpi?.target_direction,
+        input_type: v.kpi?.input_type,
         current_value: v.current_value,
-        baseline_value: v.baseline_value,
+        baseline_value: v.baseline_value ?? v.kpi?.baseline_value,
         calculated_value: v.calculated_value,
         not_measured: v.not_measured,
         missing_reason: v.missing_reason,
-        created_at: v.created_at ? v.created_at.toISOString() : null,
+        created_at: safeIsoDateTime(v.created_at),
       }))
       : [],
   };
@@ -809,7 +914,8 @@ app.delete("/api/users/:id", authenticate, requireManager, async (req: any, res)
 // -----------------------------
 app.get("/api/projects", authenticate, async (req: any, res) => {
   try {
-    const where = req.user.role === "manager" ? {} : { is_active: true };
+    const includeInactive = req.query.include_inactive === "true" || req.query.all === "true";
+    const where = includeInactive && req.user.role === "manager" ? {} : { is_active: true };
     const projects = await prisma.project.findMany({
       where,
       orderBy: [{ order_index: "asc" }, { id: "asc" }],
@@ -862,11 +968,16 @@ app.patch("/api/projects/:id/order", authenticate, requireManager, async (req, r
 app.post("/api/projects", authenticate, requireManager, uploadWBS.single("wbs_file"), async (req, res) => {
   const file = req.file;
   try {
-    const { title, description, code } = req.body;
+    const { title, description, code, project_type } = req.body;
 
     if (!code || !title) {
       if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
       return res.status(400).json({ error: "کد و عنوان پروژه الزامی هستند." });
+    }
+
+    if (project_type && project_type !== "weekly" && project_type !== "monthly") {
+      if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
+      return res.status(400).json({ error: "نوع پروژه باید هفتگی یا ماهانه باشد." });
     }
 
     const existingCode = await prisma.project.findUnique({
@@ -877,11 +988,19 @@ app.post("/api/projects", authenticate, requireManager, uploadWBS.single("wbs_fi
       return res.status(400).json({ error: "کد پروژه تکراری است." });
     }
 
+    const maxProject = await prisma.project.findFirst({
+      orderBy: { order_index: "desc" },
+      select: { order_index: true },
+    });
+    const nextOrderIndex = (maxProject?.order_index ?? 0) + 1;
+
     const newProject = await prisma.project.create({
       data: {
         code: code.trim(),
         title: title.trim(),
         description: description ? description.trim() : null,
+        project_type: project_type === "monthly" ? "monthly" : "weekly",
+        order_index: nextOrderIndex,
         wbs_file_name: file ? file.originalname : null,
         wbs_storage_filename: file ? file.filename : null,
       },
@@ -901,7 +1020,12 @@ app.put("/api/projects/:id", authenticate, requireManager, uploadWBS.single("wbs
   const file = req.file;
   try {
     const id = parseInt(req.params.id);
-    const { title, code, description, remove_wbs_file, is_active } = req.body;
+    const { title, code, description, remove_wbs_file, is_active, project_type } = req.body;
+
+    if (project_type && project_type !== "weekly" && project_type !== "monthly") {
+      if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
+      return res.status(400).json({ error: "نوع پروژه باید هفتگی یا ماهانه باشد." });
+    }
 
     const existingProject = await prisma.project.findUnique({
       where: { id },
@@ -950,6 +1074,8 @@ app.put("/api/projects/:id", authenticate, requireManager, uploadWBS.single("wbs
         title: title !== undefined ? title.trim() : undefined,
         code: code !== undefined ? code.trim() : undefined,
         description: description !== undefined ? description.trim() : undefined,
+        project_type:
+          project_type === "monthly" ? "monthly" : project_type === "weekly" ? "weekly" : undefined,
         is_active: parsedIsActive !== undefined ? parsedIsActive : undefined,
         wbs_file_name: updatedWbsFileName,
         wbs_storage_filename: updatedWbsStorageFilename,
@@ -1528,8 +1654,13 @@ app.post("/api/project-kpis", authenticate, requireManager, async (req, res) => 
       baselineVal = parsedBaseline;
     }
 
-    if (target_value === undefined || target_value === null || target_value === "" || isNaN(Number(target_value))) {
-      return res.status(400).json({ error: "مقدار هدف باید عددی معتبر باشد." });
+    let targetVal: number | null = null;
+    if (target_value !== undefined && target_value !== null && target_value !== "") {
+      const parsedTarget = Number(target_value);
+      if (isNaN(parsedTarget)) {
+        return res.status(400).json({ error: "مقدار هدف باید عددی معتبر باشد." });
+      }
+      targetVal = parsedTarget;
     }
 
     if (!KPI_TARGET_DIRECTIONS.includes(target_direction)) {
@@ -1563,7 +1694,7 @@ app.post("/api/project-kpis", authenticate, requireManager, async (req, res) => 
         unit: kpiUnit,
         input_type,
         baseline_value: baselineVal,
-        target_value: Number(target_value),
+        target_value: targetVal,
         target_direction,
         report_type: reportTypeVal,
         is_active: parsedIsActive !== undefined ? parsedIsActive : true,
@@ -1623,10 +1754,15 @@ app.patch("/api/project-kpis/:id", authenticate, requireManager, async (req, res
       }
     }
     if (target_value !== undefined) {
-      if (target_value === null || target_value === "" || isNaN(Number(target_value))) {
-        return res.status(400).json({ error: "مقدار هدف باید عددی معتبر باشد." });
+      if (target_value === null || target_value === "") {
+        data.target_value = null;
+      } else {
+        const parsedTarget = Number(target_value);
+        if (isNaN(parsedTarget)) {
+          return res.status(400).json({ error: "مقدار هدف باید عددی معتبر باشد." });
+        }
+        data.target_value = parsedTarget;
       }
-      data.target_value = Number(target_value);
     }
     if (target_direction !== undefined) {
       if (!KPI_TARGET_DIRECTIONS.includes(target_direction)) {
@@ -1733,6 +1869,642 @@ app.get("/api/project-kpis/:id/values", authenticate, requireManager, async (req
   } catch (error) {
     console.error("Error fetching KPI values:", error);
     res.status(500).json({ error: "خطا در دریافت مقادیر شاخص" });
+  }
+});
+
+// -----------------------------
+// 6.5. Composite KPI Management (مدیریت شاخص‌های ترکیبی)
+// -----------------------------
+const COMPOSITE_OPERATORS = ["sum", "average", "difference", "multiply", "ratio_percentage"] as const;
+
+async function calculateCompositeKpiForPeriod(compositeKpiId: number, periodId: number) {
+  const compositeKpi = await prisma.compositeKpi.findUnique({
+    where: { id: compositeKpiId },
+    include: {
+      items: {
+        include: {
+          projectKpi: {
+            include: { project: true },
+          },
+        },
+        orderBy: { order_index: "asc" },
+      },
+    },
+  });
+
+  if (!compositeKpi || compositeKpi.items.length === 0) return null;
+
+  const period = await prisma.reportPeriod.findUnique({ where: { id: periodId } });
+  if (!period) return null;
+
+  // استخراج نام معاونت هر پروژه
+  const userProjects = await prisma.userProject.findMany({
+    include: { user: true },
+  });
+  const projectDeputyMap = new Map<number, string>();
+  userProjects.forEach((up) => {
+    const deputy = up.user.job_title?.trim() || up.user.full_name?.trim();
+    if (deputy && !projectDeputyMap.has(up.project_id)) {
+      projectDeputyMap.set(up.project_id, deputy);
+    }
+  });
+
+  const details: any[] = [];
+  const measuredItems: { val: number; order: number; kpiId: number }[] = [];
+
+  for (const item of compositeKpi.items) {
+    const pk = item.projectKpi;
+    const deputyName = projectDeputyMap.get(pk.project_id) || "سازمانی";
+
+    const reportKpiValue = await prisma.reportKpiValue.findFirst({
+      where: {
+        project_kpi_id: pk.id,
+        report: { period_id: periodId },
+      },
+      include: {
+        report: { select: { id: true, user_full_name: true, project_title: true } },
+      },
+      orderBy: { id: "desc" },
+    });
+
+    const isMeasured = Boolean(
+      reportKpiValue &&
+      !reportKpiValue.not_measured &&
+      (reportKpiValue.calculated_value !== null || reportKpiValue.current_value !== null)
+    );
+
+    const rawVal = isMeasured
+      ? (reportKpiValue!.calculated_value ?? reportKpiValue!.current_value)
+      : null;
+
+    const val = rawVal !== null && !isNaN(Number(rawVal)) ? Number(rawVal) : null;
+
+    if (val !== null) {
+      measuredItems.push({ val, order: item.order_index, kpiId: pk.id });
+    }
+
+    details.push({
+      kpi_id: pk.id,
+      kpi_name: pk.name,
+      project_id: pk.project_id,
+      project_title: pk.project.title,
+      deputy_name: deputyName,
+      value: val,
+      unit: pk.unit,
+      measured: val !== null,
+      order_index: item.order_index,
+    });
+  }
+
+  let calculatedValue: number | null = null;
+  let status: "computed" | "partial" | "not_measured" = "computed";
+
+  if (measuredItems.length === 0) {
+    status = "not_measured";
+    calculatedValue = null;
+  } else if (measuredItems.length < compositeKpi.items.length) {
+    status = "partial";
+  } else {
+    status = "computed";
+  }
+
+  const op = compositeKpi.operator;
+  if (measuredItems.length > 0) {
+    if (op === "sum") {
+      calculatedValue = measuredItems.reduce((acc, curr) => acc + curr.val, 0);
+    } else if (op === "average") {
+      calculatedValue = measuredItems.reduce((acc, curr) => acc + curr.val, 0) / measuredItems.length;
+    } else if (op === "difference") {
+      const firstItem = details[0];
+      if (firstItem && firstItem.value !== null) {
+        let diff = firstItem.value;
+        for (let i = 1; i < details.length; i++) {
+          if (details[i].value !== null) {
+            diff -= details[i].value;
+          }
+        }
+        calculatedValue = diff;
+      } else {
+        calculatedValue = null;
+      }
+    } else if (op === "multiply") {
+      calculatedValue = measuredItems.reduce((acc, curr) => acc * curr.val, 1);
+    } else if (op === "ratio_percentage") {
+      const itemA = details[0];
+      const itemB = details[1];
+      if (itemA && itemB && itemA.value !== null && itemB.value !== null && itemB.value !== 0) {
+        calculatedValue = (itemA.value / itemB.value) * 100;
+      } else {
+        calculatedValue = null;
+      }
+    }
+  }
+
+  const finalVal = calculatedValue !== null && !isNaN(calculatedValue)
+    ? Number(calculatedValue.toFixed(2))
+    : null;
+
+  return await prisma.compositeKpiValue.upsert({
+    where: {
+      composite_kpi_id_period_id: {
+        composite_kpi_id: compositeKpi.id,
+        period_id: period.id,
+      },
+    },
+    update: {
+      calculated_value: finalVal,
+      status,
+      details,
+    },
+    create: {
+      composite_kpi_id: compositeKpi.id,
+      period_id: period.id,
+      calculated_value: finalVal,
+      status,
+      details,
+    },
+  });
+}
+
+async function recalculateCompositeKpiAllPeriods(compositeKpiId: number) {
+  const periods = await prisma.reportPeriod.findMany({
+    select: { id: true },
+    orderBy: { period_start: "asc" },
+  });
+  for (const p of periods) {
+    await calculateCompositeKpiForPeriod(compositeKpiId, p.id);
+  }
+}
+
+async function syncAllCompositeKpisForPeriod(periodId: number) {
+  const composites = await prisma.compositeKpi.findMany({
+    where: { is_active: true },
+    select: { id: true },
+  });
+  for (const c of composites) {
+    await calculateCompositeKpiForPeriod(c.id, periodId);
+  }
+}
+
+// اندپوینت درخت معاونت‌ها، پروژه‌ها و شاخص‌ها جهت فرمول‌ساز تعاملی
+app.get("/api/composite-kpis/deputies-tree", authenticate, requireManager, async (_req, res) => {
+  try {
+    const activeUsers = await prisma.user.findMany({
+      where: { is_active: true, role: "user" },
+      include: {
+        userProjects: {
+          where: { project: { is_active: true } },
+          include: {
+            project: {
+              include: {
+                kpis: {
+                  where: { is_active: true },
+                  orderBy: { sort_order: "asc" },
+                },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { full_name: "asc" },
+    });
+
+    const allocatedProjectIds = new Set<number>();
+    const deputiesList: any[] = [];
+    const allKpisFlat: any[] = [];
+
+    for (const u of activeUsers) {
+      const deputyTitle = u.job_title?.trim() || u.full_name.trim();
+      const projects = u.userProjects.map((up) => {
+        allocatedProjectIds.add(up.project_id);
+        const kpis = up.project.kpis.map((k) => {
+          const kpiObj = {
+            id: k.id,
+            name: k.name,
+            unit: k.unit,
+            input_type: k.input_type,
+            baseline_value: k.baseline_value,
+            target_value: k.target_value,
+            target_direction: k.target_direction,
+            project_id: up.project.id,
+            project_title: up.project.title,
+            deputy_title: deputyTitle,
+            user_full_name: u.full_name,
+          };
+          allKpisFlat.push(kpiObj);
+          return kpiObj;
+        });
+
+        return {
+          id: up.project.id,
+          title: up.project.title,
+          code: up.project.code,
+          kpis,
+        };
+      });
+
+      const totalKpis = projects.reduce((acc, p) => acc + p.kpis.length, 0);
+
+      deputiesList.push({
+        id: `deputy_${u.id}`,
+        userId: u.id,
+        title: deputyTitle,
+        userName: u.full_name,
+        projects,
+        totalKpisCount: totalKpis,
+      });
+    }
+
+    // پروژه‌های بدون تخصیص مستقیم به پرسنل
+    const unallocatedProjects = await prisma.project.findMany({
+      where: {
+        is_active: true,
+        id: { notIn: Array.from(allocatedProjectIds) },
+      },
+      include: {
+        kpis: {
+          where: { is_active: true },
+          orderBy: { sort_order: "asc" },
+        },
+      },
+    });
+
+    if (unallocatedProjects.length > 0) {
+      const otherProjects = unallocatedProjects.map((p) => {
+        const kpis = p.kpis.map((k) => {
+          const kpiObj = {
+            id: k.id,
+            name: k.name,
+            unit: k.unit,
+            input_type: k.input_type,
+            baseline_value: k.baseline_value,
+            target_value: k.target_value,
+            target_direction: k.target_direction,
+            project_id: p.id,
+            project_title: p.title,
+            deputy_title: "سایر پروژه‌ها / عمومی",
+            user_full_name: "سازمانی",
+          };
+          allKpisFlat.push(kpiObj);
+          return kpiObj;
+        });
+        return {
+          id: p.id,
+          title: p.title,
+          code: p.code,
+          kpis,
+        };
+      });
+
+      deputiesList.push({
+        id: "deputy_unallocated",
+        userId: 0,
+        title: "سایر پروژه‌ها و شاخص‌های عمومی",
+        userName: "عمومی / سازمانی",
+        projects: otherProjects,
+        totalKpisCount: otherProjects.reduce((acc, p) => acc + p.kpis.length, 0),
+      });
+    }
+
+    res.json({
+      deputies: deputiesList,
+      allKpis: allKpisFlat,
+    });
+  } catch (error) {
+    console.error("Error fetching deputies tree for composite KPIs:", error);
+    res.status(500).json({ error: "خطا در دریافت درخت معاونت‌ها و شاخص‌ها" });
+  }
+});
+
+// دریافت لیست تمام شاخص‌های ترکیبی با آخرین وضعیت و مقدار
+app.get("/api/composite-kpis", authenticate, requireManager, async (_req, res) => {
+  try {
+    const composites = await prisma.compositeKpi.findMany({
+      include: {
+        items: {
+          include: {
+            projectKpi: {
+              select: {
+                id: true,
+                name: true,
+                unit: true,
+                input_type: true,
+                project_id: true,
+                project: { select: { id: true, title: true } },
+              },
+            },
+          },
+          orderBy: { order_index: "asc" },
+        },
+        values: {
+          include: {
+            period: { select: { id: true, title: true, period_end: true } },
+          },
+          orderBy: { period: { period_end: "desc" } },
+          take: 1,
+        },
+      },
+      orderBy: [{ sort_order: "asc" }, { id: "desc" }],
+    });
+
+    const formatted = composites.map((c) => ({
+      ...c,
+      latest_value: c.values[0]?.calculated_value ?? null,
+      latest_period_title: c.values[0]?.period?.title ?? null,
+      latest_status: c.values[0]?.status ?? null,
+    }));
+
+    res.json(formatted);
+  } catch (error) {
+    console.error("Error fetching composite KPIs:", error);
+    res.status(500).json({ error: "خطا در دریافت شاخص‌های ترکیبی" });
+  }
+});
+
+// دریافت جزئیات یک شاخص ترکیبی به همراه تاریخچه مقادیر تمامی دوره‌ها
+app.get("/api/composite-kpis/:id", authenticate, requireManager, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "شناسه نامعتبر است." });
+
+    const composite = await prisma.compositeKpi.findUnique({
+      where: { id },
+      include: {
+        items: {
+          include: {
+            projectKpi: {
+              select: {
+                id: true,
+                name: true,
+                unit: true,
+                input_type: true,
+                project_id: true,
+                project: { select: { id: true, title: true } },
+              },
+            },
+          },
+          orderBy: { order_index: "asc" },
+        },
+        values: {
+          include: {
+            period: {
+              select: {
+                id: true,
+                title: true,
+                period_start: true,
+                period_end: true,
+                report_type: true,
+              },
+            },
+          },
+          orderBy: { period: { period_start: "asc" } },
+        },
+      },
+    });
+
+    if (!composite) {
+      return res.status(404).json({ error: "شاخص ترکیبی مورد نظر یافت نشد." });
+    }
+
+    res.json(composite);
+  } catch (error) {
+    console.error("Error fetching composite KPI detail:", error);
+    res.status(500).json({ error: "خطا در دریافت جزئیات شاخص ترکیبی" });
+  }
+});
+
+// ایجاد شاخص ترکیبی جدید
+app.post("/api/composite-kpis", authenticate, requireManager, async (req, res) => {
+  try {
+    const {
+      name,
+      description,
+      unit,
+      target_value,
+      target_direction,
+      operator,
+      item_kpi_ids,
+      sort_order,
+    } = req.body;
+
+    const trimmedName = typeof name === "string" ? name.trim() : "";
+    if (!trimmedName) {
+      return res.status(400).json({ error: "عنوان شاخص ترکیبی الزامی است." });
+    }
+
+    const trimmedUnit = typeof unit === "string" ? unit.trim() : "";
+    if (!trimmedUnit) {
+      return res.status(400).json({ error: "واحد سنجش الزامی است." });
+    }
+
+    if (!COMPOSITE_OPERATORS.includes(operator)) {
+      return res.status(400).json({ error: "عملگر ریاضی نامعتبر است." });
+    }
+
+    if (!Array.isArray(item_kpi_ids) || item_kpi_ids.length < 2) {
+      return res.status(400).json({ error: "حداقل دو شاخص پایه برای ترکیب الزامی است." });
+    }
+
+    const parsedTarget =
+      target_value !== undefined && target_value !== null && target_value !== ""
+        ? Number(target_value)
+        : null;
+    if (parsedTarget !== null && isNaN(parsedTarget)) {
+      return res.status(400).json({ error: "مقدار هدف نامعتبر است." });
+    }
+
+    const validKpis = await prisma.projectKpi.findMany({
+      where: { id: { in: item_kpi_ids.map(Number) } },
+    });
+    if (validKpis.length !== item_kpi_ids.length) {
+      return res.status(400).json({ error: "برخی از شاخص‌های انتخاب‌شده در سیستم یافت نشدند." });
+    }
+
+    const created = await prisma.compositeKpi.create({
+      data: {
+        name: trimmedName,
+        description: description ? String(description).trim() : null,
+        unit: trimmedUnit,
+        target_value: parsedTarget,
+        target_direction: target_direction === "maximum" ? "maximum" : "minimum",
+        operator,
+        sort_order: !isNaN(Number(sort_order)) ? Number(sort_order) : 0,
+        items: {
+          create: item_kpi_ids.map((kpiId: number, idx: number) => ({
+            project_kpi_id: Number(kpiId),
+            order_index: idx + 1,
+          })),
+        },
+      },
+      include: {
+        items: {
+          include: {
+            projectKpi: {
+              select: {
+                id: true,
+                name: true,
+                unit: true,
+                project: { select: { id: true, title: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    recalculateCompositeKpiAllPeriods(created.id).catch((err) =>
+      console.error("Error initial calculating composite KPI:", err)
+    );
+
+    res.status(201).json(created);
+  } catch (error) {
+    console.error("Error creating composite KPI:", error);
+    res.status(500).json({ error: "خطا در ایجاد شاخص ترکیبی در دیتابیس" });
+  }
+});
+
+// ویرایش شاخص ترکیبی
+app.patch("/api/composite-kpis/:id", authenticate, requireManager, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "شناسه نامعتبر است." });
+
+    const existing = await prisma.compositeKpi.findUnique({ where: { id } });
+    if (!existing) {
+      return res.status(404).json({ error: "شاخص ترکیبی مورد نظر یافت نشد." });
+    }
+
+    const {
+      name,
+      description,
+      unit,
+      target_value,
+      target_direction,
+      operator,
+      item_kpi_ids,
+      sort_order,
+      is_active,
+    } = req.body;
+
+    const data: any = {};
+    if (name !== undefined) {
+      const trimmed = String(name).trim();
+      if (!trimmed) return res.status(400).json({ error: "عنوان شاخص نمی‌تواند خالی باشد." });
+      data.name = trimmed;
+    }
+    if (description !== undefined) {
+      data.description = description ? String(description).trim() : null;
+    }
+    if (unit !== undefined) {
+      const trimmed = String(unit).trim();
+      if (!trimmed) return res.status(400).json({ error: "واحد سنجش نمی‌تواند خالی باشد." });
+      data.unit = trimmed;
+    }
+    if (operator !== undefined) {
+      if (!COMPOSITE_OPERATORS.includes(operator)) {
+        return res.status(400).json({ error: "عملگر ریاضی نامعتبر است." });
+      }
+      data.operator = operator;
+    }
+    if (target_direction !== undefined) {
+      data.target_direction = target_direction === "maximum" ? "maximum" : "minimum";
+    }
+    if (target_value !== undefined) {
+      if (target_value === null || target_value === "") {
+        data.target_value = null;
+      } else {
+        const parsed = Number(target_value);
+        if (isNaN(parsed)) return res.status(400).json({ error: "مقدار هدف نامعتبر است." });
+        data.target_value = parsed;
+      }
+    }
+    if (sort_order !== undefined) {
+      data.sort_order = !isNaN(Number(sort_order)) ? Number(sort_order) : 0;
+    }
+    if (is_active !== undefined) {
+      data.is_active = Boolean(is_active);
+    }
+
+    if (Array.isArray(item_kpi_ids)) {
+      if (item_kpi_ids.length < 2) {
+        return res.status(400).json({ error: "حداقل دو شاخص برای ترکیب الزامی است." });
+      }
+      await prisma.compositeKpiItem.deleteMany({ where: { composite_kpi_id: id } });
+      await prisma.compositeKpiItem.createMany({
+        data: item_kpi_ids.map((kpiId: number, idx: number) => ({
+          composite_kpi_id: id,
+          project_kpi_id: Number(kpiId),
+          order_index: idx + 1,
+        })),
+      });
+    }
+
+    const updated = await prisma.compositeKpi.update({
+      where: { id },
+      data,
+      include: {
+        items: {
+          include: {
+            projectKpi: {
+              select: {
+                id: true,
+                name: true,
+                unit: true,
+                project: { select: { id: true, title: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    recalculateCompositeKpiAllPeriods(id).catch((err) =>
+      console.error("Error recalculating after update:", err)
+    );
+
+    res.json(updated);
+  } catch (error) {
+    console.error("Error updating composite KPI:", error);
+    res.status(500).json({ error: "خطا در ویرایش شاخص ترکیبی" });
+  }
+});
+
+// حذف شاخص ترکیبی
+app.delete("/api/composite-kpis/:id", authenticate, requireManager, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "شناسه نامعتبر است." });
+
+    await prisma.compositeKpi.delete({ where: { id } });
+    res.json({ success: true, message: "شاخص ترکیبی با موفقیت حذف شد." });
+  } catch (error) {
+    console.error("Error deleting composite KPI:", error);
+    res.status(500).json({ error: "خطا در حذف شاخص ترکیبی" });
+  }
+});
+
+// محاسبه مجدد دستی یک شاخص ترکیبی
+app.post("/api/composite-kpis/:id/recalculate", authenticate, requireManager, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "شناسه نامعتبر است." });
+
+    await recalculateCompositeKpiAllPeriods(id);
+    const updated = await prisma.compositeKpi.findUnique({
+      where: { id },
+      include: {
+        items: { include: { projectKpi: { include: { project: true } } } },
+        values: {
+          include: { period: true },
+          orderBy: { period: { period_start: "asc" } },
+        },
+      },
+    });
+
+    res.json({ success: true, composite: updated });
+  } catch (error) {
+    console.error("Error recalculating composite KPI:", error);
+    res.status(500).json({ error: "خطا در محاسبه مجدد شاخص ترکیبی" });
   }
 });
 
@@ -1844,7 +2616,9 @@ app.get("/api/reports", authenticate, async (req: any, res) => {
         files: true,
         nextActions: true,
         achievedActions: true,
-        kpiValues: true
+        kpiValues: {
+          include: { kpi: true }
+        }
       },
       orderBy: { id: "desc" }
     });
@@ -1884,13 +2658,35 @@ app.post("/api/reports", authenticate, upload.array("files", 10), async (req: an
       return res.status(400).json({ error: "اطلاعات پروژه یا بازه گزارش‌دهی نامعتبر است." });
     }
 
-    // اعتبارسنجی نوع گزارش با نوع بازه
-    if (report_type !== period.report_type) {
-      if (uploadedFiles.length > 0) {
-        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
+    const allWeeklyPeriods = await prisma.reportPeriod.findMany({
+      where: { report_type: "weekly" },
+      select: { id: true, title: true, period_end: true, report_type: true },
+    });
+    const isLastWeek = period.report_type === "weekly" && isLastWeekOfShamsiMonth(period, allWeeklyPeriods);
+    const pType = (project.project_type || "weekly");
+
+    // اعتبارسنجی موعد گزارش پروژه با بازه
+    if (period.report_type === "weekly") {
+      if (pType === "monthly" && !isLastWeek) {
+        if (uploadedFiles.length > 0) {
+          uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
+        }
+        return res.status(400).json({
+          error: "این پروژه ماهانه است و ثبت گزارش آن فقط در هفته پایانی هر ماه مجاز است.",
+        });
       }
-      return res.status(400).json({ error: "نوع گزارش ارسالی با نوع بازه گزارش‌دهی مطابقت ندارد." });
+    } else if (period.report_type === "monthly") {
+      if (pType !== "monthly") {
+        if (uploadedFiles.length > 0) {
+          uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
+        }
+        return res.status(400).json({
+          error: "این بازه ماهانه است و امکان ثبت گزارش برای پروژه هفتگی در آن وجود ندارد.",
+        });
+      }
     }
+
+    const effectiveReportType: "weekly" | "monthly" = pType === "monthly" ? "monthly" : "weekly";
 
     // اعتبارسنجی برای پرسنل عادی
     if (req.user.role !== "manager") {
@@ -1982,7 +2778,7 @@ app.post("/api/reports", authenticate, upload.array("files", 10), async (req: an
     const validatedKpiValues = await validateAndBuildKpiValues(
       kpi_values,
       project.id,
-      report_type as "weekly" | "monthly"
+      effectiveReportType
     );
 
     let finalResultsAchieved = typeof results_achieved === "string" ? results_achieved.trim() : "";
@@ -2005,7 +2801,7 @@ app.post("/api/reports", authenticate, upload.array("files", 10), async (req: an
         user_username: user.username,
         project_id: project.id,
         project_title: project.title,
-        report_type: report_type as any,
+        report_type: effectiveReportType,
         period_id: period.id,
         period_title: period.title,
         period_start: period.period_start,
@@ -2030,19 +2826,27 @@ app.post("/api/reports", authenticate, upload.array("files", 10), async (req: an
           }
           : undefined,
       },
-      include: { files: true, nextActions: true, achievedActions: true, kpiValues: true }
+      include: { files: true, nextActions: true, achievedActions: true, kpiValues: { include: { kpi: true } } }
     });
 
     if (parsedAchievedActionIds.length > 0) {
+      const now = new Date();
       await prisma.nextAction.updateMany({
         where: { id: { in: parsedAchievedActionIds } },
         data: {
+          is_completed: true,
+          completed_at: now,
           claimed_completed: true,
-          claimed_at: new Date(),
+          claimed_at: now,
           claimed_report_id: newReport.id,
         }
       });
     }
+
+    // همگام‌سازی و محاسبه شاخص‌های ترکیبی برای این دوره
+    syncAllCompositeKpisForPeriod(period.id).catch((err) =>
+      console.error("Error syncing composite KPIs after report creation:", err)
+    );
 
     res.status(201).json(serializeReport(newReport));
   } catch (error: any) {
@@ -2200,17 +3004,22 @@ app.put("/api/reports/:id", authenticate, upload.array("files", 10), async (req:
         await tx.nextAction.updateMany({
           where: { claimed_report_id: id },
           data: {
+            is_completed: false,
+            completed_at: null,
             claimed_completed: false,
             claimed_at: null,
             claimed_report_id: null,
           }
         });
         if (parsedAchievedActionIds.length > 0) {
+          const now = new Date();
           await tx.nextAction.updateMany({
             where: { id: { in: parsedAchievedActionIds } },
             data: {
+              is_completed: true,
+              completed_at: now,
               claimed_completed: true,
-              claimed_at: new Date(),
+              claimed_at: now,
               claimed_report_id: id,
             }
           });
@@ -2234,7 +3043,7 @@ app.put("/api/reports/:id", authenticate, upload.array("files", 10), async (req:
           results_achieved: finalResultsAchieved !== undefined ? finalResultsAchieved : undefined,
           kpi_text: kpi_text !== undefined ? kpi_text : undefined,
         },
-        include: { files: true, nextActions: true, achievedActions: true, kpiValues: true }
+        include: { files: true, nextActions: true, achievedActions: true, kpiValues: { include: { kpi: true } } }
       });
     });
 
@@ -2244,6 +3053,11 @@ app.put("/api/reports/:id", authenticate, upload.array("files", 10), async (req:
         try { fs.unlinkSync(fp); } catch (_) { }
       }
     }
+
+    // همگام‌سازی و محاسبه شاخص‌های ترکیبی برای این دوره
+    syncAllCompositeKpisForPeriod(existingReport.period_id).catch((err) =>
+      console.error("Error syncing composite KPIs after report update:", err)
+    );
 
     res.json(serializeReport(updated));
   } catch (error) {
@@ -2356,7 +3170,9 @@ app.get("/api/reports/:id/pdf-data", authenticate, async (req: any, res) => {
         files: true,
         nextActions: true,
         achievedActions: true,
-        kpiValues: true,
+        kpiValues: {
+          include: { kpi: true }
+        },
       },
     });
 
@@ -2402,7 +3218,9 @@ app.get("/api/reports/pdf-data/all", authenticate, async (req: any, res) => {
         files: true,
         nextActions: true,
         achievedActions: true,
-        kpiValues: true,
+        kpiValues: {
+          include: { kpi: true }
+        },
       },
       orderBy: [
         { period: { period_start: "asc" } },
@@ -2442,6 +3260,12 @@ app.get("/api/dashboard/summary", authenticate, requireManager, async (req, res)
     });
     const staffIds = activeStaff.map((s) => s.id);
 
+    const allWeeklyPeriods = await prisma.reportPeriod.findMany({
+      where: { report_type: "weekly" },
+      select: { id: true, title: true, period_end: true, report_type: true },
+    });
+    const isLastWeek = period.report_type === "weekly" && isLastWeekOfShamsiMonth(period, allWeeklyPeriods);
+
     const userProjects = await prisma.userProject.findMany({
       where: {
         user_id: { in: staffIds },
@@ -2458,6 +3282,18 @@ app.get("/api/dashboard/summary", authenticate, requireManager, async (req, res)
       if (projectId && up.project_id !== projectId) continue;
       if (user_id && up.user_id !== user_id) continue;
       if (deputyName && up.user.job_title?.trim() !== deputyName) continue;
+
+      const pType = (up.project as any).project_type || "weekly";
+
+      // قانون کسب‌وکار:
+      // ۱. اگر هفته پایانی ماه باشد: هم پروژه‌های هفتگی و هم پروژه‌های ماهانه موعد گزارش دارند و پایش می‌شوند
+      // ۲. اگر هفته عادی باشد: فقط پروژه‌های هفتگی پایش می‌شوند و پروژه‌های ماهانه خواسته نمی‌شوند
+      // ۳. اگر بازه ماهانه باشد: فقط پروژه‌های ماهانه پایش می‌شوند
+      if (period.report_type === "weekly") {
+        if (!isLastWeek && pType === "monthly") continue;
+      } else if (period.report_type === "monthly") {
+        if (pType !== "monthly") continue;
+      }
 
       expectedPairs.push({
         user: sanitizeUser(up.user),
@@ -2491,6 +3327,7 @@ app.get("/api/dashboard/summary", authenticate, requireManager, async (req, res)
         deputy_name: pair.user.job_title || pair.user.full_name,
         project_id: pair.project.id,
         project_title: pair.project.title,
+        project_type: (pair.project as any).project_type || "weekly",
         status_key,
         status_label,
         report: matchingReport ? {
@@ -2515,6 +3352,7 @@ app.get("/api/dashboard/summary", authenticate, requireManager, async (req, res)
     res.json({
       period: {
         ...period,
+        is_last_week: isLastWeek,
         period_start: period.period_start.toISOString().split("T")[0],
         period_end: period.period_end.toISOString().split("T")[0]
       },
@@ -2636,6 +3474,12 @@ app.get("/api/next-actions", authenticate, async (req: any, res) => {
       is_completed: a.is_completed,
       completed_at: a.completed_at ? a.completed_at.toISOString() : null,
       verified_at: a.verified_at ? a.verified_at.toISOString() : null,
+      is_cancelled: Boolean(a.is_cancelled),
+      cancelled_at: a.cancelled_at ? a.cancelled_at.toISOString() : null,
+      cancellation_reason: a.cancellation_reason || null,
+      cancelled_by_user_id: a.cancelled_by_user_id || null,
+      cancelled_by_user_name: a.cancelled_by_user_name || null,
+      canelled_period_id: a.canelled_period_id || null,
       project: a.project || a.report?.project,
       user: a.user || a.report?.user,
     }));
@@ -2769,13 +3613,124 @@ app.patch("/api/next-actions/:id/toggle", authenticate, requireManager, async (r
   }
 });
 
-app.delete("/api/next-actions/:id", authenticate, requireManager, async (req, res) => {
+// لغو یا حذف اقدام آتی توسط کاربر یا مدیر با ثبت دلیل اجباری (جهت مستندسازی در گزارش رسمی PDF)
+app.patch("/api/next-actions/:id/cancel", authenticate, async (req: any, res) => {
   try {
     const actionId = Number(req.params.id);
-    await prisma.nextAction.delete({ where: { id: actionId } });
-    res.json({ success: true, message: "اقدام با موفقیت حذف شد." });
+    const { reason } = req.body || {};
+
+    const trimmedReason = typeof reason === "string" ? reason.trim() : "";
+    if (!trimmedReason) {
+      return res.status(400).json({ error: "ثبت دلیل حذف یا لغو اقدام الزامی است." });
+    }
+
+    const action = await prisma.nextAction.findUnique({
+      where: { id: actionId },
+      include: { report: true, project: true },
+    });
+
+    if (!action) {
+      return res.status(404).json({ error: "اقدام مورد نظر یافت نشد." });
+    }
+
+    // بررسی دسترسی: مدیران یا پرسنل تخصیص‌یافته به پروژه یا منتسب به اقدام
+    if (req.user.role !== "manager") {
+      const pid = action.project_id || action.report?.project_id;
+      let hasAccess = action.user_id === req.user.id || action.report?.user_id === req.user.id;
+      if (!hasAccess && pid) {
+        const isAssigned = await prisma.userProject.findUnique({
+          where: { user_id_project_id: { user_id: req.user.id, project_id: pid } },
+        });
+        if (isAssigned) hasAccess = true;
+      }
+      if (!hasAccess) {
+        return res.status(403).json({ error: "شما دسترسی لازم برای لغو این اقدام را ندارید." });
+      }
+    }
+
+    const activePeriod = await prisma.reportPeriod.findFirst({
+      where: { is_open: true },
+      orderBy: { period_end: "desc" },
+    });
+
+    const updated = await prisma.nextAction.update({
+      where: { id: actionId },
+      data: {
+        is_cancelled: true,
+        cancelled_at: new Date(),
+        cancellation_reason: trimmedReason,
+        cancelled_by_user_id: req.user.id,
+        cancelled_by_user_name: req.user.full_name || req.user.username,
+        canelled_period_id: activePeriod?.id || action.report?.period_id || null,
+      },
+    });
+
+    res.json({ success: true, message: "اقدام با موفقیت لغو شد.", action: updated });
   } catch (error) {
-    console.error("Error deleting next action:", error);
+    console.error("Error cancelling next action:", error);
+    res.status(500).json({ error: "خطا در لغو اقدام." });
+  }
+});
+
+// اندپوینت حذف: برای پرسنل لغو نرم با دلیل، برای مدیران لغو با دلیل یا هارد دلیت در صورت force
+app.delete("/api/next-actions/:id", authenticate, async (req: any, res) => {
+  try {
+    const actionId = Number(req.params.id);
+    const { reason, force } = req.body || {};
+
+    const action = await prisma.nextAction.findUnique({
+      where: { id: actionId },
+      include: { report: true, project: true },
+    });
+
+    if (!action) {
+      return res.status(404).json({ error: "اقدام مورد نظر یافت نشد." });
+    }
+
+    if (req.user.role === "manager" && force) {
+      await prisma.nextAction.delete({ where: { id: actionId } });
+      return res.json({ success: true, message: "اقدام به صورت کامل از دیتابیس حذف شد." });
+    }
+
+    const trimmedReason = (typeof reason === "string" ? reason.trim() : "") || (typeof req.query.reason === "string" ? req.query.reason.trim() : "");
+    if (!trimmedReason) {
+      return res.status(400).json({ error: "ثبت دلیل حذف یا لغو اقدام الزامی است." });
+    }
+
+    if (req.user.role !== "manager") {
+      const pid = action.project_id || action.report?.project_id;
+      let hasAccess = action.user_id === req.user.id || action.report?.user_id === req.user.id;
+      if (!hasAccess && pid) {
+        const isAssigned = await prisma.userProject.findUnique({
+          where: { user_id_project_id: { user_id: req.user.id, project_id: pid } },
+        });
+        if (isAssigned) hasAccess = true;
+      }
+      if (!hasAccess) {
+        return res.status(403).json({ error: "شما دسترسی لازم برای حذف این اقدام را ندارید." });
+      }
+    }
+
+    const activePeriod = await prisma.reportPeriod.findFirst({
+      where: { is_open: true },
+      orderBy: { period_end: "desc" },
+    });
+
+    const updated = await prisma.nextAction.update({
+      where: { id: actionId },
+      data: {
+        is_cancelled: true,
+        cancelled_at: new Date(),
+        cancellation_reason: trimmedReason,
+        cancelled_by_user_id: req.user.id,
+        cancelled_by_user_name: req.user.full_name || req.user.username,
+        canelled_period_id: activePeriod?.id || action.report?.period_id || null,
+      },
+    });
+
+    res.json({ success: true, message: "اقدام با موفقیت لغو شد.", action: updated });
+  } catch (error) {
+    console.error("Error deleting/cancelling next action:", error);
     res.status(500).json({ error: "خطا در حذف اقدام." });
   }
 });
@@ -2801,12 +3756,83 @@ function generateAiCacheKey(systemPrompt: string, userPrompt: string): string {
     .digest("hex");
 }
 
+// کشف مدل‌های کاندید هر تامین‌کننده (کش ۲۴ ساعته برای جلوگیری از فراخوانی مکرر لیست مدل‌ها)
+const aiModelDiscoveryCache = new Map<string, { models: string[]; discoveredAt: number }>();
+const AI_MODEL_DISCOVERY_TTL_MS = 24 * 60 * 60 * 1000;
+
+// سقف تلاش روی هر دورهٔ تحلیل: حداکثر ۳ مدل جمینای + ۲ مدل غیرجمینای که کلید به آن‌ها دسترسی دارد
+const MAX_GEMINI_CANDIDATES = 3;
+const MAX_OTHER_CANDIDATES = 2;
+
+// فقط مدل‌های متنی (حذف TTS، embedding، تصویر، صوت و...)
+const isChatCapableModel = (id: string): boolean =>
+  !/(tts|embedding|aqa|image|imagen|veo|audio|live|omni|moderation|rerank)/i.test(id);
+
+const modelVersionOf = (id: string): number => {
+  const m = id.match(/(\d+(?:\.\d+)?)/);
+  return m ? parseFloat(m[1]) : 0;
+};
+
+// مرتب‌سازی مدل‌های جمینای: نسخه‌های پایدار جدیدتر اول، previewها در انتها
+const rankGeminiModels = (ids: string[]): string[] =>
+  ids.slice().sort((a, b) => {
+    const previewPenalty = (x: string) => (/preview/i.test(x) ? 1 : 0);
+    if (previewPenalty(a) !== previewPenalty(b)) return previewPenalty(a) - previewPenalty(b);
+    return modelVersionOf(b) - modelVersionOf(a);
+  });
+
+// اولویت مدل‌های غیرجمینای: claude، سپس gpt، سپس لاما‌ی 70B، سپس سایر لاماها، سپس بقیه
+const rankOtherModels = (ids: string[]): string[] =>
+  ids.slice().sort((a, b) => {
+    const tier = (x: string) =>
+      /claude/i.test(x) ? 0
+      : /gpt/i.test(x) ? 1
+      : /llama/i.test(x) && /70b/i.test(x) ? 2
+      : /llama/i.test(x) ? 3
+      : 4;
+    if (tier(a) !== tier(b)) return tier(a) - tier(b);
+    return modelVersionOf(b) - modelVersionOf(a);
+  });
+
+// پرس‌وجوی لیست مدل‌ها از خود تامین‌کننده و ساخت لیست کاندیدها (۳ جمینای + ۲ غیرجمینای)
+async function discoverCandidateModels(provider: { id: string; label: string; baseURL: string; apiKey: string }): Promise<string[]> {
+  const cached = aiModelDiscoveryCache.get(provider.id);
+  if (cached && Date.now() - cached.discoveredAt < AI_MODEL_DISCOVERY_TTL_MS) {
+    return cached.models;
+  }
+
+  try {
+    const client = new OpenAI({ apiKey: provider.apiKey, baseURL: provider.baseURL });
+    const page: any = await client.models.list();
+    const ids: string[] = (page?.data || [])
+      .map((m: any) => String(m?.id || ""))
+      .map((id: string) => id.replace(/^models\//, ""))
+      .filter((id: string) => id && isChatCapableModel(id));
+
+    if (ids.length === 0) return cached?.models || [];
+
+    const models = [
+      ...rankGeminiModels(ids.filter((id) => /gemini/i.test(id))).slice(0, MAX_GEMINI_CANDIDATES),
+      ...rankOtherModels(ids.filter((id) => !/gemini/i.test(id))).slice(0, MAX_OTHER_CANDIDATES),
+    ];
+
+    if (models.length > 0) {
+      aiModelDiscoveryCache.set(provider.id, { models, discoveredAt: Date.now() });
+      console.log(`🤖 مدل‌های کاندید «${provider.label}» کشف شدند: ${models.join(", ")}`);
+    }
+    return models.length > 0 ? models : (cached?.models || []);
+  } catch (err: any) {
+    console.warn(`⚠️ کشف خودکار نام مدل برای «${provider.label}» ناموفق بود: ${String(err?.message || err).substring(0, 100)}`);
+    return cached?.models || [];
+  }
+}
+
 async function callAiWithFallback(
   systemPrompt: string,
   userPrompt: string,
-  options: { forceRefresh?: boolean } = {}
+  options: { forceRefresh?: boolean; cacheKey?: string } = {}
 ) {
-  const cacheKey = generateAiCacheKey(systemPrompt, userPrompt);
+  const cacheKey = options.cacheKey || generateAiCacheKey(systemPrompt, userPrompt);
   const now = Date.now();
   // ۱. بررسی وجود در کش و معتبر بودن تاریخ انقضا
   if (!options.forceRefresh && aiResponseCache.has(cacheKey)) {
@@ -2821,29 +3847,57 @@ async function callAiWithFallback(
     aiResponseCache.delete(cacheKey); // پاکسازی کش منقضی‌شده
   }
 
-  const providers = [
+  // پیکربندی تامین‌کننده‌ها — اگر نام مدل «auto» یا نامشخص باشد، از لیست خود تامین‌کننده کشف می‌شود
+  const providerConfigs = [
     {
       id: "gemini",
-      name: "Google AI Studio (gemini-3.5-flash)",
+      label: "Google AI Studio",
       baseURL: process.env.AI_BASE_URL_1 || process.env.AI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai/",
       apiKey: process.env.AI_API_KEY_1 || process.env.AI_API_KEY,
-      model: process.env.AI_MODEL_1 || process.env.AI_MODEL_NAME || "gemini-3.5-flash",
+      model: (process.env.AI_MODEL_1 || process.env.AI_MODEL_NAME || "").trim(),
+      fallbackModels: ["gemini-3.5-flash", "gemini-2.5-flash"],
     },
     {
       id: "cerebras",
-      name: "Cerebras (Llama 3.3 70B)",
+      label: "Cerebras",
       baseURL: process.env.AI_BASE_URL_2 || "https://api.cerebras.ai/v1",
       apiKey: process.env.AI_API_KEY_2,
-      model: process.env.AI_MODEL_2 || "llama-3.3-70b",
+      model: (process.env.AI_MODEL_2 || "").trim(),
+      fallbackModels: ["llama-3.3-70b"],
     },
     {
       id: "sambanova",
-      name: "SambaNova (Llama 3.3 70B)",
+      label: "SambaNova",
       baseURL: process.env.AI_BASE_URL_3 || "https://api.sambanova.ai/v1",
       apiKey: process.env.AI_API_KEY_3,
-      model: process.env.AI_MODEL_3 || "Meta-Llama-3.3-70B-Instruct",
+      model: (process.env.AI_MODEL_3 || "").trim(),
+      fallbackModels: ["Meta-Llama-3.3-70B-Instruct"],
     },
-  ].filter((p) => p.apiKey && p.apiKey.trim() !== "");
+  ];
+
+  // ساخت صف تلاش: هر تامین‌کننده می‌تواند چند مدل کاندید داشته باشد (۳ جمینای + ۲ غیرجمینای)
+  const providerQueues = await Promise.all(
+    providerConfigs
+      .filter((p) => p.apiKey && p.apiKey.trim() !== "")
+      .map(async (p) => {
+        const wantsAuto = !p.model || p.model.toLowerCase() === "auto";
+        const discovered = wantsAuto
+          ? await discoverCandidateModels({ id: p.id, label: p.label, baseURL: p.baseURL, apiKey: p.apiKey! })
+          : [];
+        const queue = wantsAuto
+          ? [...discovered, ...p.fallbackModels.filter((m) => !discovered.includes(m))]
+          : [p.model];
+        return queue.map((model) => ({
+          id: p.id,
+          name: `${p.label} (${model})`,
+          baseURL: p.baseURL,
+          apiKey: p.apiKey!,
+          model,
+        }));
+      })
+  );
+
+  const providers = providerQueues.flat();
 
   if (providers.length === 0) {
     throw new Error("هیچ کلید API فعال برای هوش مصنوعی در فایل .env یافت نشد. لطفاً تنظیمات .env را بررسی کنید.");
@@ -2894,7 +3948,6 @@ async function callAiWithFallback(
           { role: "user", content: userPrompt },
         ],
         temperature: 0.0,
-        seed: 42,
       });
 
       const rawContent = completion.choices[0]?.message?.content || "";
@@ -2927,9 +3980,7 @@ function formatNextActionsForPrompt(nextActions: any[] | undefined): string {
   if (!Array.isArray(nextActions) || nextActions.length === 0) return "ثبت نشده";
   return nextActions
     .map((action) => {
-      const targetDate = action.target_date instanceof Date
-        ? action.target_date.toISOString().split("T")[0]
-        : String(action.target_date || "").split("T")[0];
+      const targetDate = ensureShamsiDate(action.target_date);
       return `- ${action.action_text} (تاریخ هدف: ${targetDate})`;
     })
     .join("\n");
@@ -2939,20 +3990,32 @@ function formatKpiValuesForPrompt(kpiValues: any[] | undefined): string {
   if (!Array.isArray(kpiValues) || kpiValues.length === 0) return "بدون شاخص ساختاریافته";
   return kpiValues
     .map((kv, idx) => {
-      const measured = !kv.not_measured && kv.calculated_value !== null;
-      const inputTypeLabel = kv.input_type === "direct" ? "مقدار مستقیم" : "درصد تغییر";
-      const directionLabel = kv.target_direction === "minimum" ? "حداقل" : "حداکثر";
+      const kpi = kv.kpi || {};
+      const name = kv.name || kpi.name || "شاخص";
+      const unit = kv.unit || kpi.unit || "";
+      const inputType = kv.input_type || kpi.input_type || "direct";
+      const targetDirection = kv.target_direction || kpi.target_direction || "minimum";
+      const targetValue = kv.target_value !== undefined && kv.target_value !== null ? kv.target_value : kpi.target_value;
+      const baselineVal = kv.baseline_value !== undefined && kv.baseline_value !== null ? kv.baseline_value : kpi.baseline_value;
+
+      const measured = !kv.not_measured && kv.calculated_value !== null && kv.current_value !== null;
+      const inputTypeLabel = inputType === "direct" ? "مقدار مستقیم" : "درصد تغییر";
+      const directionLabel = targetDirection === "minimum" ? "حداقل" : "حداکثر";
 
       if (!measured) {
-        return `${idx + 1}. ${kv.name || "شاخص"} — اندازه‌گیری نشده (${kv.missing_reason || "دلیل مشخص نشده"})`;
+        return `${idx + 1}. ${name} — اندازه‌گیری نشده (${kv.missing_reason || "دلیل مشخص نشده"})`;
       }
-      if (kv.input_type === "direct") {
-        const baselinePart = kv.baseline_value !== null && kv.baseline_value !== undefined
-          ? ` (مبنا: ${kv.baseline_value}، تغییر: ${kv.current_value - kv.baseline_value > 0 ? "+" : ""}${(kv.current_value - kv.baseline_value).toFixed(2)})`
+      const targetPart = targetValue !== null && targetValue !== undefined
+        ? ` (هدف: ${directionLabel} ${targetValue}${inputType === "percentage_change" ? "٪" : ""})`
+        : "";
+
+      if (inputType === "direct") {
+        const baselinePart = baselineVal !== null && baselineVal !== undefined
+          ? ` (مبنا: ${baselineVal}، تغییر: ${kv.current_value - baselineVal > 0 ? "+" : ""}${(kv.current_value - baselineVal).toFixed(2)})`
           : "";
-        return `${idx + 1}. ${kv.name || "شاخص"} (${inputTypeLabel}) — ${kv.unit || ""}: ${kv.current_value}${baselinePart} (هدف: ${directionLabel} ${kv.target_value})`;
+        return `${idx + 1}. ${name} (${inputTypeLabel}) — ${unit ? `${unit}: ` : ""}${kv.current_value}${baselinePart}${targetPart}`;
       } else {
-        return `${idx + 1}. ${kv.name || "شاخص"} (${inputTypeLabel}) — مبنا: ${kv.baseline_value}، جاری: ${kv.current_value}، محاسبه‌شده: ${kv.calculated_value}٪ (هدف: ${directionLabel} ${kv.target_value}٪)`;
+        return `${idx + 1}. ${name} (${inputTypeLabel}) — مبنا: ${baselineVal ?? 0}، جاری: ${kv.current_value}، محاسبه‌شده: ${kv.calculated_value}٪${targetPart}`;
       }
     })
     .join("\n");
@@ -2961,7 +4024,7 @@ function formatKpiValuesForPrompt(kpiValues: any[] | undefined): string {
 // اندپوینت تحلیل استراتژیک کلان دوره (مدیریتی)
 app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, requireManager, aiLimiter, async (req, res) => {
   try {
-    const { period_title, reports, force_refresh, manager_comment, previous_analysis } = req.body;
+    const { period_id, period_title, period_end, reports, force_refresh, manager_comment, previous_analysis } = req.body;
     const submittedReports = Array.isArray(reports)
       ? reports.filter((r: any) => r.activities_done && r.activities_done.trim() !== "")
       : [];
@@ -2970,46 +4033,127 @@ app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, r
       return res.status(400).json({ error: "هیچ گزارش ثبت‌شده‌ای برای تحلیل در این دوره یافت نشد." });
     }
 
+    // شناسایی دقیق بازه گزارش‌دهی و تاریخ پایان آن جهت تعیین اقدامات معوق واقعی
+    let resolvedPeriodId = period_id ? Number(period_id) : null;
+    let targetPeriod = null;
+    if (resolvedPeriodId) {
+      targetPeriod = await prisma.reportPeriod.findUnique({ where: { id: resolvedPeriodId } });
+    } else if (submittedReports[0]?.period_id) {
+      resolvedPeriodId = Number(submittedReports[0].period_id);
+      targetPeriod = await prisma.reportPeriod.findUnique({ where: { id: resolvedPeriodId } });
+    }
+
+    let cutoffDate: Date | null = null;
+    if (targetPeriod?.period_end) {
+      cutoffDate = new Date(targetPeriod.period_end);
+    } else if (period_end) {
+      cutoffDate = new Date(period_end);
+    }
+
+    if (cutoffDate) {
+      cutoffDate.setHours(23, 59, 59, 999);
+    }
+
+    const periodEndShamsi = cutoffDate
+      ? ensureShamsiDate(cutoffDate)
+      : (period_title || "پایان دوره");
+
+    // استخراج لیست کلیه اقدامات تعریف‌شده و انجام‌نشده در پروژه‌های فعال از دیتابیس (منحصراً موعدهای تا پایان این دوره)
+    const actionWhere: any = {
+      is_completed: false,
+      is_cancelled: false,
+      project: { is_active: true },
+    };
+    if (cutoffDate) {
+      actionWhere.target_date = {
+        lte: cutoffDate,
+      };
+    }
+
+    const uncompletedDbActions = await prisma.nextAction.findMany({
+      where: actionWhere,
+      include: {
+        project: { select: { id: true, title: true, code: true } },
+        user: { select: { id: true, full_name: true, job_title: true } },
+      },
+      orderBy: { target_date: "asc" },
+      take: 60,
+    });
+
+    const uncompletedActionsText = uncompletedDbActions.length > 0
+      ? uncompletedDbActions
+          .map((act, i) => {
+            const projTitle = act.project?.title || "پروژه نامشخص";
+            const deputy = act.user?.job_title || act.user?.full_name || "حوزه نامشخص";
+            const targetDate = ensureShamsiDate(act.target_date);
+            const claimed = act.claimed_completed ? " (پرسنل اعلام اتمام کرده اما تایید نهایی مدیریتی نشده)" : "";
+            return `${i + 1}. پروژه: «${projTitle}» | اقدام: ${act.action_text} | حوزه مسئول: ${deputy} | موعد اقدام: ${targetDate}${claimed}`;
+          })
+          .join("\n")
+      : `هیچ اقدام معوق یا انجام‌نشده‌ای با موعد تا تاریخ ${periodEndShamsi} در دیتابیس ثبت نشده است.`;
+
     const reportsText = submittedReports
       .map((r, index) => {
+        const deputy = r.deputy_name || r.user_job_title || r.user?.job_title || "معاونت / حوزه نامشخص";
         const kpiSection = (r.kpiValues && r.kpiValues.length > 0)
           ? `شاخص‌های ساختاریافته:\n${formatKpiValuesForPrompt(r.kpiValues)}`
           : `شاخص‌ها (متن آزاد): ${r.kpi_text || "ثبت نشده"}`;
         return `--- گزارش ${index + 1} ---
+          معاونت / واحد سازمانی: ${deputy}
           نویسنده: ${r.user_full_name}
           پروژه: ${r.project_title}
           فعالیت‌ها: ${r.activities_done}
           نتایج: ${r.results_achieved || "ثبت نشده"}
-          اقدامات آتی: ${formatNextActionsForPrompt(r.nextActions)}
+          اقدامات آتی ثبت‌شده در این گزارش: ${formatNextActionsForPrompt(r.nextActions)}
           ${kpiSection}`;
       })
       .join("\n\n");
 
     const systemPrompt = `شما یک دستیار هوشمند و ارشد مدیریت استراتژیک در سازمان حمل‌ونقل و ترافیک هستید.
 وظیفه شما تحلیل دقیق گزارش‌های عملکرد پرسنل و ارائه خروجی کاملاً ساختاریافته به فرمت JSON است.
-پاسخ شما باید حتماً و فقط یک جی‌سون معتبر با کلید ریشه "analysis" باشد. نمونه ساختار مورد انتظار:
+
+دستورالعمل‌های حیاتی مدیریت ارشد:
+۱. «خلاصه مدیریتی عملکرد سازمان» را حتماً و قطعاً **به تفکیک معاونت‌ها** (واحدهای سازمانی) ارائه دهید. برای هر معاونت، خلاصه‌ای تحلیلی از عملکرد، پیشرفت پروژه‌ها و تنگناها در این دوره بنویسید.
+۲. **اقدامات انجام‌نشده و معوق پروژه‌ها (uncompleted_actions):** صرفاً و اکیداً تعهداتی را در این بخش بیاورید که موعد مقرر (target_date) آن‌ها **تا پایان این دوره گزارش‌دهی (${periodEndShamsi}) یا پیش از آن** بوده و انجام نشده‌اند (دارای تاخیر زمانی هستند).
+⚠️ **قانون منع مطلق درج اقدامات آتی:** اقداماتی که موعد تحویل یا تاریخ ددلاین آنها **بعد از تاریخ پایان دوره (${periodEndShamsi})** است، تعهدات فعالِ دوره‌های بعد هستند و به هیچ عنوان نباید به عنوان تاخیری یا معوق ثبت شوند.
+۳. **قانون اکید و بدون استثنای تاریخ‌ها:** تمامی تاریخ‌هایی که در تحلیل یا برای موعد اقدامات (target_date) ذکر می‌کنید حتماً و قطعاً باید به **تقویم هجری شمسی (مثلاً ۱۴۰۵/۰۵/۱۶)** باشند و تحت هیچ شرایطی نباید تاریخ یا سال میلادی (مانند 2026) در خروجی وجود داشته باشد.
+
+پاسخ شما باید حتماً و فقط یک جی‌سون معتبر با کلید ریشه "analysis" باشد. نمونه دقیق ساختار مورد انتظار:
 {
   "analysis": {
     "health_score": 85,
     "overall_status": "پایدار",
-    "executive_summary": "متن خلاصه مدیریتی در دو پاراگراف...",
+    "executive_summary": [
+      {
+        "deputy_name": "نام دقیق معاونت (مثلاً: معاونت مطالعات حمل‌ونقل و ترافیک)",
+        "summary": "متن خلاصه و فشرده از عملکرد این معاونت و وضعیت پروژه‌های زیرمجموعه آن در این دوره..."
+      }
+    ],
     "key_achievements": ["دستاورد ۱", "دستاورد ۲"],
     "risks_and_delays": [
       { "project_title": "عنوان پروژه", "risk_level": "high", "description": "شرح دقیق موانع" }
     ],
-    "actionable_recommendations": ["پیشنهاد ۱", "پیشنهاد ۲"]
+    "uncompleted_actions": [
+      {
+        "project_title": "عنوان پروژه",
+        "action_text": "شرح اقدام تعریف‌شده که موعدش تا پایان این دوره بوده اما انجام نشد",
+        "deputy_name": "نام معاونت / واحد مسئول",
+        "target_date": "تاریخ موعد به تقویم شمسی (مثلاً ۱۴۰۵/۰۵/۱۶)",
+        "delay_status": "تحلیل وضعیت تاخیر یا موانع تحقق"
+      }
+    ]
   }
 }
 نکته: هیچ متن اضافی قبل و بعد از JSON ننویسید.`;
 
-    let userPrompt = `گزارش‌های عملکرد بازه "${period_title}":\n\n${reportsText}`;
+    let userPrompt = `گزارش‌های عملکرد بازه "${period_title}" (تاریخ پایان دوره: ${periodEndShamsi}):\n\n${reportsText}\n\n========================================\n📋 لیست اقدامات و تعهداتی که موعد مقرر آنها تا پایان این دوره (${periodEndShamsi}) بوده اما تا این لحظه انجام/تایید نشده‌اند:\n${uncompletedActionsText}`;
 
     if (manager_comment && typeof manager_comment === "string" && manager_comment.trim()) {
       userPrompt += `\n\n========================================
 🚨 بازخورد و دستورات اصلاحی مدیر ارشد سازمان جهت بازنگری و اصلاح این تحلیل:
 «${manager_comment.trim()}»
 
-لطفاً ضمن رعایت دقیق ساختار خروجی JSON، تحلیل قبلی را متناسب با نکات، انتقادات و جهت‌گیری‌های اعلام‌شده توسط مدیر فوق بازنگری، ویرایش و تکمیل نمایید.`;
+لطفاً ضمن رعایت دقیق ساختار خروجی JSON (به‌ویژه تفکیک خلاصه مدیریتی بر اساس معاونت‌ها، لیست اقدامات انجام‌نشده پروژه‌ها، و درج تمامی تاریخ‌ها صرفاً به صورت هجری شمسی)، تحلیل قبلی را متناسب با نکات، انتقادات و جهت‌گیری‌های اعلام‌شده توسط مدیر فوق بازنگری، ویرایش و تکمیل نمایید.`;
 
       if (previous_analysis) {
         userPrompt += `\n\nنسخه تحلیل قبلی جهت اعمال اصلاحات:\n${JSON.stringify(previous_analysis, null, 2)}`;
@@ -3017,7 +4161,73 @@ app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, r
     }
 
     const shouldForceRefresh = Boolean(force_refresh || (manager_comment && manager_comment.trim()));
-    const result = await callAiWithFallback(systemPrompt, userPrompt, { forceRefresh: shouldForceRefresh });
+    const strategicCacheKey = resolvedPeriodId
+      ? `strategic-analysis:period:${resolvedPeriodId}`
+      : undefined;
+
+    const result: any = await callAiWithFallback(systemPrompt, userPrompt, {
+      forceRefresh: shouldForceRefresh,
+      cacheKey: strategicCacheKey,
+    });
+
+    // ایمن‌سازی: در صورتی که هوش مصنوعی لیست اقدامات انجام‌نشده را خالی برگرداند اما در دیتابیس موجود باشد، لیست دیتابیس را به عنوان پشتیبان درج کن
+    if (result && result.analysis) {
+      if (!Array.isArray(result.analysis.uncompleted_actions) || result.analysis.uncompleted_actions.length === 0) {
+        if (uncompletedDbActions.length > 0) {
+          result.analysis.uncompleted_actions = uncompletedDbActions.slice(0, 15).map((act) => ({
+            project_title: act.project?.title || "پروژه نامشخص",
+            action_text: act.action_text,
+            deputy_name: act.user?.job_title || act.user?.full_name || "حوزه نامشخص",
+            target_date: ensureShamsiDate(act.target_date),
+            delay_status: act.claimed_completed ? "ادعای انجام شده، در انتظار تایید مدیر" : "اقدام انجام‌نشده / معوق",
+          }));
+        }
+      } else {
+        // تبدیل تضمینی تاریخ‌های برگشتی از هوش مصنوعی به شمسی در صورت ارسال تاریخ میلادی
+        // و فیلتر دفاعی مضاعف: اگر هوش مصنوعی اشتباهاً اقدامی با موعد بعد از پایان دوره آورده باشد، حذف گردد
+        result.analysis.uncompleted_actions = result.analysis.uncompleted_actions
+          .filter((act: any) => {
+            if (!cutoffDate || !act.target_date) return true;
+            try {
+              const eng = toEnglishDigits(String(act.target_date));
+              const match = eng.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+              if (match) {
+                const y = parseInt(match[1]);
+                const m = parseInt(match[2]);
+                const d = parseInt(match[3]);
+                let actDate: Date | null = null;
+                if (y < 1700) {
+                  // تاریخ هجری شمسی (مثلاً 1405/07/11)
+                  const gregStr = shamsiToGregorian(y, m, d);
+                  if (gregStr) {
+                    actDate = new Date(`${gregStr}T23:59:59.999`);
+                  }
+                } else {
+                  actDate = new Date(y, m - 1, d, 23, 59, 59, 999);
+                }
+                if (actDate && actDate.getTime() > cutoffDate.getTime()) {
+                  // موعد بعد از پایان دوره است — حذف از معوقات
+                  return false;
+                }
+              }
+            } catch (e) {
+              // در صورت خطا در تبدیل، داده حفظ شود
+            }
+            return true;
+          })
+          .map((act: any) => ({
+            ...act,
+            target_date: act.target_date ? ensureShamsiDate(act.target_date) : undefined,
+          }));
+      }
+
+      // به‌روزرسانی مقدار نهایی فیلتر و پالایش‌شده در کش سرور
+      if (strategicCacheKey && aiResponseCache.has(strategicCacheKey)) {
+        const cachedEntry = aiResponseCache.get(strategicCacheKey)!;
+        cachedEntry.data = result;
+      }
+    }
+
     res.json(result);
   } catch (err: any) {
     console.error("AI Global Analysis Error:", err);
@@ -3042,7 +4252,9 @@ app.post("/api/reports/analyze-single", authenticate, aiLimiter, async (req: any
         user: true,
         project: true,
         nextActions: true,
-        kpiValues: true,
+        kpiValues: {
+          include: { kpi: true },
+        },
       },
     });
 
@@ -3112,7 +4324,7 @@ app.post("/api/reports/analyze-single", authenticate, aiLimiter, async (req: any
     "future_actions_with_deadlines": [
       {
         "action": "شرح اقدام آتی",
-        "deadline": "تاریخ هدف یا 'تعیین‌نشده'"
+        "deadline": "تاریخ هدف حتماً به هجری شمسی (مثلاً ۱۴۰۵/۰۶/۲۰) یا 'تعیین‌نشده'"
       }
     ],
     "repetitiveness_assessment": {
@@ -3128,7 +4340,7 @@ app.post("/api/reports/analyze-single", authenticate, aiLimiter, async (req: any
     }
   }
 }
-نکته مهم: خروجی باید فقط JSON معتبر به زبان فارسی باشد بدون هیچ عبارت اضافه یا Markdown.`;
+نکته مهم: خروجی باید فقط JSON معتبر به زبان فارسی باشد بدون هیچ عبارت اضافه یا Markdown. کلیه تاریخ‌ها و ددلاین‌ها باید الزاماً و بدون استثنا به تقویم هجری شمسی باشند.`;
 
     const currentKpiSection = (currentReport.kpiValues && currentReport.kpiValues.length > 0)
       ? `شاخص‌های ساختاریافته:\n${formatKpiValuesForPrompt(currentReport.kpiValues)}`
@@ -3149,15 +4361,297 @@ ${previousReportsText}
 فعالیت‌های انجام‌شده: ${currentReport.activities_done}
 نتایج حاصله: ${currentReport.results_achieved || "ثبت نشده"}
 ${currentKpiSection}
-اقدامات آتی: ${currentReport.nextActions?.map((a: any) => `${a.action_text} (ددلاین: ${a.target_date || "ندارد"})`).join(", ") || "ثبت نشده"}
+اقدامات آتی: ${currentReport.nextActions?.map((a: any) => `${a.action_text} (ددلاین: ${ensureShamsiDate(a.target_date)})`).join(", ") || "ثبت نشده"}
 `;
 
-    const result = await callAiWithFallback(systemPrompt, userPrompt, { forceRefresh: Boolean(force_refresh) });
+    const result: any = await callAiWithFallback(systemPrompt, userPrompt, { forceRefresh: Boolean(force_refresh) });
+
+    if (result && result.analysis && Array.isArray(result.analysis.future_actions_with_deadlines)) {
+      result.analysis.future_actions_with_deadlines = result.analysis.future_actions_with_deadlines.map((act: any) => ({
+        ...act,
+        deadline: act.deadline ? ensureShamsiDate(act.deadline) : "تعیین‌نشده",
+      }));
+    }
+
     res.json(result);
   } catch (err: any) {
     console.error("Single Report Audit Error:", err);
     const clientError = config.NODE_ENV === "production"
       ? "خطایی در ممیزی گزارش با هوش مصنوعی رخ داد."
+      : (err.message || "خطا در پردازش هوش مصنوعی.");
+    res.status(500).json({ error: clientError });
+  }
+});
+
+// اندپوینت ارزیابی و تحلیل استراتژیک معاونت (پروژه به پروژه + ممیزی WBS و استخراج KPI)
+app.post(["/api/reports/analyze-deputy", "/api/ai/deputy-analysis"], authenticate, requireManager, aiLimiter, async (req: any, res) => {
+  try {
+    const { period_id, deputy_name, user_id, manager_comment, previous_analysis, force_refresh } = req.body;
+
+    if (!period_id) {
+      return res.status(400).json({ error: "شناسه دوره (period_id) الزامی است." });
+    }
+
+    const period = await prisma.reportPeriod.findUnique({
+      where: { id: Number(period_id) },
+    });
+    if (!period) {
+      return res.status(404).json({ error: "بازه گزارش‌دهی مورد نظر یافت نشد." });
+    }
+
+    // ۱. شناسایی کاربران / مدیران مرتبط با این معاونت
+    let deputyUsers: any[] = [];
+    if (user_id) {
+      const u = await prisma.user.findUnique({ where: { id: Number(user_id) } });
+      if (u) deputyUsers.push(u);
+    } else if (deputy_name && typeof deputy_name === "string" && deputy_name.trim()) {
+      const trimmed = deputy_name.trim();
+      deputyUsers = await prisma.user.findMany({
+        where: {
+          is_active: true,
+          OR: [
+            { job_title: { contains: trimmed } },
+            { full_name: { contains: trimmed } },
+            { username: trimmed },
+          ],
+        },
+      });
+    }
+
+    if (deputyUsers.length === 0) {
+      return res.status(404).json({ error: "معاونت یا کاربر مرتبط با این درخواست یافت نشد." });
+    }
+
+    const deputyUserIds = deputyUsers.map((u) => u.id);
+    const resolvedDeputyName = deputyUsers[0].job_title || deputyUsers[0].full_name || deputy_name || "معاونت نامشخص";
+
+    // ۲. استخراج پروژه‌های مرتبط با این معاونت
+    const userProjects = await prisma.userProject.findMany({
+      where: {
+        user_id: { in: deputyUserIds },
+        project: { is_active: true },
+      },
+      include: {
+        project: true,
+        user: true,
+      },
+      orderBy: { project: { order_index: "asc" } },
+    });
+
+    if (userProjects.length === 0) {
+      return res.status(400).json({ error: `هیچ پروژه فعالی برای «${resolvedDeputyName}» تعریف نشده است.` });
+    }
+
+    const allWeeklyPeriods = await prisma.reportPeriod.findMany({
+      where: { report_type: "weekly" },
+      select: { id: true, title: true, period_end: true, report_type: true },
+    });
+    const isLastWeek = period.report_type === "weekly" && isLastWeekOfShamsiMonth(period, allWeeklyPeriods);
+
+    // پروژه‌های منحصربه‌فرد (در هفته‌های عادی فقط هفتگی، در هفته پایانی ماه هر دو)
+    const projectMap = new Map<number, any>();
+    for (const up of userProjects) {
+      const pType = (up.project as any).project_type || "weekly";
+      if (period.report_type === "weekly") {
+        if (!isLastWeek && pType === "monthly") continue;
+      } else if (period.report_type === "monthly") {
+        if (pType !== "monthly") continue;
+      }
+      if (!projectMap.has(up.project_id)) {
+        projectMap.set(up.project_id, {
+          ...up.project,
+          responsible_user: up.user.full_name,
+        });
+      }
+    }
+
+    if (projectMap.size === 0) {
+      return res.status(400).json({
+        error: `هیچ پروژه ${period.report_type === "monthly" ? "ماهانه‌ای" : "هفتگی‌ای"} برای «${resolvedDeputyName}» در این بازه تعریف نشده است.`,
+      });
+    }
+
+    const projectsList = Array.from(projectMap.values());
+    const projectIds = projectsList.map((p) => p.id);
+
+    // ۳. استخراج کلیه شاخص‌های مصوب و فعال این پروژه‌ها
+    const definedProjectKpis = await prisma.projectKpi.findMany({
+      where: {
+        project_id: { in: projectIds },
+        is_active: true,
+      },
+      orderBy: { sort_order: "asc" },
+    });
+
+    // ۴. دریافت گزارش‌های این دوره برای این پروژه‌ها و کاربران
+    const reports = await prisma.report.findMany({
+      where: {
+        period_id: Number(period_id),
+        project_id: { in: projectIds },
+      },
+      include: {
+        user: true,
+        project: true,
+        nextActions: true,
+        kpiValues: {
+          include: { kpi: true },
+        },
+        files: true,
+      },
+      orderBy: { submitted_at: "desc" },
+    });
+
+    // ۵. ساختاردهی اطلاعات پروژه به پروژه همراه با WBS و سابقه شاخص‌ها
+    const projectsDataForPrompt = projectsList.map((project, idx) => {
+      const report = reports.find((r) => r.project_id === project.id);
+      const projectKpis = definedProjectKpis.filter((pk) => pk.project_id === project.id);
+
+      // استخراج WBS در صورت وجود
+      let wbsContext = "فاقد سند مرجع WBS";
+      const wbsPath = resolveProjectWbsFilePath(project);
+      if (wbsPath) {
+        try {
+          const parsed = parseExcelWBS(wbsPath);
+          wbsContext = parsed.formattedPromptText;
+        } catch (e: any) {
+          wbsContext = `خطا در خواندن فایل WBS: ${e.message}`;
+        }
+      }
+
+      const definedKpisSummary = projectKpis.length > 0
+        ? `شاخص‌های مصوب پروژه در سامانه (${projectKpis.length} شاخص):\n` +
+          projectKpis
+            .map((pk, kIdx) => {
+              const targetStr = pk.target_value !== null && pk.target_value !== undefined
+                ? ` [هدف: ${pk.target_direction === "minimum" ? "حداقل" : "حداکثر"} ${pk.target_value}]`
+                : "";
+              return `  ${kIdx + 1}. ${pk.name} (واحد: ${pk.unit})${targetStr}`;
+            })
+            .join("\n")
+        : "فاقد شاخص مصوب در سامانه";
+
+      if (!report) {
+        return `=== پروژه ${idx + 1}: ${project.title} (مسئول: ${project.responsible_user || "مشخص نشده"}) ===
+وضعیت گزارش: ❌ فاقد گزارش در این دوره (عدم ثبت توسط کارشناس)
+شاخص‌های عملکردی مصوب:
+${definedKpisSummary}
+سند مرجع WBS:
+${wbsContext}`;
+      }
+
+      let kpiSection = "";
+      if (report.kpiValues && report.kpiValues.length > 0) {
+        kpiSection = `شاخص‌های عملکردی ثبت‌شده توسط کارشناس:\n${formatKpiValuesForPrompt(report.kpiValues)}`;
+      } else if (projectKpis.length > 0) {
+        kpiSection = `شاخص‌های مصوب پروژه:\n${definedKpisSummary}\n⚠️ وضعیت مقادیر در این دوره: کارشناس در گزارش ارسالی هیچ مقداری برای این شاخص‌های مصوب ثبت نکرده است (نقص در تکمیل مقادیر شاخص‌ها).`;
+      } else {
+        kpiSection = `شاخص‌ها (متن آزاد): ${report.kpi_text || "ثبت نشده"} (پروژه فاقد شاخص مصوب در سامانه است)`;
+      }
+
+      return `=== پروژه ${idx + 1}: ${project.title} (مسئول: ${report.user_full_name}) ===
+وضعیت گزارش: ✅ ${report.status === "late" ? "تأخیری" : "ثبت‌شده منظم"} (تاریخ ثبت: ${report.submitted_at.toISOString().split("T")[0]})
+فعالیت‌های انجام‌شده:
+${report.activities_done || "توضیحی ثبت نشده"}
+نتایج ملموس حاصله:
+${report.results_achieved || "توضیحی ثبت نشده"}
+${kpiSection}
+اقدامات آتی تعهدشده:
+${formatNextActionsForPrompt(report.nextActions)}
+سند مرجع WBS:
+${wbsContext}`;
+    }).join("\n\n----------------------------------------\n\n");
+
+    const totalProjectsCount = projectsList.length;
+    const submittedCount = reports.length;
+    const missingCount = totalProjectsCount - submittedCount;
+
+    // ۶. تنظیم دستورات سیستم با الزام اکید به عدم توهم (Strict Grounding)
+    const systemPrompt = `شما یک ارزیاب، ممیز ارشد مدیریت استراتژیک و کنترل پروژه در سازمان حمل‌ونقل و ترافیک هستید.
+وظیفه شما ارزیابی داده‌محور و دقیق عملکرد «معاونت سازمانی» مشخص‌شده در یک بازه زمانی معین، بر اساس تک‌تک پروژه‌های آن است.
+
+قوانین اکید و بدون استثنا:
+۱. اصل استناد مستقیم (Strict Grounding): فقط و فقط بر اساس اطلاعات واقعی ارائه‌شده قضاوت کنید. از ذکر ادعاهای کلی، تعمیم‌های ساختگی یا حدسیات فنی خودداری نمایید.
+۲. تمایز بین «فقدان شاخص» و «عدم ثبت مقدار توسط کارشناس»:
+   - اگر برای پروژه‌ای شاخص‌های مصوب تعریف شده اما کارشناس در گزارش خود مقداری وارد نکرده است، پروژه را فاقد شاخص ندانید؛ بلکه صراحتاً بنویسید که پروژه دارای شاخص مصوب است اما کارشناس اقدام به تکمیل و ثبت مقادیر نکرده است و این موضوع را به عنوان ضعف یا ریسک پایش ثبت کنید.
+   - تنها در صورتی عبارت "فاقد شاخص مصوب" را به کار ببرید که صراحتاً در اطلاعات پروژه ذکر شده باشد فاقد شاخص مصوب است.
+   - اگر پروژه‌ای گزارش ندارد یا سند WBS ندارد، صراحتاً بنویسید "فاقد گزارش" یا "فاقد WBS مرجع".
+۳. استخراج هوشمند شاخص (KPI Extraction): متن فعالیت‌ها و نتایج پروژه‌ها را بررسی کنید و سنجه‌های عددی/کمی بالقوه‌ای که کارشناس در متن آورده اما به عنوان شاخص ساختاریافته تعریف نشده را استخراج کنید تا سازمان بتواند در آینده آن‌ها را به شاخص مصوب تبدیل کند.
+۴. زبان خروجی: کاملاً فارسی، روان، اداری و بدون هرگونه تعارف یا اطناب.
+۵. خروجی باید حتماً و فقط یک شیء JSON معتبر با کلید ریشه "analysis" باشد بدون هیچ کلمه، توضیح یا کاراکتر اضافی در ابتدا یا انتها.
+
+نمونه ساختار مورد انتظار JSON:
+{
+  "analysis": {
+    "deputy_name": "نام دقیق معاونت",
+    "period_title": "عنوان دوره",
+    "health_score": 75,
+    "overall_status": "پایدار / نیازمند پیگیری جدی / بحرانی",
+    "deputy_executive_summary": "خلاصه مدیریتی دقیق در دو پاراگراف درباره عملکرد کل این معاونت در این دوره...",
+    "projects_analysis": [
+      {
+        "project_title": "عنوان پروژه",
+        "status": "submitted",
+        "project_summary": "خلاصه ۳-۴ خطی از عملکرد واقعی پروژه در این دوره بر اساس گزارش",
+        "key_achievements": ["دستاورد ملموس ۱"],
+        "risks_or_delays": ["موانع، تأخیرها یا ریسک‌ها"],
+        "wbs_alignment": "وضعیت انطباق با سند WBS یا ذکر 'فاقد WBS مرجع'",
+        "kpi_evaluation": "بررسی مقادیر شاخص‌های ثبت‌شده یا ذکر 'دارای شاخص مصوب ولی مقدار ثبت نشده' یا ذکر 'فاقد شاخص مصوب'"
+      }
+    ],
+    "suggested_kpis_from_text": [
+      {
+        "project_title": "عنوان پروژه مرتبط",
+        "suggested_kpi_name": "عنوان شاخص پیشنهادی استخراج‌شده از متن",
+        "suggested_unit": "واحد سنجش (مثلاً: سامانه، تقاطع، درصد، روز)",
+        "extracted_context": "بخشی از متن گزارش که این سنجه از آن شناسایی شد",
+        "reasoning": "چرا ثبت رسمی این شاخص برای معاونت ارزش نظارتی دارد"
+      }
+    ],
+    "next_period_commitments": [
+      {
+        "project_title": "عنوان پروژه",
+        "action": "شرح اقدام آتی",
+        "deadline": "تاریخ هدف یا 'تعیین‌نشده'"
+      }
+    ],
+    "actionable_recommendations": [
+      "پیشنهاد عملیاتی و قابل اجرا به مدیر ارشد سازمان جهت بهبود عملکرد این معاونت"
+    ]
+  }
+}`;
+
+    let userPrompt = `🏢 **ارزیابی عملکرد معاونت: ${resolvedDeputyName}**
+📅 **بازه گزارش‌دهی:** ${period.title} (${period.period_start.toISOString().split("T")[0]} الی ${period.period_end.toISOString().split("T")[0]})
+📊 **آمار کمی دوره:** کل پروژه‌ها: ${totalProjectsCount} | گزارش‌های ارائه‌شده: ${submittedCount} | پروژه‌های فاقد گزارش: ${missingCount}
+
+========================================
+📋 **اطلاعات و گزارش‌های به تفکیک پروژه:**
+
+${projectsDataForPrompt}`;
+
+    if (manager_comment && typeof manager_comment === "string" && manager_comment.trim()) {
+      userPrompt += `\n\n========================================
+🚨 بازخورد و دستورات اصلاحی مدیر ارشد سازمان جهت بازنگری و اصلاح این تحلیل:
+«${manager_comment.trim()}»
+
+لطفاً ضمن حفظ دقیق ساختار JSON، تحلیل این معاونت را متناسب با نظرات و اصلاحات مدیر ارشد بازنویسی نمایید.`;
+
+      if (previous_analysis) {
+        userPrompt += `\n\nنسخه تحلیل قبلی جهت اعمال اصلاحات:\n${JSON.stringify(previous_analysis, null, 2)}`;
+      }
+    }
+
+    const shouldForceRefresh = Boolean(force_refresh || (manager_comment && manager_comment.trim()));
+    const deputyCacheKey = `deputy-analysis:period:${period_id}:deputy:${resolvedDeputyName || deputy_name || user_id}`;
+    const result = await callAiWithFallback(systemPrompt, userPrompt, {
+      forceRefresh: shouldForceRefresh,
+      cacheKey: deputyCacheKey,
+    });
+    res.json(result);
+  } catch (err: any) {
+    console.error("Deputy AI Analysis Error:", err);
+    const clientError = config.NODE_ENV === "production"
+      ? "خطایی در پردازش تحلیل معاونت توسط هوش مصنوعی رخ داد."
       : (err.message || "خطا در پردازش هوش مصنوعی.");
     res.status(500).json({ error: clientError });
   }
