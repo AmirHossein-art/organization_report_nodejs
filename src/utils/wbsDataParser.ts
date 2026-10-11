@@ -109,6 +109,8 @@ export function parseWbsWorkbook(filePath: string): ParsedWbsData {
     for (const row of pRows) {
       const key = cellToString(row?.[0]);
       if (!key) continue;
+      // عدم گنجاندن سند مرجع منبع در مشخصات شناسنامه‌ای پروژه
+      if (key.includes("مرجع") || key.includes("منبع")) continue;
       const value = cellToString(row?.[1]);
       projectInfo.push({ key, value });
       if ((key.includes("نام پروژه") || key.includes("عنوان پروژه")) && value) {
@@ -275,9 +277,6 @@ export function parseWbsWorkbook(filePath: string): ParsedWbsData {
       } else if (c0.includes("شاخص کلان") || fullText.includes("شاخص کلان پروژه:")) {
         const val = c2 || c1 || fullText.replace(/.*شاخص کلان پروژه[:\s]*/, "").trim();
         if (val) projectInfo.push({ key: "شاخص کلان پروژه", value: val });
-      } else if (c0.includes("مرجع:") || fullText.includes("مرجع:")) {
-        const val = fullText.replace(/.*مرجع[:\s]*/, "").trim();
-        if (val) projectInfo.push({ key: "سند مرجع منبع", value: val });
       } else if (c0.includes("تعداد فاز")) {
         const val = c2 || c1;
         if (val) projectInfo.push({ key: "تعداد فازها", value: val });
@@ -374,11 +373,20 @@ export function parseWbsWorkbook(filePath: string): ParsedWbsData {
 
         const deliverables = deliverableIdx !== -1 ? cellToString(row[deliverableIdx]) : "";
         const kpi = kpiIdx !== -1 ? cellToString(row[kpiIdx]) : "";
-        const owner = ownerIdx !== -1 ? cellToString(row[ownerIdx]) : "";
-        const duration = durationIdx !== -1 ? cellToString(row[durationIdx]) : "";
+        let owner = ownerIdx !== -1 ? cellToString(row[ownerIdx]) : "";
+        let duration = durationIdx !== -1 ? cellToString(row[durationIdx]) : "";
         const startDate = startIdx !== -1 ? cellToString(row[startIdx]) : "";
         const phase = phaseIdx !== -1 ? cellToString(row[phaseIdx]) : "";
         const note = noteIdx !== -1 ? cellToString(row[noteIdx]) : "";
+
+        // جداسازی هوشمند مدت زمان از نام مسئول در صورت ادغام در یک سلول
+        if (duration.includes("ستون") || duration.includes("مسئول") || !duration) {
+          const durMatch = owner.match(/\(([^)]*(?:ساعت|روز|ماه|هفته)[^)]*)\)/);
+          if (durMatch) {
+            duration = durMatch[1].trim();
+            owner = owner.replace(/\([^)]*(?:ساعت|روز|ماه|هفته)[^)]*\)/, "").trim();
+          }
+        }
 
         const cleanDigits = normalizeDigits(code);
         const dotParts = cleanDigits.split(/[\.-]/).filter(Boolean);

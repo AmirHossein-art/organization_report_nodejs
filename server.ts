@@ -149,9 +149,15 @@ const uploadWBS = multer({
 function sanitizeOriginalFileName(rawName: string): string {
   if (!rawName) return "file.xlsx";
   try {
-    const decoded = Buffer.from(rawName, "latin1").toString("utf8");
-    if (!decoded.includes("\ufffd") && decoded.length > 0) {
-      return decoded;
+    const fixed = Buffer.from(rawName, "latin1").toString("utf8");
+    if (!fixed.includes("\ufffd") && /[\u0600-\u06FF]/.test(fixed)) {
+      return fixed;
+    }
+  } catch (_) {}
+  try {
+    if (rawName.includes("%")) {
+      const decodedUri = decodeURIComponent(rawName);
+      if (decodedUri !== rawName) return decodedUri;
     }
   } catch (_) {}
   return rawName;
@@ -286,6 +292,14 @@ async function ensureDatabaseSchema() {
         "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
       CREATE INDEX IF NOT EXISTS "WbsSubmission_project_id_idx" ON "WbsSubmission"("project_id");
+
+      UPDATE "Project"
+      SET "wbs_file_name" = convert_from(convert_to("wbs_file_name", 'LATIN1'), 'UTF8')
+      WHERE "wbs_file_name" LIKE '%Ø%' OR "wbs_file_name" LIKE '%Ù%' OR "wbs_file_name" LIKE '%§%';
+
+      UPDATE "WbsSubmission"
+      SET "file_name" = convert_from(convert_to("file_name", 'LATIN1'), 'UTF8')
+      WHERE "file_name" LIKE '%Ø%' OR "file_name" LIKE '%Ù%' OR "file_name" LIKE '%§%';
     `);
 
     console.log("Database schema checked and verified successfully.");
@@ -1169,7 +1183,12 @@ app.get("/api/projects/:id/wbs-file", authenticate, async (req: any, res) => {
       return res.status(404).json({ error: "فایل فیزیکی WBS در حافظه سرور یافت نشد." });
     }
 
-    res.download(filePath, project.wbs_file_name || "wbs_file.xlsx");
+    const rawName = project.wbs_file_name || "wbs_file.xlsx";
+    const cleanFileName = sanitizeOriginalFileName(rawName);
+    const safeFallback = "wbs_file.xlsx";
+    const encoded = encodeURIComponent(cleanFileName);
+    res.setHeader("Content-Disposition", `attachment; filename="${safeFallback}"; filename*=UTF-8''${encoded}`);
+    res.sendFile(filePath);
   } catch (error) {
     console.error("Error downloading WBS file:", error);
     res.status(500).json({ error: "خطا در دانلود فایل WBS" });
@@ -1473,7 +1492,12 @@ app.get("/api/wbs-submissions/:id/download", authenticate, async (req: any, res)
       return res.status(404).json({ error: "فایل فیزیکی در سرور یافت نشد." });
     }
 
-    res.download(filePath, submission.file_name || "wbs_file.xlsx");
+    const rawSubName = submission.file_name || "wbs_file.xlsx";
+    const cleanSubFileName = sanitizeOriginalFileName(rawSubName);
+    const safeFallback = "wbs_file.xlsx";
+    const subEncoded = encodeURIComponent(cleanSubFileName);
+    res.setHeader("Content-Disposition", `attachment; filename="${safeFallback}"; filename*=UTF-8''${subEncoded}`);
+    res.sendFile(filePath);
   } catch (error) {
     console.error("Error downloading WBS submission:", error);
     res.status(500).json({ error: "خطا در دریافت فایل ساختار شکست." });

@@ -625,6 +625,7 @@ export default function ManageProjects({
                     {(proj.wbs_file_name || proj.wbs_storage_filename) && (
                       <a
                         href={`/api/projects/${proj.id}/wbs-file`}
+                        download={proj.wbs_file_name || undefined}
                         target="_blank"
                         rel="noreferrer"
                         className="inline-flex items-center gap-1.5 text-[10px] text-emerald-800 hover:text-emerald-900 font-bold bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded-md border border-emerald-200 transition-colors cursor-pointer shadow-2xs"
@@ -838,6 +839,7 @@ export default function ManageProjects({
                     <div className="flex items-center justify-between">
                       <a
                         href={`/api/projects/${editingProject.id}/wbs-file`}
+                        download={editingProject.wbs_file_name || undefined}
                         target="_blank"
                         rel="noreferrer"
                         className="font-bold text-emerald-700 hover:text-emerald-800 flex items-center gap-1.5 transition-colors"

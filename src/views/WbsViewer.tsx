@@ -27,8 +27,10 @@ import {
   Clock,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
   Search,
   GitBranch,
+  Table,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import WbsTreePane from "./WbsTree";
@@ -124,6 +126,180 @@ function infoIcon(key: string) {
   return <ListTree className="w-4 h-4 text-slate-500" />;
 }
 
+// ---------- ساختار گره‌های سلسله‌مراتبی درخت WBS ----------
+interface WbsTreeNode {
+  task: WbsTask;
+  code: string;
+  depth: number;
+  isSynthetic?: boolean;
+  children: WbsTreeNode[];
+}
+
+function buildWbsTreeNodes(tasks: WbsTask[]): WbsTreeNode[] {
+  const map = new Map<string, WbsTreeNode>();
+
+  for (const t of tasks) {
+    const code = (t.wbs_code || "").trim();
+    const norm = normalizeDigits(code);
+    map.set(norm, {
+      task: t,
+      code,
+      depth: 1,
+      children: [],
+    });
+  }
+
+  const getParentNorm = (norm: string): string | null => {
+    if (norm.includes(".")) {
+      const parts = norm.split(".");
+      if (parts.length > 1) return parts.slice(0, -1).join(".");
+      return null;
+    }
+    if (norm.toUpperCase().includes("-WP-")) {
+      return norm.split("-")[0];
+    }
+    if (norm.includes("-")) {
+      const parts = norm.split("-");
+      if (parts.length > 1) return parts.slice(0, -1).join("-");
+    }
+    return null;
+  };
+
+  // ایجاد خودکار والدهای مفقود در صورت عدم وجود
+  for (const t of tasks) {
+    let cur = normalizeDigits((t.wbs_code || "").trim());
+    let parent = getParentNorm(cur);
+    while (parent) {
+      if (!map.has(parent)) {
+        let name = `فاز ${parent}`;
+        if (t.phase && (parent.length === 1 || parent.startsWith("P"))) {
+          name = t.phase;
+        } else if (t.deliverables && parent.split(".").length === 2) {
+          name = t.deliverables.slice(0, 40);
+        } else {
+          name = `بسته کاری ${parent}`;
+        }
+        map.set(parent, {
+          task: {
+            wbs_code: parent,
+            level: String(parent.split(".").length),
+            name,
+            deliverables: "",
+            owner: "",
+            start_date: "",
+            duration: "",
+            prerequisite: "",
+            note: "گره سرفصل ساختاری",
+            phase: t.phase,
+          },
+          code: parent,
+          depth: parent.split(".").length,
+          isSynthetic: true,
+          children: [],
+        });
+      }
+      cur = parent;
+      parent = getParentNorm(cur);
+    }
+  }
+
+  const roots: WbsTreeNode[] = [];
+  const isChild = new Set<string>();
+
+  for (const [norm, node] of map.entries()) {
+    const pNorm = getParentNorm(norm);
+    if (pNorm && map.has(pNorm) && pNorm !== norm) {
+      map.get(pNorm)!.children.push(node);
+      isChild.add(norm);
+    }
+  }
+
+  for (const [norm, node] of map.entries()) {
+    if (!isChild.has(norm)) {
+      roots.push(node);
+    }
+  }
+
+  // مرتب‌سازی عددی
+  const cmp = (a: string, b: string) => {
+    const na = normalizeDigits(a).split(/[.\-]/).map((x) => (isNaN(Number(x)) ? x : Number(x)));
+    const nb = normalizeDigits(b).split(/[.\-]/).map((x) => (isNaN(Number(x)) ? x : Number(x)));
+    for (let i = 0; i < Math.max(na.length, nb.length); i++) {
+      const va = na[i];
+      const vb = nb[i];
+      if (va === undefined) return -1;
+      if (vb === undefined) return 1;
+      if (typeof va === "number" && typeof vb === "number") {
+        if (va !== vb) return va - vb;
+      } else {
+        const diff = String(va).localeCompare(String(vb));
+        if (diff !== 0) return diff;
+      }
+    }
+    return 0;
+  };
+
+  const sortAndDepth = (n: WbsTreeNode, d: number) => {
+    n.depth = d;
+    n.children.sort((x, y) => cmp(x.code, y.code));
+    n.children.forEach((c) => sortAndDepth(c, d + 1));
+  };
+
+  roots.sort((x, y) => cmp(x.code, y.code));
+  roots.forEach((r) => sortAndDepth(r, 1));
+
+  return roots;
+}
+
+function flattenVisibleTreeRows(
+  roots: WbsTreeNode[],
+  expandedMap: Record<string, boolean>,
+  searchQuery: string = "",
+  levelFilter: "all" | "phases" | "workpackages" = "all"
+): Array<{ node: WbsTreeNode; depth: number; hasChildren: boolean }> {
+  const result: Array<{ node: WbsTreeNode; depth: number; hasChildren: boolean }> = [];
+  const q = searchQuery.trim().toLowerCase();
+
+  const isMatch = (n: WbsTreeNode): boolean => {
+    if (!q) return true;
+    const norm = normalizeDigits(n.code).toLowerCase();
+    const nameMatch = n.task.name.toLowerCase().includes(q);
+    const codeMatch = n.code.toLowerCase().includes(q) || norm.includes(q);
+    const delivMatch = n.task.deliverables?.toLowerCase().includes(q);
+    const ownerMatch = n.task.owner?.toLowerCase().includes(q);
+    const kpiMatch = n.task.kpi?.toLowerCase().includes(q);
+    return Boolean(nameMatch || codeMatch || delivMatch || ownerMatch || kpiMatch);
+  };
+
+  const anyDescendantMatch = (n: WbsTreeNode): boolean => {
+    if (isMatch(n)) return true;
+    return n.children.some(anyDescendantMatch);
+  };
+
+  const traverse = (node: WbsTreeNode, depth: number) => {
+    const hasChildren = node.children.length > 0;
+    const isLevel1 = node.depth === 1;
+
+    if (levelFilter === "phases" && !isLevel1) return;
+    if (levelFilter === "workpackages" && isLevel1) {
+      node.children.forEach((c) => traverse(c, depth + 1));
+      return;
+    }
+
+    if (q && !anyDescendantMatch(node)) return;
+
+    result.push({ node, depth, hasChildren });
+
+    const shouldExpand = q ? true : Boolean(expandedMap[node.code]);
+    if (hasChildren && shouldExpand) {
+      node.children.forEach((c) => traverse(c, depth + 1));
+    }
+  };
+
+  roots.forEach((r) => traverse(r, 1));
+  return result;
+}
+
 export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) {
   const [wbsProjectList, setWbsProjectList] = useState<WbsProjectSummary[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
@@ -137,15 +313,9 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // وضعیت‌های فیلتر و جستجو در لیست فعالیت‌های WBS
+  // وضعیت‌های فیلتر و جستجو در جدول سلسله‌مراتبی فعالیت‌های WBS
   const [taskSearch, setTaskSearch] = useState("");
   const [levelFilter, setLevelFilter] = useState<"all" | "phases" | "workpackages">("all");
-  const [expandedNotes, setExpandedNotes] = useState<Record<string, boolean>>({});
-
-  const toggleExpandNote = (code: string) => {
-    setExpandedNotes((prev) => ({ ...prev, [code]: !prev[code] }));
-  };
-
   const closeAll = () => {};
 
   // فوکوس روی کد خاص هنگام هدایت از درخت
@@ -242,30 +412,6 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
   }, [wbsProjectList, selectedProjectId]);
 
   // فیلتر و جستجوی لیست فعالیت‌های WBS
-  const filteredTasks = useMemo(() => {
-    if (!data?.tasks) return [];
-    return data.tasks.filter((t) => {
-      const cleanCode = normalizeDigits((t.wbs_code || "").trim());
-      const isPhaseOrL1 = t.level === "1" || cleanCode.split(".").length === 1;
-
-      if (levelFilter === "phases" && !isPhaseOrL1) return false;
-      if (levelFilter === "workpackages" && isPhaseOrL1) return false;
-
-      if (taskSearch.trim()) {
-        const q = taskSearch.trim().toLowerCase();
-        const normQ = normalizeDigits(q);
-        const nameMatch = (t.name || "").toLowerCase().includes(q);
-        const codeMatch = (t.wbs_code || "").toLowerCase().includes(q) || cleanCode.includes(normQ);
-        const delivMatch = (t.deliverables || "").toLowerCase().includes(q);
-        const ownerMatch = (t.owner || "").toLowerCase().includes(q);
-        const phaseMatch = (t.phase || "").toLowerCase().includes(q);
-        const kpiMatch = (t.kpi || "").toLowerCase().includes(q);
-        return nameMatch || codeMatch || delivMatch || ownerMatch || phaseMatch || kpiMatch;
-      }
-      return true;
-    });
-  }, [data?.tasks, taskSearch, levelFilter]);
-
   const phaseCount = useMemo(() => {
     if (!data?.tasks) return 0;
     return data.tasks.filter((t) => {
@@ -282,25 +428,70 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
     }).length;
   }, [data?.tasks]);
 
-  const allNotesExpanded = useMemo(() => {
-    if (!data?.tasks || data.tasks.length === 0) return false;
-    const tasksWithNotes = data.tasks.filter((t) => t.note && t.note.trim() !== "");
-    if (tasksWithNotes.length === 0) return false;
-    return tasksWithNotes.every((t) => expandedNotes[t.wbs_code || ""]);
-  }, [data?.tasks, expandedNotes]);
+  // ساخت درخت سلسله‌مراتبی فعالیت‌ها برای جدول WBS
+  const wbsTreeNodes = useMemo(() => {
+    if (!data?.tasks) return [];
+    return buildWbsTreeNodes(data.tasks);
+  }, [data?.tasks]);
 
-  const toggleExpandAllNotes = () => {
-    if (!data?.tasks) return;
-    if (allNotesExpanded) {
-      setExpandedNotes({});
-    } else {
-      const newMap: Record<string, boolean> = {};
-      data.tasks.forEach((t) => {
-        if (t.note) newMap[t.wbs_code || ""] = true;
-      });
-      setExpandedNotes(newMap);
+  // وضعیت باز/بسته بودن سطوح مختلف در جدول
+  const [expandedTreeNodes, setExpandedTreeNodes] = useState<Record<string, boolean>>({});
+
+  // هنگام بارگذاری پروژه، گره‌های سطوح ۱ و ۲ پیش‌فرض باز باشند
+  useEffect(() => {
+    if (wbsTreeNodes.length > 0) {
+      const initMap: Record<string, boolean> = {};
+      const walk = (nodes: WbsTreeNode[]) => {
+        for (const n of nodes) {
+          if (n.depth <= 2 && n.children.length > 0) {
+            initMap[n.code] = true;
+          }
+          walk(n.children);
+        }
+      };
+      walk(wbsTreeNodes);
+      setExpandedTreeNodes(initMap);
     }
+  }, [wbsTreeNodes]);
+
+  const toggleTreeNode = (code: string) => {
+    setExpandedTreeNodes((prev) => ({ ...prev, [code]: !prev[code] }));
   };
+
+  const expandAllLevels = () => {
+    const allMap: Record<string, boolean> = {};
+    const walk = (nodes: WbsTreeNode[]) => {
+      for (const n of nodes) {
+        if (n.children.length > 0) allMap[n.code] = true;
+        walk(n.children);
+      }
+    };
+    walk(wbsTreeNodes);
+    setExpandedTreeNodes(allMap);
+  };
+
+  const collapseToPhases = () => {
+    setExpandedTreeNodes({});
+  };
+
+  const expandParentsOf = (targetCode: string) => {
+    const clean = normalizeDigits(targetCode);
+    const parts = clean.split(".");
+    setExpandedTreeNodes((prev) => {
+      const nextMap = { ...prev };
+      let prefix = "";
+      for (let i = 0; i < parts.length - 1; i++) {
+        prefix = prefix ? `${prefix}.${parts[i]}` : parts[i];
+        nextMap[prefix] = true;
+      }
+      return nextMap;
+    });
+  };
+
+  // ردیف‌های سلسله‌مراتبی فلت‌شده برای رندر در جدول
+  const flattenedTreeRows = useMemo(() => {
+    return flattenVisibleTreeRows(wbsTreeNodes, expandedTreeNodes, taskSearch, levelFilter);
+  }, [wbsTreeNodes, expandedTreeNodes, taskSearch, levelFilter]);
 
   // بارگذاری و جایگزینی فایل WBS
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -425,6 +616,7 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
               <>
                 <a
                   href={`/api/projects/${selectedProjectId}/wbs-file`}
+                  download={data.file_name || undefined}
                   title="دانلود فایل اکسل ساختار شکست"
                   className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 transition-all border border-slate-200 cursor-pointer shadow-xs"
                 >
@@ -567,8 +759,8 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
                     : "text-slate-600 hover:text-slate-900"
                 }`}
               >
-                <ListTree className="w-3.5 h-3.5 text-emerald-600" />
-                <span>لیست فعالیت‌ها (WBS)</span>
+                <Table className="w-3.5 h-3.5 text-emerald-600" />
+                <span>جدول فعالیت‌ها (WBS)</span>
               </button>
 
               <button
@@ -609,7 +801,7 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
                       <span>مشخصات شناسنامه‌ای پروژه</span>
                     </h3>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                      {data.projectInfo.map((row, i) => {
+                      {data.projectInfo.filter((row) => !row.key.includes("مرجع") && !row.key.includes("منبع")).map((row, i) => {
                         const empty = !row.value;
                         return (
                           <div
@@ -690,9 +882,9 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
                   </div>
                 ) : (
                   <>
-                    {/* نوار ابزار جستجو و فیلترهای لیست */}
+                    {/* نوار ابزار جستجو و کنترل سطوح جدول WBS */}
                     <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      {/* ورودی جستجوی متنی */}
+                      {/* ورودی جستجوی متنی در تمام ستون‌های جدول */}
                       <div className="relative flex-1 min-w-0 max-w-md">
                         <Search className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                         <input
@@ -713,8 +905,29 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
                         )}
                       </div>
 
-                      {/* فیلترها و دکمه بازکردن یادداشت‌ها */}
+                      {/* دکمه‌های کنترل آکاردئونی باز/بستن سطوح و فیلترها */}
                       <div className="flex items-center gap-2 flex-wrap shrink-0">
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={expandAllLevels}
+                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition-colors cursor-pointer"
+                            title="باز کردن تمام شاخه‌ها و زیرمجموعه‌ها"
+                          >
+                            <ChevronDown className="w-3.5 h-3.5 text-emerald-700" />
+                            <span>بازکردن همه سطوح</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={collapseToPhases}
+                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold text-slate-600 bg-slate-50 hover:bg-slate-100 border border-slate-200 transition-colors cursor-pointer"
+                            title="بستن تمام زیرمجموعه‌ها و نمایش فقط فازها"
+                          >
+                            <ChevronLeft className="w-3.5 h-3.5 text-slate-500" />
+                            <span>بستن زیرمجموعه‌ها</span>
+                          </button>
+                        </div>
+
                         {phaseCount > 0 && (
                           <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200 text-xs">
                             <button
@@ -724,7 +937,7 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
                                 levelFilter === "all" ? "bg-white text-emerald-800 shadow-2xs" : "text-slate-600 hover:text-slate-900"
                               }`}
                             >
-                              همه ({toPersianDigits(data.tasks.length)})
+                              همه
                             </button>
                             <button
                               type="button"
@@ -742,48 +955,55 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
                                 levelFilter === "workpackages" ? "bg-white text-emerald-800 shadow-2xs" : "text-slate-600 hover:text-slate-900"
                               }`}
                             >
-                              بسته‌های کاری ({toPersianDigits(wpCount)})
+                              بسته‌ها ({toPersianDigits(wpCount)})
                             </button>
                           </div>
                         )}
 
                         <span className="text-[11px] font-semibold text-slate-400 hidden lg:inline">
-                          {toPersianDigits(filteredTasks.length)} از {toPersianDigits(data.tasks.length)} مورد
+                          {toPersianDigits(flattenedTreeRows.length)} ردیف نمایش‌داده‌شده
                         </span>
-
-                        {data.tasks.some((t) => t.note) && (
-                          <button
-                            type="button"
-                            onClick={toggleExpandAllNotes}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-slate-600 bg-slate-50 hover:bg-slate-100 border border-slate-200 transition-colors cursor-pointer"
-                          >
-                            <span>{allNotesExpanded ? "بستن همه یادداشت‌ها" : "نمایش همه یادداشت‌ها"}</span>
-                            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${allNotesExpanded ? "rotate-180" : ""}`} />
-                          </button>
-                        )}
                       </div>
                     </div>
 
-                    {/* لیست سطرهای فعالیت‌ها */}
-                    {filteredTasks.length === 0 ? (
+                    {/* جدول سلسله‌مراتبی فعالیت‌های ساختار شکست کار (WBS Tree-Table) */}
+                    {flattenedTreeRows.length === 0 ? (
                       <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-xs text-slate-400">
-                        موردی منطبق با جستجوی شما یافت نشد.
+                        موردی منطبق با فیلتر یا جستجوی شما یافت نشد.
                       </div>
                     ) : (
-                      <div className="space-y-3">
-                        {filteredTasks.map((task, i) => {
-                          const code = task.wbs_code || `#${i + 1}`;
-                          return (
-                            <WbsTaskRow
-                              key={`${code}-${i}`}
-                              task={task}
-                              index={i}
-                              highlighted={focusCode === code}
-                              isExpanded={Boolean(expandedNotes[code])}
-                              onToggleExpand={() => toggleExpandNote(code)}
-                            />
-                          );
-                        })}
+                      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                        <div className="overflow-x-auto min-w-full max-h-[75vh]">
+                          <table className="w-full text-right text-xs border-collapse">
+                            <thead className="bg-slate-100/95 text-slate-700 font-bold border-b border-slate-200 sticky top-0 z-10 shadow-2xs select-none">
+                              <tr>
+                                <th className="py-3 px-2 w-28 text-center shrink-0 border-l border-slate-200/80">کد WBS</th>
+                                <th className="py-3 px-4 min-w-[280px] shrink-0 border-l border-slate-200/80">عنوان فعالیت / بسته کاری</th>
+                                <th className="py-3 px-2 w-24 text-center shrink-0 border-l border-slate-200/80">سطح</th>
+                                <th className="py-3 px-3 min-w-[240px] shrink-0 border-l border-slate-200/80">قلم تحویل‌دادنی / خروجی</th>
+                                <th className="py-3 px-3 min-w-[130px] shrink-0 border-l border-slate-200/80">مسئول</th>
+                                <th className="py-3 px-2 w-24 text-center shrink-0 border-l border-slate-200/80">مدت زمان</th>
+                                <th className="py-3 px-2 w-24 text-center shrink-0 border-l border-slate-200/80">تاریخ شروع</th>
+                                <th className="py-3 px-3 min-w-[160px] shrink-0 border-l border-slate-200/80">شاخص (KPI)</th>
+                                <th className="py-3 px-2 w-20 text-center shrink-0 border-l border-slate-200/80">پیش‌نیاز</th>
+                                <th className="py-3 px-3 min-w-[150px] shrink-0">ملاحظات / توضیحات</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {flattenedTreeRows.map(({ node, depth, hasChildren }, i) => (
+                                <WbsTreeTableRow
+                                  key={`${node.code}-${i}`}
+                                  node={node}
+                                  depth={depth}
+                                  hasChildren={hasChildren}
+                                  isExpanded={Boolean(expandedTreeNodes[node.code])}
+                                  onToggle={() => toggleTreeNode(node.code)}
+                                  highlighted={focusCode === node.code}
+                                />
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
                     )}
                   </>
@@ -811,6 +1031,7 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
                     onOpenDetails={(code) => {
                       closeAll();
                       setFocusCode(code);
+                      expandParentsOf(code);
                       setSubView("cards");
                       window.setTimeout(() => {
                         const el = document.querySelector<HTMLElement>(`[data-code="${code}"]`);
@@ -877,188 +1098,200 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
 }
 
 // ============================================================
-// کامپوننت سطر فعالیت WBS در نمای لیستی (WBS Activity List Row)
+// کامپوننت ردیف جدول سلسله‌مراتبی فعالیت‌های WBS (Tree-Table Row)
 // ============================================================
-function WbsTaskRow({
-  task,
-  index,
-  highlighted,
+function WbsTreeTableRow({
+  node,
+  depth,
+  hasChildren,
   isExpanded,
-  onToggleExpand,
+  onToggle,
+  highlighted,
 }: {
-  task: WbsTask;
-  index: number;
+  node: WbsTreeNode;
+  depth: number;
+  hasChildren: boolean;
+  isExpanded: boolean;
+  onToggle: () => void;
   highlighted?: boolean;
-  isExpanded?: boolean;
-  onToggleExpand: () => void;
 }) {
-  const code = (task.wbs_code || `#${index + 1}`).trim();
-  const cleanCode = normalizeDigits(code);
-  const isPhase = task.level === "1" || cleanCode.split(".").length === 1 || (task.phase && task.name.includes("فاز"));
-  const hasDeliverables = task.deliverables && task.deliverables.trim() !== "" && task.deliverables !== "-" && task.deliverables !== "---";
-  const hasNote = task.note && task.note.trim() !== "" && task.note !== "-" && task.note !== "---";
-  const hasKpi = task.kpi && task.kpi.trim() !== "" && task.kpi !== "-" && task.kpi !== "---";
+  const code = (node.code || "").trim();
+  const isPhase = depth === 1 || (node.task.phase && node.task.name.includes("فاز"));
+  const t = node.task;
 
-  if (isPhase) {
-    // نمای سربرگ فاز کلان
-    return (
-      <div
-        data-code={code}
-        className={`w-full rounded-2xl border-2 p-4 sm:p-5 transition-all shadow-2xs ${
-          highlighted
-            ? "border-emerald-500 bg-emerald-50/80 ring-4 ring-emerald-200"
-            : "bg-gradient-to-l from-emerald-50/60 via-white to-white border-emerald-200 hover:border-emerald-300"
-        }`}
-      >
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-xl bg-emerald-700 text-white flex items-center justify-center shrink-0 shadow-xs">
-              <Layers className="w-5 h-5" />
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="px-2.5 py-0.5 rounded-lg bg-slate-900 text-white font-black text-xs shadow-xs tracking-wider">
-                  {toPersianDigits(code)}
-                </span>
-                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                  فاز کلان پروژه
-                </span>
-              </div>
-              <h3 className="font-extrabold text-base text-slate-900 mt-1">{task.name}</h3>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2.5 text-xs text-slate-600 shrink-0 flex-wrap">
-            {task.duration && (
-              <span className="flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-xl border border-slate-200 text-slate-700 font-semibold shadow-2xs">
-                <Clock className="w-3.5 h-3.5 text-slate-400" />
-                <span>مدت فاز: {toPersianDigits(task.duration)}</span>
-              </span>
-            )}
-            {task.owner && (
-              <span className="flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-xl border border-slate-200 text-slate-700 font-semibold shadow-2xs">
-                <User className="w-3.5 h-3.5 text-slate-400" />
-                <span>مسئول: {task.owner}</span>
-              </span>
-            )}
-          </div>
-        </div>
-
-        {hasDeliverables && (
-          <div className="mt-3 p-3 rounded-xl bg-white/90 border border-emerald-200 text-xs text-emerald-950 flex items-start gap-2 shadow-2xs">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-            <div className="min-w-0">
-              <span className="font-bold text-emerald-800">خروجی کلان فاز: </span>
-              <span className="font-medium leading-relaxed">{toPersianDigits(task.deliverables)}</span>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // نمای سطر فعالیت / بسته کاری تفصیلی (Level 2+)
   return (
-    <div
+    <tr
       data-code={code}
-      className={`w-full rounded-2xl border p-4 sm:p-5 transition-all bg-white shadow-2xs ${
+      className={`transition-colors text-right select-text ${
         highlighted
-          ? "border-emerald-500 shadow-md ring-4 ring-emerald-200"
-          : "border-slate-200 hover:border-emerald-300 hover:shadow-xs"
+          ? "bg-amber-50 ring-2 ring-amber-400 font-bold"
+          : isPhase
+          ? "bg-emerald-50/50 hover:bg-emerald-50/80 font-bold border-r-4 border-r-emerald-600"
+          : depth === 2
+          ? "bg-white hover:bg-slate-50/80 font-semibold border-r-2 border-r-emerald-300"
+          : "bg-white hover:bg-slate-50/60 font-normal"
       }`}
     >
-      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
-        <div className="flex items-start gap-3 min-w-0 flex-1">
-          <div className="flex flex-col items-center gap-1 shrink-0 pt-0.5">
-            <span className="px-2.5 py-1 rounded-lg bg-slate-900 text-white font-black text-xs shadow-xs tracking-wider">
-              {toPersianDigits(code)}
-            </span>
-            <span className="text-[10px] font-bold text-slate-400">
-              سطح {toPersianDigits(task.level || "۲")}
-            </span>
-          </div>
+      {/* ۱. کد WBS */}
+      <td className="py-3 px-2 text-center border-l border-slate-100 font-mono shrink-0">
+        <span
+          className={`inline-block px-2.5 py-0.5 rounded-lg text-xs font-black tracking-wider shadow-2xs ${
+            isPhase
+              ? "bg-emerald-800 text-white"
+              : depth === 2
+              ? "bg-slate-800 text-white"
+              : "bg-slate-700 text-slate-100"
+          }`}
+        >
+          {toPersianDigits(code)}
+        </span>
+      </td>
 
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 flex-wrap mb-1">
-              {task.phase && (
-                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                  {task.phase}
-                </span>
-              )}
-              {hasKpi && (
-                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 flex items-center gap-1">
-                  <Target className="w-3 h-3 text-emerald-600" />
-                  <span>شاخص: {task.kpi}</span>
-                </span>
-              )}
-            </div>
-            <h4 className="font-bold text-sm sm:text-base text-slate-900 leading-snug">{task.name}</h4>
-          </div>
-        </div>
+      {/* ۲. عنوان فعالیت / بسته کاری با تورفتگی و آکاردئون باز/بستن */}
+      <td
+        className="py-3 px-3 border-l border-slate-100 min-w-[260px]"
+        style={{ paddingRight: `${Math.max(12, (depth - 1) * 22 + 12)}px` }}
+      >
+        <div className="flex items-center gap-2">
+          {hasChildren ? (
+            <button
+              type="button"
+              onClick={onToggle}
+              className="w-5 h-5 rounded-md bg-slate-100 hover:bg-emerald-100 text-slate-600 hover:text-emerald-800 flex items-center justify-center shrink-0 transition-colors cursor-pointer shadow-2xs"
+              title={isExpanded ? "بستن زیرمجموعه‌ها" : "باز کردن زیرمجموعه‌ها"}
+            >
+              <ChevronDown
+                className={`w-3.5 h-3.5 transition-transform ${isExpanded ? "rotate-0" : "-rotate-90"}`}
+              />
+            </button>
+          ) : (
+            <span className="w-5 shrink-0 flex items-center justify-center text-slate-300">•</span>
+          )}
 
-        {hasNote && (
-          <button
-            type="button"
-            onClick={onToggleExpand}
-            className="flex items-center gap-1 text-[11px] font-bold text-slate-500 hover:text-emerald-700 bg-slate-50 hover:bg-emerald-50 px-2.5 py-1 rounded-xl border border-slate-200 transition-colors shrink-0 self-start cursor-pointer"
+          {isPhase ? (
+            <Layers className="w-4 h-4 text-emerald-700 shrink-0" />
+          ) : hasChildren ? (
+            <Folder className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+          ) : (
+            <CheckCircle2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+          )}
+
+          <span
+            className={`${
+              isPhase
+                ? "text-slate-900 text-sm font-extrabold"
+                : depth === 2
+                ? "text-slate-900 text-xs font-bold"
+                : "text-slate-800 text-xs font-medium"
+            }`}
           >
-            <span>ملاحظات</span>
-            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
-          </button>
-        )}
-      </div>
+            {t.name}
+          </span>
 
-      {hasDeliverables && (
-        <div className="mt-3 p-3 rounded-xl bg-emerald-50/70 border border-emerald-100 text-xs text-emerald-950 flex items-start gap-2.5">
-          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-          <div className="min-w-0 flex-1">
-            <span className="font-bold text-emerald-800">قلم تحویل‌دادنی / خروجی: </span>
-            <span className="font-medium leading-relaxed">{toPersianDigits(task.deliverables)}</span>
-          </div>
+          {hasChildren && (
+            <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full font-medium shrink-0">
+              {toPersianDigits(node.children.length)} زیرمجموعه
+            </span>
+          )}
         </div>
-      )}
+      </td>
 
-      <div className="mt-3.5 pt-3 border-t border-slate-100 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-600">
-        <div className="flex items-center gap-1.5">
-          <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-          <span className="text-slate-400">مسئول:</span>
-          <span className="font-bold text-slate-800">{task.owner || "—"}</span>
-        </div>
+      {/* ۳. سطح */}
+      <td className="py-3 px-2 text-center border-l border-slate-100 shrink-0">
+        <span
+          className={`inline-block px-2 py-0.5 rounded-md text-[10px] font-bold ${
+            isPhase
+              ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+              : depth === 2
+              ? "bg-amber-50 text-amber-800 border border-amber-200"
+              : "bg-slate-100 text-slate-600 border border-slate-200"
+          }`}
+        >
+          سطح {toPersianDigits(t.level || depth)}
+        </span>
+      </td>
 
-        {task.duration && (
-          <div className="flex items-center gap-1.5">
-            <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-            <span className="text-slate-400">مدت زمان:</span>
-            <span className="font-bold text-slate-800">{toPersianDigits(task.duration)}</span>
+      {/* ۴. قلم تحویل‌دادنی / خروجی */}
+      <td className="py-3 px-3 border-l border-slate-100 min-w-[220px]">
+        {t.deliverables && t.deliverables !== "-" && t.deliverables !== "---" ? (
+          <div className="flex items-start gap-1.5 bg-emerald-50/70 border border-emerald-100 text-emerald-950 p-1.5 rounded-lg text-[11px] leading-relaxed">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+            <span className="line-clamp-2" title={t.deliverables}>
+              {toPersianDigits(t.deliverables)}
+            </span>
           </div>
+        ) : (
+          <span className="text-slate-300">—</span>
         )}
+      </td>
 
-        {task.start_date && (
-          <div className="flex items-center gap-1.5">
-            <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-            <span className="text-slate-400">تاریخ شروع:</span>
-            <span className="font-bold text-slate-800">{toPersianDigits(task.start_date)}</span>
+      {/* ۵. مسئول */}
+      <td className="py-3 px-3 border-l border-slate-100 text-slate-700 font-semibold min-w-[120px]">
+        {t.owner && t.owner !== "-" && t.owner !== "---" ? (
+          <div className="flex items-center gap-1">
+            <User className="w-3 h-3 text-slate-400 shrink-0" />
+            <span className="truncate" title={t.owner}>
+              {t.owner}
+            </span>
           </div>
+        ) : (
+          <span className="text-slate-300">—</span>
         )}
+      </td>
 
-        {task.prerequisite && (
-          <div className="flex items-center gap-1.5">
-            <GitBranch className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-            <span className="text-slate-400">پیش‌نیاز:</span>
-            <span className="font-bold text-slate-800">{toPersianDigits(task.prerequisite)}</span>
-          </div>
+      {/* ۶. مدت زمان */}
+      <td className="py-3 px-2 text-center border-l border-slate-100 font-semibold text-slate-700 shrink-0">
+        {t.duration && t.duration !== "-" && t.duration !== "---" ? (
+          <span className="bg-slate-50 px-2 py-0.5 rounded-md border border-slate-200/80 inline-flex items-center gap-1 text-[11px]">
+            <Clock className="w-3 h-3 text-slate-400 shrink-0" />
+            <span>{toPersianDigits(t.duration)}</span>
+          </span>
+        ) : (
+          <span className="text-slate-300">—</span>
         )}
-      </div>
+      </td>
 
-      {isExpanded && hasNote && (
-        <div className="mt-3 p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700 space-y-1 animate-fade-in">
-          <div className="font-bold text-slate-800 flex items-center gap-1.5">
-            <FileText className="w-3.5 h-3.5 text-slate-500" />
-            <span>توضیحات و ملاحظات تکمیلی:</span>
+      {/* ۷. تاریخ شروع */}
+      <td className="py-3 px-2 text-center border-l border-slate-100 font-mono text-[11px] text-slate-600 shrink-0">
+        {t.start_date && t.start_date !== "-" ? toPersianDigits(t.start_date) : <span className="text-slate-300">—</span>}
+      </td>
+
+      {/* ۸. شاخص (KPI) */}
+      <td className="py-3 px-3 border-l border-slate-100 min-w-[140px]">
+        {t.kpi && t.kpi !== "-" && t.kpi !== "---" ? (
+          <div className="flex items-center gap-1 text-emerald-800 bg-emerald-50/80 px-2 py-0.5 rounded-md border border-emerald-200 text-[11px] font-semibold">
+            <Target className="w-3 h-3 text-emerald-600 shrink-0" />
+            <span className="truncate" title={t.kpi}>
+              {t.kpi}
+            </span>
           </div>
-          <p className="leading-relaxed font-normal whitespace-pre-wrap text-slate-600">{toPersianDigits(task.note)}</p>
-        </div>
-      )}
-    </div>
+        ) : (
+          <span className="text-slate-300">—</span>
+        )}
+      </td>
+
+      {/* ۹. پیش‌نیازها */}
+      <td className="py-3 px-2 text-center border-l border-slate-100 text-[11px] text-slate-600 font-mono shrink-0">
+        {t.prerequisite && t.prerequisite !== "-" && t.prerequisite !== "---" ? (
+          <span className="inline-flex items-center gap-1">
+            <GitBranch className="w-3 h-3 text-slate-400 shrink-0" />
+            <span>{toPersianDigits(t.prerequisite)}</span>
+          </span>
+        ) : (
+          <span className="text-slate-300">—</span>
+        )}
+      </td>
+
+      {/* ۱۰. ملاحظات / توضیحات */}
+      <td className="py-3 px-3 text-slate-500 text-[11px] min-w-[140px]">
+        {t.note && t.note !== "-" && t.note !== "---" ? (
+          <span className="line-clamp-2" title={t.note}>
+            {toPersianDigits(t.note)}
+          </span>
+        ) : (
+          <span className="text-slate-300">—</span>
+        )}
+      </td>
+    </tr>
   );
 }

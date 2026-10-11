@@ -209,3 +209,5 @@ prisma/legacy-data/
 
 # Allow Spec-Kit decision logs
 !.specify/**/*.log
+
+convert-all-to-standard-template.ts

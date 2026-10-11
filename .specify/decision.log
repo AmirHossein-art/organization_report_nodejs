@@ -197,5 +197,14 @@
   6. **Concise Operational Identification:** Replace raw uploaded file strings on the project list with a clean `WBS دارد` badge featuring direct 1-click download capabilities.
 - **Rationale:** Solves parsing failures caused by diverse spreadsheet formats in municipal projects, ensures robust visual tree rendering regardless of missing parent rows, and provides standard templates for incoming projects.
 
+### D32 — Hierarchical WBS Tree-Table View, RFC 6266 Download Encoding & Automated Batch Standardization
+- **Decision:** Elevate Work Breakdown Structure (WBS) activities into an interactive expandable tree-table, eliminate source reference clutter, guarantee Persian filename integrity across downloads, and batch-standardize municipal spreadsheets:
+  1. **Hierarchical Interactive Tree-Table (`WbsTreeTableRow`):** Replace vertical cards with a full-width, multi-level tree table. Columns strictly provide all structural elements: `کد WBS`, `عنوان فعالیت / بسته کاری` (with Chevron accordion toggling, depth-based indentation, and child count badges), `سطح`, `قلم تحویل‌دادنی / خروجی` (with emerald highlight), `مسئول`, `مدت زمان` (with clock badge), `تاریخ شروع`, `شاخص (KPI)`, `پیش‌نیاز` (with branch icon), and `ملاحظات / توضیحات`. Supported by search, level filters (`همه`, `فازها`, `بسته‌ها`), and expand/collapse all controls.
+  2. **Elimination of "سند مرجع منبع":** Exclude source reference document fields from project profile metadata cards across the parser (`wbsDataParser.ts`), the UI (`WbsViewer.tsx`), and standardized Excel workbooks.
+  3. **RFC 6266 & UTF-8 Download Integrity:** Prevent filename Mojibake (e.g. `Ø¨Ø±Ú¯Ø´Øª Ù¾Ø°Û_Ø±`) across all browsers by pairing an ASCII fallback filename with RFC 5987/6266 `filename*=UTF-8''` percent-encoding on server response headers and attaching explicit `download` attributes to client download links.
+  4. **Batch Standardization with Visual Review Highlights:** Automatically convert existing spreadsheets in `D:/Traffic/Websites/WBS/Excel` into 5-sheet PMBOK workbooks inside `D:/Traffic/Websites/WBS/Excel_Standardized` (`شناسنامه پروژه`, `ساختار شکست کار (WBS)`, `فرهنگ لغات WBS (Dictionary)`, `شاخص‌های عملکردی (KPI)`, `راهنما و پرامپت هوش مصنوعی`). Any missing parent phase or deliverable nodes synthesized by the system are styled in soft yellow fill (`#FEF08A`) with review annotations for human inspection.
+- **Rationale:** Delivers comprehensive data density without horizontal waste, preserves pure Persian characters across browser downloads, and standardizes disparate project spreadsheets into rigorous PMBOK structures with visual review cues.
+
+
 
 
