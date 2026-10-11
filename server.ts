@@ -1176,27 +1176,6 @@ app.get("/api/projects/:id/wbs-file", authenticate, async (req: any, res) => {
   }
 });
 
-// دانلود تمپلیت رسمی و استاندارد WBS سازمان
-app.get("/api/wbs/template", authenticate, requireManager, async (_req, res) => {
-  try {
-    const templateCandidates = [
-      path.join(process.cwd(), "public", "templates", "تمپلیت_استاندارد_WBS_سازمان.xlsx"),
-      path.join(__dirname, "public", "templates", "تمپلیت_استاندارد_WBS_سازمان.xlsx"),
-      "D:/Traffic/Websites/WBS/Excel/تمپلیت_استاندارد_WBS_سازمان.xlsx",
-    ];
-
-    const finalPath = templateCandidates.find((p) => fs.existsSync(p));
-    if (!finalPath) {
-      return res.status(404).json({ error: "فایل تمپلیت استاندارد WBS یافت نشد." });
-    }
-
-    res.download(finalPath, "تمپلیت_استاندارد_WBS_سازمان.xlsx");
-  } catch (error) {
-    console.error("Error downloading WBS template:", error);
-    res.status(500).json({ error: "خطا در دانلود تمپلیت WBS." });
-  }
-});
-
 // -----------------------------
 // 4.4 WBS Data View (خواندن اکسل WBS برای نمایش در UI — انتخاب پروژه، جزئیات، ساختار شکست)
 // -----------------------------
