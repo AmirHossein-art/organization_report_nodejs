@@ -12,6 +12,7 @@ import {
   ArrowDown,
   Power,
   GripVertical,
+  Download,
 } from "lucide-react";
 import { Project, User } from "../types";
 import { CustomSelect } from "../components";
@@ -621,15 +622,17 @@ export default function ManageProjects({
                     })()}
 
                     <p className="text-slate-500 text-[11px] line-clamp-1">{proj.description}</p>
-                    {proj.wbs_file_name && (
+                    {(proj.wbs_file_name || proj.wbs_storage_filename) && (
                       <a
                         href={`/api/projects/${proj.id}/wbs-file`}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-[10px] text-emerald-700 hover:text-emerald-800 font-bold bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded-md border border-emerald-100 transition-colors"
-                        title="دانلود فایل اکسل WBS"
+                        className="inline-flex items-center gap-1.5 text-[10px] text-emerald-800 hover:text-emerald-900 font-bold bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded-md border border-emerald-200 transition-colors cursor-pointer shadow-2xs"
+                        title="دانلود فایل ساختار شکست کار (WBS)"
                       >
-                        <FileSpreadsheet className="w-3.5 h-3.5" /> فایل WBS: {proj.wbs_file_name}
+                        <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span>WBS دارد</span>
+                        <Download className="w-3 h-3 text-emerald-700 opacity-75 shrink-0" />
                       </a>
                     )}
                   </div>

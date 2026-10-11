@@ -187,4 +187,15 @@
      - **نمودار درختی (Tree):** Interactive hierarchical WBS diagram with parent-child links and 1-click cross-view card jumping.
 - **Rationale:** Aligns WBS governance directly with municipal management workflows, prevents deputy privilege escalation, guarantees database and physical storage synchronization, and prevents navigation bloat.
 
+### D31 — Dynamic Multi-Format WBS Parser, PMBOK Dictionary Separation & In-Template AI Governance
+- **Decision:** Support both single-sheet comprehensive municipal Excel sheets and multi-sheet PMBOK standardized templates with dynamic parent node synthesis and in-template AI guardrails:
+  1. **Dual-Mode Dynamic Parser (`wbsDataParser.ts`):** Automatically detect multi-sheet vs single-sheet structures. For single-sheet spreadsheets, automatically map header rows, metadata, scope definitions, phases, and detailed work package tables into structured models without requiring fixed sheet names.
+  2. **Robust Tree Hierarchy Synthesis (`WbsTree.tsx`):** Automatically synthesize missing parent phase and work package nodes (e.g. creating parent `1` and `1.1` for tasks starting at `1.1.1` or `2.1.1.a`) and normalize Persian digits/dash codes (`P1-WP-1`) into continuous navigable tree graphs.
+  3. **PMBOK Standard Deliverables & Dictionary Partitioning:** Standardize template architecture by isolating clean hierarchical tasks in the WBS sheet, while routing work package deliverables, acceptance criteria, duration, and prerequisites into a dedicated WBS Dictionary sheet.
+  4. **Self-Contained Embedded AI Prompt & Strict Guardrails:** Embed a dedicated hidden instruction sheet (`_SYS_AI_PROMPT_GUARDRAILS`) in the official blank template providing LLMs with strict rules (100% rule, MECE mutual exclusivity, hierarchical dot notation, SMART KPIs) when auto-filling from project slides or proposals.
+  5. **Direct In-App Template Availability:** Expose `/api/wbs/template` and prominent UI download buttons across project configuration and WBS views so administrators can obtain the official blank template directly from the app.
+  6. **Concise Operational Identification:** Replace raw uploaded file strings on the project list with a clean `WBS دارد` badge featuring direct 1-click download capabilities.
+- **Rationale:** Solves parsing failures caused by diverse spreadsheet formats in municipal projects, ensures robust visual tree rendering regardless of missing parent rows, and provides standard templates for incoming projects.
+
+
 

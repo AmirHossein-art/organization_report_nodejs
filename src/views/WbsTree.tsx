@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown } from "lucide-react";
+import { toPersianDigits } from "../dateUtils";
 
 interface WbsTask {
   wbs_code: string;
@@ -18,6 +19,8 @@ interface WbsTask {
   duration: string;
   prerequisite: string;
   note: string;
+  phase?: string;
+  kpi?: string;
 }
 
 interface WbsTreeData {
@@ -25,42 +28,159 @@ interface WbsTreeData {
   tasks: WbsTask[];
 }
 
-// ---------- ساخت درخت از کدهای WBS واقعی ----------
+function normalizeDigits(str: string): string {
+  if (!str) return "";
+  const farsiDigits = ["۰", "۱", "۲", "۳", "۴", "۵", "۶", "۷", "۸", "۹"];
+  let res = str;
+  farsiDigits.forEach((d, i) => {
+    res = res.replaceAll(d, String(i));
+  });
+  return res;
+}
+
+// ---------- ساخت درخت از کدهای WBS واقعی با بازیابی خودکار والدهای مفقود ----------
 interface WBSNode {
   code: string;
   name: string;
   children: WBSNode[];
+  isSynthetic?: boolean;
 }
 
 function buildTree(tasks: WbsTask[]): WBSNode[] {
-  const map = new Map<string, WBSNode>();
+  if (!tasks || tasks.length === 0) return [];
+
+  const nodeMap = new Map<string, WBSNode>();
+
+  // ۱. ثبت تسک‌های واقعی در مپ
   for (const t of tasks) {
-    map.set(t.wbs_code, { code: t.wbs_code, name: t.name, children: [] });
+    const code = (t.wbs_code || "").trim();
+    if (!code) continue;
+    const normCode = normalizeDigits(code);
+    nodeMap.set(normCode, {
+      code,
+      name: (t.name || "").trim(),
+      children: [],
+      isSynthetic: false,
+    });
   }
-  const roots: WBSNode[] = [];
+
+  // ۲. استخراج والد منطقی بر اساس الگوهای متداول
+  const getParentCode = (code: string, task?: WbsTask): string | null => {
+    const norm = normalizeDigits(code);
+
+    // حالت دات‌دار: 1.1.1.a -> 1.1.1 -> 1.1 -> 1
+    if (norm.includes(".")) {
+      const parts = norm.split(".");
+      if (parts.length > 1) {
+        return parts.slice(0, -1).join(".");
+      }
+      return null;
+    }
+
+    // حالت کدهای خط تیره‌دار ورودی مثل P1-WP-1
+    if (norm.toUpperCase().includes("-WP-")) {
+      const parts = norm.split("-");
+      return parts[0]; // e.g. P1
+    }
+
+    // حالت خط تیره عددی
+    if (norm.includes("-")) {
+      const parts = norm.split("-");
+      if (parts.length > 1) {
+        return parts.slice(0, -1).join("-");
+      }
+    }
+
+    // اگر تسک در یک فاز مشخص قرار دارد
+    if (task?.phase) {
+      const normPhase = normalizeDigits(task.phase);
+      const match = normPhase.match(/\d+/);
+      if (match) {
+        const phaseNum = match[0];
+        if (norm !== phaseNum) return phaseNum;
+      }
+    }
+
+    return null;
+  };
+
+  // ایجاد والدهای میانی مفقود به صورت سلسله‌مراتبی
   for (const t of tasks) {
-    const node = map.get(t.wbs_code)!;
-    const parts = t.wbs_code.split(".");
-    if (parts.length === 1) {
-      roots.push(node);
-    } else {
-      const parent = map.get(parts.slice(0, -1).join("."));
-      if (parent) parent.children.push(node);
-      else roots.push(node);
+    let curCode = normalizeDigits((t.wbs_code || "").trim());
+    let parentCode = getParentCode(curCode, t);
+
+    while (parentCode) {
+      if (!nodeMap.has(parentCode)) {
+        let parentName = `فاز ${parentCode}`;
+        if (t.phase && (parentCode.length === 1 || parentCode.startsWith("P"))) {
+          parentName = t.phase;
+        } else if (t.deliverables && parentCode.split(".").length === 2) {
+          parentName = t.deliverables.slice(0, 35);
+        } else {
+          parentName = `بسته کاری ${parentCode}`;
+        }
+
+        nodeMap.set(parentCode, {
+          code: parentCode,
+          name: parentName,
+          children: [],
+          isSynthetic: true,
+        });
+      }
+
+      curCode = parentCode;
+      parentCode = getParentCode(curCode);
     }
   }
-  // مرتب‌سازی عددی طبیعی (1.10 بعد از 1.9)
+
+  // ۳. پیوند فرزندان به والدین
+  const roots: WBSNode[] = [];
+  const registeredAsChild = new Set<string>();
+
+  for (const [normCode, node] of nodeMap.entries()) {
+    const parentCode = getParentCode(normCode);
+    if (parentCode && nodeMap.has(parentCode) && parentCode !== normCode) {
+      const parentNode = nodeMap.get(parentCode)!;
+      if (!parentNode.children.some((c) => normalizeDigits(c.code) === normCode)) {
+        parentNode.children.push(node);
+        registeredAsChild.add(normCode);
+      }
+    }
+  }
+
+  for (const [normCode, node] of nodeMap.entries()) {
+    if (!registeredAsChild.has(normCode)) {
+      roots.push(node);
+    }
+  }
+
+  // مرتب‌سازی هوشمند عددی و طبیعی
   const cmp = (a: string, b: string) => {
-    const pa = a.split(".").map(Number);
-    const pb = b.split(".").map(Number);
-    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-      const d = (pa[i] || 0) - (pb[i] || 0);
-      if (d !== 0) return d;
+    const na = normalizeDigits(a).split(/[.\-]/).map((x) => (isNaN(Number(x)) ? x : Number(x)));
+    const nb = normalizeDigits(b).split(/[.\-]/).map((x) => (isNaN(Number(x)) ? x : Number(x)));
+    for (let i = 0; i < Math.max(na.length, nb.length); i++) {
+      const va = na[i];
+      const vb = nb[i];
+      if (va === undefined) return -1;
+      if (vb === undefined) return 1;
+      if (typeof va === "number" && typeof vb === "number") {
+        if (va !== vb) return va - vb;
+      } else {
+        const diff = String(va).localeCompare(String(vb));
+        if (diff !== 0) return diff;
+      }
     }
     return 0;
   };
+
+  const sortNode = (n: WBSNode) => {
+    n.children.sort((x, y) => cmp(x.code, y.code));
+    n.children.forEach(sortNode);
+  };
+
   roots.sort((x, y) => cmp(x.code, y.code));
-  map.forEach((n) => n.children.sort((x, y) => cmp(x.code, y.code)));
+  roots.forEach(sortNode);
+
   return roots;
 }
 
@@ -72,7 +192,8 @@ const MAX_LIGHTNESS = 88;
 const ROOT_COLOR = "#0f2419";
 
 function depthOf(code: string): number {
-  return code.split(".").length;
+  const parts = normalizeDigits(code).split(/[.\-]/).filter(Boolean);
+  return parts.length > 0 ? parts.length : 1;
 }
 
 function computeMaxDepth(nodes: WBSNode[]): number {
@@ -124,7 +245,7 @@ function NodeCard({ node, depth, maxDepth, isOpen, hasChildren, onToggle, onOpen
       title="مشاهده جزئیات این فعالیت"
     >
       <div className="text-center text-[11px] font-bold tracking-wide whitespace-nowrap" style={{ color: text, opacity: 0.82 }}>
-        {node.code}
+        {toPersianDigits(node.code)}
       </div>
       <div dir="rtl" className="text-center text-[13px] leading-snug mt-1 whitespace-nowrap" style={{ color: text }}>
         {node.name}

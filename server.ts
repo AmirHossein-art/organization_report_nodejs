@@ -146,6 +146,17 @@ const uploadWBS = multer({
   },
 });
 
+function sanitizeOriginalFileName(rawName: string): string {
+  if (!rawName) return "file.xlsx";
+  try {
+    const decoded = Buffer.from(rawName, "latin1").toString("utf8");
+    if (!decoded.includes("\ufffd") && decoded.length > 0) {
+      return decoded;
+    }
+  } catch (_) {}
+  return rawName;
+}
+
 // ۶. محدودکننده‌های نرخ درخواست (Rate Limiters)
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -1011,7 +1022,7 @@ app.post("/api/projects", authenticate, requireManager, uploadWBS.single("wbs_fi
         description: description ? description.trim() : null,
         project_type: project_type === "monthly" ? "monthly" : "weekly",
         order_index: nextOrderIndex,
-        wbs_file_name: file ? file.originalname : null,
+        wbs_file_name: file ? sanitizeOriginalFileName(file.originalname) : null,
         wbs_storage_filename: file ? file.filename : null,
       },
     });
@@ -1067,7 +1078,7 @@ app.put("/api/projects/:id", authenticate, requireManager, uploadWBS.single("wbs
 
     if (file) {
       oldPhysicalPathToDelete = resolveProjectWbsFilePath(existingProject);
-      updatedWbsFileName = file.originalname;
+      updatedWbsFileName = sanitizeOriginalFileName(file.originalname);
       updatedWbsStorageFilename = file.filename;
     } else if (isRemoveRequested) {
       oldPhysicalPathToDelete = resolveProjectWbsFilePath(existingProject);
@@ -1161,7 +1172,28 @@ app.get("/api/projects/:id/wbs-file", authenticate, async (req: any, res) => {
     res.download(filePath, project.wbs_file_name || "wbs_file.xlsx");
   } catch (error) {
     console.error("Error downloading WBS file:", error);
-    res.status(500).json({ error: "خطا در دریافت فایل WBS." });
+    res.status(500).json({ error: "خطا در دانلود فایل WBS" });
+  }
+});
+
+// دانلود تمپلیت رسمی و استاندارد WBS سازمان
+app.get("/api/wbs/template", authenticate, requireManager, async (_req, res) => {
+  try {
+    const templateCandidates = [
+      path.join(process.cwd(), "public", "templates", "تمپلیت_استاندارد_WBS_سازمان.xlsx"),
+      path.join(__dirname, "public", "templates", "تمپلیت_استاندارد_WBS_سازمان.xlsx"),
+      "D:/Traffic/Websites/WBS/Excel/تمپلیت_استاندارد_WBS_سازمان.xlsx",
+    ];
+
+    const finalPath = templateCandidates.find((p) => fs.existsSync(p));
+    if (!finalPath) {
+      return res.status(404).json({ error: "فایل تمپلیت استاندارد WBS یافت نشد." });
+    }
+
+    res.download(finalPath, "تمپلیت_استاندارد_WBS_سازمان.xlsx");
+  } catch (error) {
+    console.error("Error downloading WBS template:", error);
+    res.status(500).json({ error: "خطا در دانلود تمپلیت WBS." });
   }
 });
 
@@ -1327,7 +1359,7 @@ app.post("/api/projects/:id/wbs-submissions", authenticate, requireManager, uplo
     const updatedProject = await prisma.project.update({
       where: { id: projectId },
       data: {
-        wbs_file_name: file.originalname,
+        wbs_file_name: sanitizeOriginalFileName(file.originalname),
         wbs_storage_filename: file.filename,
       },
     });
@@ -1337,7 +1369,7 @@ app.post("/api/projects/:id/wbs-submissions", authenticate, requireManager, uplo
       data: {
         project_id: projectId,
         uploaded_by: req.user.id,
-        file_name: file.originalname,
+        file_name: sanitizeOriginalFileName(file.originalname),
         storage_filename: file.filename,
       },
     });

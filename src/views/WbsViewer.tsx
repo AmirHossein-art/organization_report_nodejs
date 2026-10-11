@@ -20,6 +20,10 @@ import {
   CheckCircle,
   FileSpreadsheet,
   X,
+  Layers,
+  MapPin,
+  FileText,
+  Sparkles,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import WbsTreePane from "./WbsTree";
@@ -109,11 +113,27 @@ const BOTTOM_ATTR: AttrSpec = {
   top: 100,
 };
 
+function cleanDisplayFileName(name?: string | null): string {
+  if (!name) return "";
+  try {
+    if (/[\u00C0-\u00FF]/.test(name) || name.includes("Ø") || name.includes("Ù") || name.includes("§")) {
+      const decoded = decodeURIComponent(escape(name));
+      if (decoded && !decoded.includes("\ufffd")) return decoded;
+    }
+  } catch (_) {}
+  return name;
+}
+
 function infoIcon(key: string) {
   if (key.includes("نام پروژه")) return <Folder className="w-4 h-4 text-emerald-600" />;
   if (key.includes("مدیر")) return <User className="w-4 h-4 text-emerald-600" />;
   if (key.includes("کارفرما")) return <Building2 className="w-4 h-4 text-emerald-600" />;
   if (key.includes("هدف")) return <Target className="w-4 h-4 text-emerald-600" />;
+  if (key.includes("دامنه") || key.includes("محدوده")) return <MapPin className="w-4 h-4 text-emerald-600" />;
+  if (key.includes("مرجع")) return <FileText className="w-4 h-4 text-emerald-600" />;
+  if (key.includes("فاز")) return <Layers className="w-4 h-4 text-emerald-600" />;
+  if (key.includes("ضرورت")) return <Sparkles className="w-4 h-4 text-amber-500" />;
+  if (key.includes("شاخص")) return <BarChart3 className="w-4 h-4 text-emerald-600" />;
   if (key.includes("خروجی")) return <Rocket className="w-4 h-4 text-emerald-600" />;
   if (key.includes("شروع")) return <Calendar className="w-4 h-4 text-emerald-600" />;
   if (key.includes("پایان")) return <Flag className="w-4 h-4 text-emerald-600" />;
@@ -353,6 +373,15 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
         {/* دکمه‌های اقدام برای پروژه انتخابی (دانلود، ادیت/جایگزینی، حذف) */}
         {selectedProjectId && (
           <div className="flex items-center gap-2 flex-wrap shrink-0">
+            <a
+              href="/api/wbs/template"
+              title="دانلود فایل تمپلیت خام و استاندارد ساختار شکست کار (WBS) همراه با گاردریل هوش مصنوعی"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 transition-all border border-slate-200 cursor-pointer shadow-xs"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+              <span>تمپلیت خام WBS</span>
+            </a>
+
             {data?.has_wbs ? (
               <>
                 <a
@@ -432,7 +461,7 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
             </p>
           </div>
 
-          <div className="pt-2">
+          <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
             <button
               type="button"
               disabled={uploading}
@@ -442,6 +471,14 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
               {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
               <span>{uploading ? "در حال آپلود..." : "انتخاب و بارگذاری فایل اکسل WBS"}</span>
             </button>
+            <a
+              href="/api/wbs/template"
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition-all cursor-pointer shadow-xs"
+              title="دانلود فایل تمپلیت خام اکسل ساختار شکست کار همراه با راهنما و پرامپت هوش مصنوعی"
+            >
+              <Download className="w-4 h-4 text-emerald-600" />
+              <span>دانلود تمپلیت خام WBS سازمان</span>
+            </a>
           </div>
         </div>
       ) : (
@@ -458,7 +495,7 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
                   <h2 className="text-sm font-bold text-slate-900 truncate">{data.projectTitle || data.project_title}</h2>
                   {data.file_name && (
                     <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
-                      {data.file_name}
+                      {cleanDisplayFileName(data.file_name)}
                     </span>
                   )}
                 </div>
