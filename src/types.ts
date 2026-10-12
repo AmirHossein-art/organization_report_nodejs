@@ -224,6 +224,11 @@ export interface CompositeKpiValue {
 
 export interface CompositeKpi {
   id: number;
+  project_id?: number | null;
+  project?: {
+    id: number;
+    title: string;
+  } | null;
   name: string;
   description: string | null;
   unit: string;

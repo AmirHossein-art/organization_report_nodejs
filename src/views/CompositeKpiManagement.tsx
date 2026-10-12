@@ -17,6 +17,8 @@ import {
   AlertTriangle,
   Building2,
   FolderGit2,
+  FolderKanban,
+  Globe,
   Check,
   Calculator,
 } from "lucide-react";
@@ -133,6 +135,11 @@ export default function CompositeKpiManagement() {
 
   // جستجوی لیست شاخص‌های ترکیبی
   const [directorySearch, setDirectorySearch] = useState<string>("");
+  const [projectFilter, setProjectFilter] = useState<string>("all");
+
+  // لیست پروژه‌های فعال جهت انتساب
+  const [projects, setProjects] = useState<Array<{ id: number; title: string }>>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
 
   // استیت فرمول‌ساز مرکزی (Builder)
   const [selectedKpis, setSelectedKpis] = useState<BaseKpiItem[]>([]);
@@ -154,6 +161,7 @@ export default function CompositeKpiManagement() {
 
   // مودال ویرایش شاخص ترکیبی
   const [editingComposite, setEditingComposite] = useState<CompositeKpi | null>(null);
+  const [editProjectId, setEditProjectId] = useState<number | null>(null);
   const [editName, setEditName] = useState<string>("");
   const [editUnit, setEditUnit] = useState<string>("درصد");
   const [editTargetValue, setEditTargetValue] = useState<string>("");
@@ -210,9 +218,22 @@ export default function CompositeKpiManagement() {
     }
   };
 
+  // دریافت لیست پروژه‌ها جهت انتساب شاخص
+  const fetchProjects = async () => {
+    try {
+      const res = await fetch("/api/projects");
+      if (res.ok) {
+        const data = await res.json();
+        setProjects(data || []);
+      }
+    } catch (err) {
+      console.error("Error fetching projects:", err);
+    }
+  };
+
   const loadAll = async () => {
     setLoading(true);
-    await Promise.all([fetchTree(), fetchCompositeKpis()]);
+    await Promise.all([fetchTree(), fetchCompositeKpis(), fetchProjects()]);
     setLoading(false);
   };
 
@@ -222,7 +243,7 @@ export default function CompositeKpiManagement() {
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([fetchTree(), fetchCompositeKpis()]);
+    await Promise.all([fetchTree(), fetchCompositeKpis(), fetchProjects()]);
     setRefreshing(false);
     flashSuccess("اطلاعات شاخص‌ها با موفقیت به‌روزرسانی شد.");
   };
@@ -242,18 +263,26 @@ export default function CompositeKpiManagement() {
   // فیلتر لیست شاخص‌های ترکیبی تعریف‌شده
   const filteredCompositeKpis = useMemo(() => {
     const q = directorySearch.trim().toLowerCase();
-    if (!q) return compositeKpis;
-    return compositeKpis.filter(
-      (c) =>
+    return compositeKpis.filter((c) => {
+      // فیلتر انتساب پروژه
+      if (projectFilter === "global" && c.project_id) return false;
+      if (projectFilter !== "all" && projectFilter !== "global") {
+        if (String(c.project_id) !== projectFilter) return false;
+      }
+
+      if (!q) return true;
+      return (
         c.name.toLowerCase().includes(q) ||
         (c.description && c.description.toLowerCase().includes(q)) ||
+        (c.project?.title && c.project.title.toLowerCase().includes(q)) ||
         c.items.some(
           (it) =>
             it.projectKpi?.name.toLowerCase().includes(q) ||
             it.projectKpi?.project?.title.toLowerCase().includes(q)
         )
-    );
-  }, [compositeKpis, directorySearch]);
+      );
+    });
+  }, [compositeKpis, directorySearch, projectFilter]);
 
   // بستن یا باز کردن پنجره معاونت
   const toggleDeputyWindow = (deputyId: string) => {
@@ -383,6 +412,7 @@ export default function CompositeKpiManagement() {
         target_value: targetValue === "" ? null : Number(targetValue),
         target_direction: targetDirection,
         item_kpi_ids: selectedKpis.map((k) => k.id),
+        project_id: selectedProjectId,
       };
 
       const res = await fetch("/api/composite-kpis", {
@@ -398,6 +428,7 @@ export default function CompositeKpiManagement() {
         setDescription("");
         setTargetValue("");
         setSelectedKpis([]);
+        setSelectedProjectId(null);
         fetchCompositeKpis();
       } else {
         const data = await res.json();
@@ -485,6 +516,7 @@ export default function CompositeKpiManagement() {
     setEditTargetDirection(composite.target_direction || "minimum");
     setEditDescription(composite.description || "");
     setEditOperator(composite.operator || "sum");
+    setEditProjectId(composite.project_id || null);
     setEditCandidateKpiId(0);
 
     const mappedItems: BaseKpiItem[] = composite.items.map((it) => {
@@ -537,6 +569,7 @@ export default function CompositeKpiManagement() {
         target_value: editTargetValue === "" ? null : Number(editTargetValue),
         target_direction: editTargetDirection,
         item_kpi_ids: editItems.map((k) => k.id),
+        project_id: editProjectId,
       };
 
       const res = await fetch(`/api/composite-kpis/${editingComposite.id}`, {
@@ -1112,6 +1145,25 @@ export default function CompositeKpiManagement() {
             ></textarea>
           </div>
 
+          {/* تخصیص به پروژه */}
+          <div>
+            <label className="block text-slate-700 font-bold text-xs mb-1">
+              تخصیص به پروژه (اختیاری)
+            </label>
+            <CustomSelect
+              options={[
+                { value: "0", label: "🌐 بدون پروژه (کلان سازمانی)" },
+                ...projects.map((p) => ({ value: String(p.id), label: `📁 ${p.title}` })),
+              ]}
+              value={String(selectedProjectId || 0)}
+              onChange={(val) => setSelectedProjectId(val === "0" ? null : Number(val))}
+              searchable={true}
+            />
+            <p className="text-[10px] text-slate-400 mt-1">
+              در صورت تخصیص به یک پروژه، این شاخص در تب پایش، شناسنامه WBS و خروجی PDF آن پروژه نمایش داده خواهد شد.
+            </p>
+          </div>
+
           <div className="flex items-center justify-end gap-3 pt-2">
             <button
               type="submit"
@@ -1133,7 +1185,7 @@ export default function CompositeKpiManagement() {
               <Layers className="w-4 h-4 text-emerald-700" />
               <span>شاخص‌های ترکیبی تعریف‌شده در سیستم</span>
               <span className="text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full font-bold">
-                {toPersianDigits(compositeKpis.length)} شاخص
+                {toPersianDigits(filteredCompositeKpis.length)} شاخص
               </span>
             </h3>
             <p className="text-slate-400 text-xs mt-0.5">
@@ -1141,21 +1193,35 @@ export default function CompositeKpiManagement() {
             </p>
           </div>
 
-          <div className="w-full sm:w-64">
-            <input
-              type="text"
-              value={directorySearch}
-              onChange={(e) => setDirectorySearch(e.target.value)}
-              placeholder="جستجو بین شاخص‌های ترکیبی..."
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-right dir-rtl font-sans focus:outline-none focus:border-emerald-600"
-            />
+          <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
+            <div className="w-full sm:w-48">
+              <CustomSelect
+                value={projectFilter}
+                onChange={(val) => setProjectFilter(val)}
+                options={[
+                  { value: "all", label: "همه شاخص‌ها" },
+                  { value: "global", label: "🌐 فقط کلان سازمانی" },
+                  ...projects.map((p) => ({ value: String(p.id), label: `📁 ${p.title}` })),
+                ]}
+                searchable={true}
+              />
+            </div>
+            <div className="w-full sm:w-56">
+              <input
+                type="text"
+                value={directorySearch}
+                onChange={(e) => setDirectorySearch(e.target.value)}
+                placeholder="جستجو بین شاخص‌ها..."
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-right dir-rtl font-sans focus:outline-none focus:border-emerald-600"
+              />
+            </div>
           </div>
         </div>
 
         {filteredCompositeKpis.length === 0 ? (
           <div className="text-center py-12 text-slate-400 text-xs">
             {directorySearch
-              ? "شاخص ترکیبی با این عبارت جستجو یافت نشد."
+              ? "شاخص ترکیبی با این عبارت جستجو یا فیلتر پروژه یافت نشد."
               : "هنوز هیچ شاخص ترکیبی ثبت نشده است. از فرم بالا برای ساخت اولین شاخص ترکیبی استفاده کنید."}
           </div>
         ) : (
@@ -1170,7 +1236,20 @@ export default function CompositeKpiManagement() {
                   <div className="space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <div>
-                        <h4 className="font-extrabold text-slate-900 text-sm">{composite.name}</h4>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className="font-extrabold text-slate-900 text-sm">{composite.name}</h4>
+                          {composite.project ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold">
+                              <FolderKanban className="w-3 h-3 text-emerald-600" />
+                              <span>پروژه: {composite.project.title}</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-medium">
+                              <Globe className="w-3 h-3 text-slate-500" />
+                              <span>کلان سازمانی</span>
+                            </span>
+                          )}
+                        </div>
                         {composite.description && (
                           <p className="text-slate-500 text-[11px] mt-0.5 leading-relaxed">
                             {composite.description}
@@ -1577,6 +1656,20 @@ export default function CompositeKpiManagement() {
                   onChange={(e) => setEditDescription(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-emerald-600 font-sans"
                 ></textarea>
+              </div>
+
+              {/* تخصیص به پروژه در ویرایش */}
+              <div>
+                <label className="block text-slate-700 font-bold text-xs mb-1">تخصیص به پروژه (اختیاری)</label>
+                <CustomSelect
+                  options={[
+                    { value: "0", label: "🌐 بدون پروژه (کلان سازمانی)" },
+                    ...projects.map((p) => ({ value: String(p.id), label: `📁 ${p.title}` })),
+                  ]}
+                  value={String(editProjectId || 0)}
+                  onChange={(val) => setEditProjectId(val === "0" ? null : Number(val))}
+                  searchable={true}
+                />
               </div>
 
               {/* لیست اجزای شاخص با امکان مرتب‌سازی و حذف */}

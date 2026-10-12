@@ -134,6 +134,313 @@ interface KpiValue {
   user_full_name: string | null;
 }
 
+function CompositeAnalyticsBlock({
+  compositeDetail,
+  expandedPeriodRowId,
+  setExpandedPeriodRowId,
+}: {
+  compositeDetail: any;
+  expandedPeriodRowId: number | null;
+  setExpandedPeriodRowId: (id: number | null) => void;
+}) {
+  const compositeValues = compositeDetail?.values || [];
+  const compositeChartData = compositeValues
+    .filter((v: any) => v.calculated_value !== null)
+    .map((v: any) => ({
+      period_title: v.period?.title || "دوره",
+      period_end: v.period?.period_end,
+      value: v.calculated_value,
+      status: v.status,
+    }));
+
+  const latestCompositeValueRecord =
+    compositeValues.length > 0 ? compositeValues[compositeValues.length - 1] : null;
+
+  const latestCompositeNum = latestCompositeValueRecord?.calculated_value ?? null;
+
+  const computeCompositeAchieved = (
+    calc: number | null,
+    comp: any
+  ): "achieved" | "not_achieved" | null => {
+    if (calc === null || !comp || comp.target_value === null || comp.target_value === undefined)
+      return null;
+    const target = Number(comp.target_value);
+    return comp.target_direction === "minimum"
+      ? calc >= target
+        ? "achieved"
+        : "not_achieved"
+      : calc <= target
+      ? "achieved"
+      : "not_achieved";
+  };
+
+  const compositeAchievementStatus = computeCompositeAchieved(
+    latestCompositeNum,
+    compositeDetail
+  );
+
+  return (
+    <div className="space-y-6">
+      {/* کارت‌های خلاصه شاخص ترکیبی */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* کارت ۱: آخرین مقدار ترکیبی محاسبه‌شده */}
+        <div className="bg-white border border-emerald-200/80 rounded-2xl p-4 shadow-2xs">
+          <span className="text-emerald-700 text-xs font-semibold block">آخرین عملکرد تجمیعی</span>
+          <span className="text-2xl font-black text-emerald-950 mt-1 block">
+            {latestCompositeNum !== null
+              ? `${toPersianDigits(latestCompositeNum)} ${compositeDetail.unit}`
+              : "—"}
+          </span>
+          <span className="text-[11px] text-slate-400 block mt-1">
+            {latestCompositeValueRecord?.period?.title
+              ? `دوره: ${latestCompositeValueRecord.period.title}`
+              : "بدون محاسبه دوره‌ای"}
+          </span>
+        </div>
+
+        {/* کارت ۲: هدف و تحقق */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs">
+          <div className="flex justify-between items-center">
+            <span className="text-slate-600 text-xs font-semibold">هدف کلان</span>
+            {compositeAchievementStatus === "achieved" ? (
+              <span className="text-[11px] font-bold text-emerald-700 flex items-center gap-1 bg-emerald-50 px-1.5 py-0.5 rounded-md border border-emerald-200">
+                <CheckCircle2 className="w-3.5 h-3.5" /> محقق شده
+              </span>
+            ) : compositeAchievementStatus === "not_achieved" ? (
+              <span className="text-[11px] font-bold text-rose-600 flex items-center gap-1 bg-rose-50 px-1.5 py-0.5 rounded-md border border-rose-200">
+                <XCircle className="w-3.5 h-3.5" /> محقق نشده
+              </span>
+            ) : null}
+          </div>
+          <span className="text-2xl font-black text-indigo-700 mt-1 block">
+            {compositeDetail.target_value !== null && compositeDetail.target_value !== undefined
+              ? `${toPersianDigits(compositeDetail.target_value)} ${compositeDetail.unit}`
+              : "تعیین‌نشده"}
+          </span>
+          <span className="text-[11px] text-slate-400 block mt-1">
+            {compositeAchievementStatus === null
+              ? compositeDetail.target_value == null
+                ? "فاقد مقدار هدف"
+                : "اندازه‌گیری نشده"
+              : compositeAchievementStatus === "achieved"
+              ? "هدف سازمان پوشش داده شد"
+              : "نیازمند پایش برای دستیابی"}
+          </span>
+        </div>
+
+        {/* کارت ۳: عملگر و ساختار */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs">
+          <span className="text-slate-600 text-xs font-semibold block">روش تلفیق ریاضی</span>
+          <div className="flex items-center gap-2 mt-1">
+            <span className="text-2xl font-black text-slate-800">
+              {OPERATOR_CONFIG[compositeDetail.operator as CompositeOperator]?.label}
+            </span>
+            <span className="w-8 h-8 rounded-xl bg-slate-100 font-black text-base text-emerald-700 flex items-center justify-center">
+              {OPERATOR_CONFIG[compositeDetail.operator as CompositeOperator]?.symbol}
+            </span>
+          </div>
+          <span className="text-[11px] text-slate-400 block mt-1">
+            {OPERATOR_CONFIG[compositeDetail.operator as CompositeOperator]?.desc}
+          </span>
+        </div>
+
+        {/* کارت ۴: اجزای تشکیل‌دهنده */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs">
+          <span className="text-slate-600 text-xs font-semibold block">اجزای متصل</span>
+          <span className="text-2xl font-black text-slate-800 mt-1 block">
+            {toPersianDigits(compositeDetail.items?.length || 0)} شاخص
+          </span>
+          <div className="text-[11px] text-slate-500 mt-1 truncate">
+            {compositeDetail.items?.map((it: any) => it.projectKpi?.name).join(" • ")}
+          </div>
+        </div>
+      </div>
+
+      {/* نمودار روند سری زمانی شاخص ترکیبی */}
+      <div className="bg-white rounded-3xl border border-slate-200 shadow-2xs p-6 space-y-4">
+        <h3 className="font-extrabold text-slate-900 text-sm flex items-center gap-2 border-b border-slate-100 pb-3">
+          <TrendingUp className="w-4 h-4 text-emerald-700" />
+          <span>روند زمانی شاخص ترکیبی «{compositeDetail.name}»</span>
+        </h3>
+
+        {compositeChartData.length === 0 ? (
+          <div className="text-center text-slate-400 py-12">
+            هیچ داده محاسبه‌شده‌ای برای این شاخص ترکیبی در دوره‌ها یافت نشد.
+          </div>
+        ) : (
+          <div dir="ltr" className="w-full h-[360px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={compositeChartData} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis
+                  dataKey="period_title"
+                  tick={{ fontSize: 11, fill: "#64748b" }}
+                  tickFormatter={(val) => toPersianDigits(val)}
+                />
+                <YAxis tick={{ fontSize: 11, fill: "#64748b" }} />
+                <Tooltip
+                  contentStyle={{ direction: "rtl", fontFamily: "inherit", fontSize: 12 }}
+                  labelStyle={{ color: "#0f172a", fontWeight: "bold" }}
+                  formatter={(value: any) => [
+                    value !== null ? `${toPersianDigits(value)} ${compositeDetail.unit}` : "بدون مقدار",
+                    "مقدار ترکیبی",
+                  ]}
+                />
+                {compositeDetail.target_value !== null && compositeDetail.target_value !== undefined && (
+                  <ReferenceLine
+                    y={Number(compositeDetail.target_value)}
+                    stroke="#6366f1"
+                    strokeDasharray="5 4"
+                    label={{
+                      value: `هدف: ${toPersianDigits(compositeDetail.target_value)}`,
+                      position: "insideTopRight",
+                      fontSize: 11,
+                      fill: "#6366f1",
+                    }}
+                  />
+                )}
+                <Line
+                  type="monotone"
+                  dataKey="value"
+                  name="مقدار ترکیبی"
+                  stroke="#059669"
+                  strokeWidth={2.5}
+                  dot={{ r: 4, fill: "#059669" }}
+                  activeDot={{ r: 6 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </div>
+
+      {/* جدول تفکیک سهم معاونت‌ها و پروژه‌ها در هر دوره */}
+      <div className="bg-white rounded-3xl border border-slate-200 shadow-2xs p-6 space-y-4">
+        <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+          <div>
+            <h3 className="font-extrabold text-slate-900 text-sm flex items-center gap-2">
+              <Building2 className="w-4 h-4 text-emerald-700" />
+              <span>تفکیک سهم معاونت‌ها و پروژه‌ها در هر دوره</span>
+            </h3>
+            <p className="text-slate-400 text-xs mt-0.5">
+              روی هر ردیف کلیک کنید تا ریزمقادیر خام گزارش‌شده توسط هر معاونت باز شود.
+            </p>
+          </div>
+          <span className="text-xs bg-slate-100 text-slate-700 px-2.5 py-0.5 rounded-full font-bold">
+            {toPersianDigits(compositeValues.length)} دوره
+          </span>
+        </div>
+
+        {compositeValues.length === 0 ? (
+          <div className="text-center text-slate-400 py-8">
+            هنوز مقداری برای دوره‌ها محاسبه نشده است.
+          </div>
+        ) : (
+          <div className="border border-slate-200 rounded-2xl overflow-hidden divide-y divide-slate-200 text-xs">
+            <div className="bg-slate-100/90 p-3 font-bold text-slate-700 grid grid-cols-12 gap-2 text-[11px]">
+              <span className="col-span-1 text-center">ردیف</span>
+              <span className="col-span-4">دوره گزارش‌دهی</span>
+              <span className="col-span-3 text-center">مقدار ترکیبی</span>
+              <span className="col-span-2 text-center">وضعیت داده</span>
+              <span className="col-span-2 text-center">جزئیات سهم</span>
+            </div>
+
+            {compositeValues.map((v: any, idx: number) => {
+              const isExpanded = expandedPeriodRowId === v.id;
+              const details = Array.isArray(v.details) ? (v.details as CompositeKpiValueDetail[]) : [];
+              return (
+                <div key={v.id} className="bg-white">
+                  <div
+                    onClick={() => setExpandedPeriodRowId(isExpanded ? null : v.id)}
+                    className="p-3 grid grid-cols-12 gap-2 items-center hover:bg-slate-50 transition-colors cursor-pointer text-xs"
+                  >
+                    <span className="col-span-1 text-center text-slate-500 font-semibold">
+                      {toPersianDigits(idx + 1)}
+                    </span>
+                    <span className="col-span-4 font-bold text-slate-900">
+                      {v.period?.title || "دوره"}
+                    </span>
+                    <span className="col-span-3 text-center font-extrabold text-emerald-800">
+                      {v.calculated_value !== null
+                        ? `${toPersianDigits(v.calculated_value)} ${compositeDetail.unit}`
+                        : "—"}
+                    </span>
+                    <span className="col-span-2 text-center">
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          v.status === "computed"
+                            ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                            : v.status === "partial"
+                            ? "bg-amber-50 text-amber-700 border border-amber-200"
+                            : "bg-rose-50 text-rose-700 border border-rose-200"
+                        }`}
+                      >
+                        {v.status === "computed" ? "کامل" : v.status === "partial" ? "ناقص" : "عدم پایش"}
+                      </span>
+                    </span>
+                    <span className="col-span-2 text-center text-emerald-700 font-bold flex items-center justify-center gap-1 text-[11px]">
+                      <span>{isExpanded ? "بستن" : "مشاهده سهم"}</span>
+                      {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                    </span>
+                  </div>
+
+                  {isExpanded && (
+                    <div className="bg-slate-50 p-4 border-t border-slate-100 space-y-2">
+                      <span className="text-[11px] font-bold text-slate-600 block">
+                        ریزمقادیر خام ثبت‌شده توسط معاونت‌ها در این دوره:
+                      </span>
+                      {details.length === 0 ? (
+                        <p className="text-slate-400 text-xs">جزئیاتی ثبت نشده است.</p>
+                      ) : (
+                        <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+                          <table className="w-full text-right text-[11px]">
+                            <thead className="bg-slate-100 text-slate-700 font-bold">
+                              <tr>
+                                <th className="p-2">معاونت</th>
+                                <th className="p-2">پروژه</th>
+                                <th className="p-2">شاخص پایه</th>
+                                <th className="p-2 text-center">مقدار گزارش‌شده</th>
+                                <th className="p-2 text-center">وضعیت پایش</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {details.map((d: any, dIdx: number) => (
+                                <tr key={dIdx} className="hover:bg-slate-50">
+                                  <td className="p-2 font-bold text-slate-800">{d.deputy_name || "—"}</td>
+                                  <td className="p-2 text-slate-600">{d.project_title || "—"}</td>
+                                  <td className="p-2 font-semibold text-slate-800">{d.kpi_name}</td>
+                                  <td className="p-2 text-center font-bold text-emerald-800">
+                                    {d.value !== null ? `${toPersianDigits(d.value)} ${d.unit || ""}` : "—"}
+                                  </td>
+                                  <td className="p-2 text-center">
+                                    <span
+                                      className={`px-1.5 py-0.5 rounded text-[10px] ${
+                                        d.measured
+                                          ? "bg-emerald-50 text-emerald-700 font-bold"
+                                          : "bg-rose-50 text-rose-700"
+                                      }`}
+                                    >
+                                      {d.measured ? "ثبت‌شده" : "عدم پایش"}
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function ProjectKpiAnalytics({
   projects = [],
   currentUser,
@@ -143,8 +450,10 @@ export default function ProjectKpiAnalytics({
 
   const [selectedProjectId, setSelectedProjectId] = useState<number>(0);
   const [kpis, setKpis] = useState<Kpi[]>([]);
+  const [projectCompositeKpis, setProjectCompositeKpis] = useState<CompositeKpi[]>([]);
 
   const [selectedKpiId, setSelectedKpiId] = useState<number>(0);
+  const [selectedKpiKey, setSelectedKpiKey] = useState<string>("0");
   const [typeFilter, setTypeFilter] = useState<"all" | "weekly" | "monthly">("all");
 
   const [values, setValues] = useState<KpiValue[]>([]);
@@ -168,17 +477,24 @@ export default function ProjectKpiAnalytics({
   }, [projects, selectedProjectId]);
 
   useEffect(() => {
+    setSelectedKpiKey("0");
     setSelectedKpiId(0);
     setKpiMeta(null);
     setValues([]);
     if (!selectedProjectId) {
       setKpis([]);
+      setProjectCompositeKpis([]);
       return;
     }
     fetch(`/api/projects/${selectedProjectId}/kpis`)
       .then((r) => (r.ok ? r.json() : []))
       .then((data: Kpi[]) => setKpis(Array.isArray(data) ? data : []))
       .catch(() => setKpis([]));
+
+    fetch(`/api/projects/${selectedProjectId}/composite-kpis`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: CompositeKpi[]) => setProjectCompositeKpis(Array.isArray(data) ? data : []))
+      .catch(() => setProjectCompositeKpis([]));
   }, [selectedProjectId]);
 
   // واکشی لیست شاخص‌های ترکیبی
@@ -203,10 +519,10 @@ export default function ProjectKpiAnalytics({
     }
   }, [analyticsScope, isManager]);
 
-  // واکشی تاریخچه و جزئیات شاخص ترکیبی انتخابی
+  // واکشی تاریخچه و جزئیات شاخص ترکیبی انتخابی در مد کلان
   useEffect(() => {
     if (analyticsScope !== "composite" || !selectedCompositeId) {
-      setCompositeDetail(null);
+      if (analyticsScope === "composite") setCompositeDetail(null);
       return;
     }
     setCompositeLoading(true);
@@ -224,6 +540,42 @@ export default function ProjectKpiAnalytics({
       .catch(() => setCompositeError("ارتباط با سرور برقرار نشد."))
       .finally(() => setCompositeLoading(false));
   }, [selectedCompositeId, analyticsScope]);
+
+  // واکشی شاخص پایه یا شاخص ترکیبی تخصیص‌یافته در مد پروژه
+  useEffect(() => {
+    if (analyticsScope !== "project") return;
+    if (!selectedKpiKey || selectedKpiKey === "0") {
+      setSelectedKpiId(0);
+      setCompositeDetail(null);
+      setValues([]);
+      setKpiMeta(null);
+      return;
+    }
+
+    if (selectedKpiKey.startsWith("comp-")) {
+      const compId = Number(selectedKpiKey.replace("comp-", ""));
+      setSelectedKpiId(0);
+      setValues([]);
+      setKpiMeta(null);
+      setCompositeLoading(true);
+      setCompositeError("");
+      setExpandedPeriodRowId(null);
+      fetch(`/api/composite-kpis/${compId}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (data) {
+            setCompositeDetail(data);
+          } else {
+            setCompositeError("خطا در دریافت جزئیات شاخص ترکیبی.");
+          }
+        })
+        .catch(() => setCompositeError("ارتباط با سرور برقرار نشد."))
+        .finally(() => setCompositeLoading(false));
+    } else {
+      setCompositeDetail(null);
+      setSelectedKpiId(Number(selectedKpiKey));
+    }
+  }, [selectedKpiKey, analyticsScope]);
 
   // واکشی مقادیر یک شاخص جهت نمودار
   useEffect(() => {
@@ -301,33 +653,6 @@ export default function ProjectKpiAnalytics({
       growthPositive = calc >= 0;
     }
   }
-
-  // ===================== محاسبات تحلیلی شاخص ترکیبی =====================
-  const compositeValues = compositeDetail?.values || [];
-  const compositeChartData = compositeValues
-    .filter((v: any) => v.calculated_value !== null)
-    .map((v: any) => ({
-      period_title: v.period?.title || "دوره",
-      period_end: v.period?.period_end,
-      value: v.calculated_value,
-      status: v.status,
-    }));
-
-  const latestCompositeValueRecord = compositeValues.length > 0
-    ? compositeValues[compositeValues.length - 1]
-    : null;
-
-  const latestCompositeNum = latestCompositeValueRecord?.calculated_value ?? null;
-
-  const computeCompositeAchieved = (calc: number | null, comp: any): "achieved" | "not_achieved" | null => {
-    if (calc === null || !comp || comp.target_value === null || comp.target_value === undefined) return null;
-    const target = Number(comp.target_value);
-    return comp.target_direction === "minimum"
-      ? (calc >= target ? "achieved" : "not_achieved")
-      : (calc <= target ? "achieved" : "not_achieved");
-  };
-
-  const compositeAchievementStatus = computeCompositeAchieved(latestCompositeNum, compositeDetail);
 
   if (projects.length === 0) {
     return (
@@ -411,11 +736,15 @@ export default function ProjectKpiAnalytics({
         <div>
           <label className="block text-slate-700 text-sm font-medium mb-1">شاخص</label>
           <CustomSelect
-            value={selectedKpiId}
-            onChange={(val) => setSelectedKpiId(Number(val))}
+            value={selectedKpiKey}
+            onChange={(val) => setSelectedKpiKey(String(val))}
             options={[
-              { value: 0, label: "-- انتخاب شاخص --" },
-              ...kpis.map((k) => ({ value: k.id, label: k.name })),
+              { value: "0", label: "-- انتخاب شاخص --" },
+              ...kpis.map((k) => ({ value: String(k.id), label: `${k.name} (${k.unit})` })),
+              ...projectCompositeKpis.map((ck) => ({
+                value: `comp-${ck.id}`,
+                label: `⚡ ${ck.name} (${ck.unit}) [شاخص ترکیبی]`,
+              })),
             ]}
           />
         </div>
@@ -440,14 +769,32 @@ export default function ProjectKpiAnalytics({
         </div>
       )}
 
-      {loading ? (
+      {loading || (selectedKpiKey.startsWith("comp-") && compositeLoading) ? (
         <div className="text-center text-slate-400 flex items-center justify-center gap-2 bg-white rounded-2xl border border-slate-200 p-8">
           <RefreshCw className="w-5 h-5 animate-spin text-emerald-600" />
           <span>در حال بارگذاری داده‌ها...</span>
         </div>
-      ) : !selectedKpiId ? (
+      ) : selectedKpiKey === "0" ? (
         <div className="text-center text-slate-400 bg-white rounded-2xl border border-slate-200 p-8">
-          لطفاً یک شاخص را انتخاب کنید تا روند آن نمایش داده شود.
+          لطفاً یک شاخص پایه یا شاخص ترکیبی را انتخاب کنید تا روند آن نمایش داده شود.
+        </div>
+      ) : selectedKpiKey.startsWith("comp-") && compositeDetail ? (
+        <div className="space-y-6">
+          <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+            <div className="flex items-center gap-2 text-indigo-950 font-bold text-xs">
+              <Layers className="w-4 h-4 text-indigo-700" />
+              <span>شاخص ترکیبی تخصیص‌یافته به پروژه «{projects.find((p) => p.id === selectedProjectId)?.title}»</span>
+            </div>
+            <span className="text-xs bg-indigo-100 text-indigo-800 border border-indigo-200 px-2.5 py-0.5 rounded-full font-bold">
+              عملگر: {OPERATOR_CONFIG[compositeDetail.operator as CompositeOperator]?.label} ({OPERATOR_CONFIG[compositeDetail.operator as CompositeOperator]?.symbol})
+            </span>
+          </div>
+
+          <CompositeAnalyticsBlock
+            compositeDetail={compositeDetail}
+            expandedPeriodRowId={expandedPeriodRowId}
+            setExpandedPeriodRowId={setExpandedPeriodRowId}
+          />
         </div>
       ) : (
         <>
@@ -697,262 +1044,11 @@ export default function ProjectKpiAnalytics({
               لطفاً یک شاخص ترکیبی را از کادر بالا انتخاب کنید.
             </div>
           ) : (
-            <>
-              {/* کارت‌های خلاصه شاخص ترکیبی */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {/* کارت ۱: آخرین مقدار ترکیبی محاسبه‌شده */}
-                <div className="bg-white border border-emerald-200/80 rounded-2xl p-4 shadow-2xs">
-                  <span className="text-emerald-700 text-xs font-semibold block">آخرین عملکرد تجمیعی</span>
-                  <span className="text-2xl font-black text-emerald-950 mt-1 block">
-                    {latestCompositeNum !== null
-                      ? `${toPersianDigits(latestCompositeNum)} ${compositeDetail.unit}`
-                      : "—"}
-                  </span>
-                  <span className="text-[11px] text-slate-400 block mt-1">
-                    {latestCompositeValueRecord?.period?.title
-                      ? `دوره: ${latestCompositeValueRecord.period.title}`
-                      : "بدون محاسبه دوره‌ای"}
-                  </span>
-                </div>
-
-                {/* کارت ۲: هدف و تحقق */}
-                <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs">
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-600 text-xs font-semibold">هدف کلان</span>
-                    {compositeAchievementStatus === "achieved" ? (
-                      <span className="text-[11px] font-bold text-emerald-700 flex items-center gap-1 bg-emerald-50 px-1.5 py-0.5 rounded-md border border-emerald-200">
-                        <CheckCircle2 className="w-3.5 h-3.5" /> محقق شده
-                      </span>
-                    ) : compositeAchievementStatus === "not_achieved" ? (
-                      <span className="text-[11px] font-bold text-rose-600 flex items-center gap-1 bg-rose-50 px-1.5 py-0.5 rounded-md border border-rose-200">
-                        <XCircle className="w-3.5 h-3.5" /> محقق نشده
-                      </span>
-                    ) : null}
-                  </div>
-                  <span className="text-2xl font-black text-indigo-700 mt-1 block">
-                    {compositeDetail.target_value !== null && compositeDetail.target_value !== undefined
-                      ? `${toPersianDigits(compositeDetail.target_value)} ${compositeDetail.unit}`
-                      : "تعیین‌نشده"}
-                  </span>
-                  <span className="text-[11px] text-slate-400 block mt-1">
-                    {compositeAchievementStatus === null
-                      ? compositeDetail.target_value == null ? "فاقد مقدار هدف" : "اندازه‌گیری نشده"
-                      : compositeAchievementStatus === "achieved"
-                      ? "هدف سازمان پوشش داده شد"
-                      : "نیازمند پایش برای دستیابی"}
-                  </span>
-                </div>
-
-                {/* کارت ۳: عملگر و ساختار */}
-                <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs">
-                  <span className="text-slate-600 text-xs font-semibold block">روش تلفیق ریاضی</span>
-                  <div className="flex items-center gap-2 mt-1">
-                    <span className="text-2xl font-black text-slate-800">
-                      {OPERATOR_CONFIG[compositeDetail.operator as CompositeOperator]?.label}
-                    </span>
-                    <span className="w-8 h-8 rounded-xl bg-slate-100 font-black text-base text-emerald-700 flex items-center justify-center">
-                      {OPERATOR_CONFIG[compositeDetail.operator as CompositeOperator]?.symbol}
-                    </span>
-                  </div>
-                  <span className="text-[11px] text-slate-400 block mt-1">
-                    {OPERATOR_CONFIG[compositeDetail.operator as CompositeOperator]?.desc}
-                  </span>
-                </div>
-
-                {/* کارت ۴: اجزای تشکیل‌دهنده */}
-                <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs">
-                  <span className="text-slate-600 text-xs font-semibold block">اجزای متصل</span>
-                  <span className="text-2xl font-black text-slate-800 mt-1 block">
-                    {toPersianDigits(compositeDetail.items?.length || 0)} شاخص
-                  </span>
-                  <div className="text-[11px] text-slate-500 mt-1 truncate">
-                    {compositeDetail.items?.map((it: any) => it.projectKpi?.name).join(" • ")}
-                  </div>
-                </div>
-              </div>
-
-              {/* نمودار روند سری زمانی شاخص ترکیبی */}
-              <div className="bg-white rounded-3xl border border-slate-200 shadow-2xs p-6 space-y-4">
-                <h3 className="font-extrabold text-slate-900 text-sm flex items-center gap-2 border-b border-slate-100 pb-3">
-                  <TrendingUp className="w-4 h-4 text-emerald-700" />
-                  <span>روند زمانی شاخص ترکیبی «{compositeDetail.name}»</span>
-                </h3>
-
-                {compositeChartData.length === 0 ? (
-                  <div className="text-center text-slate-400 py-12">
-                    هیچ داده محاسبه‌شده‌ای برای این شاخص ترکیبی در دوره‌ها یافت نشد.
-                  </div>
-                ) : (
-                  <div dir="ltr" className="w-full h-[360px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={compositeChartData} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                        <XAxis
-                          dataKey="period_title"
-                          tick={{ fontSize: 11, fill: "#64748b" }}
-                          tickFormatter={(val) => toPersianDigits(val)}
-                        />
-                        <YAxis tick={{ fontSize: 11, fill: "#64748b" }} />
-                        <Tooltip
-                          contentStyle={{ direction: "rtl", fontFamily: "inherit", fontSize: 12 }}
-                          labelStyle={{ color: "#0f172a", fontWeight: "bold" }}
-                          formatter={(value: any) => [
-                            value !== null ? `${toPersianDigits(value)} ${compositeDetail.unit}` : "بدون مقدار",
-                            "مقدار ترکیبی",
-                          ]}
-                        />
-                        {compositeDetail.target_value !== null && compositeDetail.target_value !== undefined && (
-                          <ReferenceLine
-                            y={Number(compositeDetail.target_value)}
-                            stroke="#6366f1"
-                            strokeDasharray="5 4"
-                            label={{
-                              value: `هدف: ${toPersianDigits(compositeDetail.target_value)}`,
-                              position: "insideTopRight",
-                              fontSize: 11,
-                              fill: "#6366f1",
-                            }}
-                          />
-                        )}
-                        <Line
-                          type="monotone"
-                          dataKey="value"
-                          name="مقدار ترکیبی"
-                          stroke="#059669"
-                          strokeWidth={2.5}
-                          dot={{ r: 4, fill: "#059669" }}
-                          activeDot={{ r: 6 }}
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                )}
-              </div>
-
-              {/* جدول تفکیک سهم معاونت‌ها و پروژه‌ها در هر دوره */}
-              <div className="bg-white rounded-3xl border border-slate-200 shadow-2xs p-6 space-y-4">
-                <div className="flex justify-between items-center border-b border-slate-100 pb-3">
-                  <div>
-                    <h3 className="font-extrabold text-slate-900 text-sm flex items-center gap-2">
-                      <Building2 className="w-4 h-4 text-emerald-700" />
-                      <span>تفکیک سهم معاونت‌ها و پروژه‌ها در هر دوره</span>
-                    </h3>
-                    <p className="text-slate-400 text-xs mt-0.5">
-                      روی هر ردیف کلیک کنید تا ریزمقادیر خام گزارش‌شده توسط هر معاونت باز شود.
-                    </p>
-                  </div>
-                  <span className="text-xs bg-slate-100 text-slate-700 px-2.5 py-0.5 rounded-full font-bold">
-                    {toPersianDigits(compositeValues.length)} دوره
-                  </span>
-                </div>
-
-                {compositeValues.length === 0 ? (
-                  <div className="text-center text-slate-400 py-8">
-                    هنوز مقداری برای دوره‌ها محاسبه نشده است.
-                  </div>
-                ) : (
-                  <div className="border border-slate-200 rounded-2xl overflow-hidden divide-y divide-slate-200 text-xs">
-                    <div className="bg-slate-100/90 p-3 font-bold text-slate-700 grid grid-cols-12 gap-2 text-[11px]">
-                      <span className="col-span-1 text-center">ردیف</span>
-                      <span className="col-span-4">دوره گزارش‌دهی</span>
-                      <span className="col-span-3 text-center">مقدار ترکیبی</span>
-                      <span className="col-span-2 text-center">وضعیت داده</span>
-                      <span className="col-span-2 text-center">جزئیات سهم</span>
-                    </div>
-
-                    {compositeValues.map((v: any, idx: number) => {
-                      const isExpanded = expandedPeriodRowId === v.id;
-                      const details = Array.isArray(v.details) ? (v.details as CompositeKpiValueDetail[]) : [];
-                      return (
-                        <div key={v.id} className="bg-white">
-                          <div
-                            onClick={() => setExpandedPeriodRowId(isExpanded ? null : v.id)}
-                            className="p-3 grid grid-cols-12 gap-2 items-center hover:bg-slate-50 transition-colors cursor-pointer text-xs"
-                          >
-                            <span className="col-span-1 text-center text-slate-500 font-semibold">
-                              {toPersianDigits(idx + 1)}
-                            </span>
-                            <span className="col-span-4 font-bold text-slate-900">
-                              {v.period?.title || "دوره"}
-                            </span>
-                            <span className="col-span-3 text-center font-extrabold text-emerald-800">
-                              {v.calculated_value !== null
-                                ? `${toPersianDigits(v.calculated_value)} ${compositeDetail.unit}`
-                                : "—"}
-                            </span>
-                            <span className="col-span-2 text-center">
-                              <span
-                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                  v.status === "computed"
-                                    ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                    : v.status === "partial"
-                                    ? "bg-amber-50 text-amber-700 border border-amber-200"
-                                    : "bg-rose-50 text-rose-700 border border-rose-200"
-                                }`}
-                              >
-                                {v.status === "computed" ? "کامل" : v.status === "partial" ? "ناقص" : "عدم پایش"}
-                              </span>
-                            </span>
-                            <span className="col-span-2 text-center text-emerald-700 font-bold flex items-center justify-center gap-1 text-[11px]">
-                              <span>{isExpanded ? "بستن" : "مشاهده سهم"}</span>
-                              {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                            </span>
-                          </div>
-
-                          {isExpanded && (
-                            <div className="bg-slate-50 p-4 border-t border-slate-100 space-y-2">
-                              <span className="text-[11px] font-bold text-slate-600 block">
-                                ریزمقادیر خام ثبت‌شده توسط معاونت‌ها در این دوره:
-                              </span>
-                              {details.length === 0 ? (
-                                <p className="text-slate-400 text-xs">جزئیاتی ثبت نشده است.</p>
-                              ) : (
-                                <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
-                                  <table className="w-full text-right text-[11px]">
-                                    <thead className="bg-slate-100 text-slate-700 font-bold">
-                                      <tr>
-                                        <th className="p-2">معاونت</th>
-                                        <th className="p-2">پروژه</th>
-                                        <th className="p-2">شاخص پایه</th>
-                                        <th className="p-2 text-center">مقدار گزارش‌شده</th>
-                                        <th className="p-2 text-center">وضعیت پایش</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-100">
-                                      {details.map((d: any, dIdx: number) => (
-                                        <tr key={dIdx} className="hover:bg-slate-50">
-                                          <td className="p-2 font-bold text-slate-800">{d.deputy_name || "—"}</td>
-                                          <td className="p-2 text-slate-600">{d.project_title || "—"}</td>
-                                          <td className="p-2 font-semibold text-slate-800">{d.kpi_name}</td>
-                                          <td className="p-2 text-center font-bold text-emerald-800">
-                                            {d.value !== null ? `${toPersianDigits(d.value)} ${d.unit || ""}` : "—"}
-                                          </td>
-                                          <td className="p-2 text-center">
-                                            <span
-                                              className={`px-1.5 py-0.5 rounded text-[10px] ${
-                                                d.measured
-                                                  ? "bg-emerald-50 text-emerald-700 font-bold"
-                                                  : "bg-rose-50 text-rose-700"
-                                              }`}
-                                            >
-                                              {d.measured ? "ثبت‌شده" : "عدم پایش"}
-                                            </span>
-                                          </td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </>
+            <CompositeAnalyticsBlock
+              compositeDetail={compositeDetail}
+              expandedPeriodRowId={expandedPeriodRowId}
+              setExpandedPeriodRowId={setExpandedPeriodRowId}
+            />
           )}
         </>
       )}

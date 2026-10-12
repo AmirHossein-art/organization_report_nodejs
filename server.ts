@@ -246,6 +246,7 @@ async function ensureDatabaseSchema() {
 
       CREATE TABLE IF NOT EXISTS "CompositeKpi" (
         "id" SERIAL PRIMARY KEY,
+        "project_id" INTEGER REFERENCES "Project"("id") ON DELETE SET NULL,
         "name" TEXT NOT NULL,
         "description" TEXT,
         "unit" TEXT NOT NULL,
@@ -256,6 +257,9 @@ async function ensureDatabaseSchema() {
         "sort_order" INTEGER NOT NULL DEFAULT 0,
         "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
+
+      ALTER TABLE "CompositeKpi" ADD COLUMN IF NOT EXISTS "project_id" INTEGER REFERENCES "Project"("id") ON DELETE SET NULL;
+      CREATE INDEX IF NOT EXISTS "CompositeKpi_project_id_idx" ON "CompositeKpi"("project_id");
 
       CREATE TABLE IF NOT EXISTS "CompositeKpiItem" (
         "id" SERIAL PRIMARY KEY,
@@ -2327,11 +2331,22 @@ app.get("/api/composite-kpis/deputies-tree", authenticate, requireManager, async
   }
 });
 
-// دریافت لیست تمام شاخص‌های ترکیبی با آخرین وضعیت و مقدار
-app.get("/api/composite-kpis", authenticate, requireManager, async (_req, res) => {
+// دریافت لیست تمام شاخص‌های ترکیبی با آخرین وضعیت و مقدار (با پشتیبانی از فیلتر پروژه)
+app.get("/api/composite-kpis", authenticate, requireManager, async (req: any, res) => {
   try {
+    const { project_id } = req.query;
+    const where: any = {};
+    if (project_id !== undefined && project_id !== null && project_id !== "") {
+      const parsedPid = Number(project_id);
+      if (!isNaN(parsedPid)) {
+        where.project_id = parsedPid === 0 ? null : parsedPid;
+      }
+    }
+
     const composites = await prisma.compositeKpi.findMany({
+      where,
       include: {
+        project: { select: { id: true, title: true } },
         items: {
           include: {
             projectKpi: {
@@ -2381,6 +2396,7 @@ app.get("/api/composite-kpis/:id", authenticate, requireManager, async (req, res
     const composite = await prisma.compositeKpi.findUnique({
       where: { id },
       include: {
+        project: { select: { id: true, title: true } },
         items: {
           include: {
             projectKpi: {
@@ -2436,6 +2452,7 @@ app.post("/api/composite-kpis", authenticate, requireManager, async (req, res) =
       operator,
       item_kpi_ids,
       sort_order,
+      project_id,
     } = req.body;
 
     const trimmedName = typeof name === "string" ? name.trim() : "";
@@ -2464,6 +2481,11 @@ app.post("/api/composite-kpis", authenticate, requireManager, async (req, res) =
       return res.status(400).json({ error: "مقدار هدف نامعتبر است." });
     }
 
+    const parsedProjectId =
+      project_id !== undefined && project_id !== null && project_id !== "" && Number(project_id) > 0
+        ? Number(project_id)
+        : null;
+
     const validKpis = await prisma.projectKpi.findMany({
       where: { id: { in: item_kpi_ids.map(Number) } },
     });
@@ -2473,6 +2495,7 @@ app.post("/api/composite-kpis", authenticate, requireManager, async (req, res) =
 
     const created = await prisma.compositeKpi.create({
       data: {
+        project_id: parsedProjectId,
         name: trimmedName,
         description: description ? String(description).trim() : null,
         unit: trimmedUnit,
@@ -2488,6 +2511,7 @@ app.post("/api/composite-kpis", authenticate, requireManager, async (req, res) =
         },
       },
       include: {
+        project: { select: { id: true, title: true } },
         items: {
           include: {
             projectKpi: {
@@ -2535,6 +2559,7 @@ app.patch("/api/composite-kpis/:id", authenticate, requireManager, async (req, r
       item_kpi_ids,
       sort_order,
       is_active,
+      project_id,
     } = req.body;
 
     const data: any = {};
@@ -2575,6 +2600,12 @@ app.patch("/api/composite-kpis/:id", authenticate, requireManager, async (req, r
     if (is_active !== undefined) {
       data.is_active = Boolean(is_active);
     }
+    if (project_id !== undefined) {
+      data.project_id =
+        project_id !== null && project_id !== "" && Number(project_id) > 0
+          ? Number(project_id)
+          : null;
+    }
 
     if (Array.isArray(item_kpi_ids)) {
       if (item_kpi_ids.length < 2) {
@@ -2594,6 +2625,7 @@ app.patch("/api/composite-kpis/:id", authenticate, requireManager, async (req, r
       where: { id },
       data,
       include: {
+        project: { select: { id: true, title: true } },
         items: {
           include: {
             projectKpi: {
@@ -2617,6 +2649,99 @@ app.patch("/api/composite-kpis/:id", authenticate, requireManager, async (req, r
   } catch (error) {
     console.error("Error updating composite KPI:", error);
     res.status(500).json({ error: "خطا در ویرایش شاخص ترکیبی" });
+  }
+});
+
+// دریافت شاخص‌های ترکیبی تخصیص‌یافته به یک پروژه خاص همراه با تمامی مقادیر دوره‌ها
+app.get("/api/projects/:projectId/composite-kpis", authenticate, async (req: any, res) => {
+  try {
+    const projectId = Number(req.params.projectId);
+    if (!projectId || isNaN(projectId)) {
+      return res.status(400).json({ error: "شناسه پروژه نامعتبر است." });
+    }
+
+    const composites = await prisma.compositeKpi.findMany({
+      where: {
+        project_id: projectId,
+        is_active: true,
+      },
+      include: {
+        project: { select: { id: true, title: true } },
+        items: {
+          include: {
+            projectKpi: {
+              select: {
+                id: true,
+                name: true,
+                unit: true,
+                project: { select: { id: true, title: true } },
+              },
+            },
+          },
+          orderBy: { order_index: "asc" },
+        },
+        values: {
+          include: {
+            period: {
+              select: {
+                id: true,
+                title: true,
+                period_start: true,
+                period_end: true,
+                report_type: true,
+              },
+            },
+          },
+          orderBy: { period: { period_start: "asc" } },
+        },
+      },
+      orderBy: [{ sort_order: "asc" }, { id: "desc" }],
+    });
+
+    const formatted = composites.map((c) => {
+      const latestVal = c.values && c.values.length > 0 ? c.values[c.values.length - 1] : null;
+      return {
+        ...c,
+        latest_value: latestVal?.calculated_value ?? null,
+        latest_period_title: latestVal?.period?.title ?? null,
+        latest_status: latestVal?.status ?? null,
+      };
+    });
+
+    res.json(formatted);
+  } catch (error) {
+    console.error("Error fetching project composite KPIs:", error);
+    res.status(500).json({ error: "خطا در دریافت شاخص‌های ترکیبی پروژه" });
+  }
+});
+
+// تخصیص یا لغو تخصیص یک شاخص ترکیبی به پروژه
+app.patch("/api/projects/:projectId/assign-composite-kpi", authenticate, requireManager, async (req: any, res) => {
+  try {
+    const projectId = Number(req.params.projectId);
+    const { composite_kpi_id, action } = req.body; // action: "assign" | "unassign"
+
+    if (!projectId || isNaN(projectId)) {
+      return res.status(400).json({ error: "شناسه پروژه نامعتبر است." });
+    }
+    if (!composite_kpi_id || isNaN(Number(composite_kpi_id))) {
+      return res.status(400).json({ error: "شناسه شاخص ترکیبی الزامی است." });
+    }
+
+    const updated = await prisma.compositeKpi.update({
+      where: { id: Number(composite_kpi_id) },
+      data: {
+        project_id: action === "unassign" ? null : projectId,
+      },
+      include: {
+        project: { select: { id: true, title: true } },
+      },
+    });
+
+    res.json(updated);
+  } catch (err: any) {
+    console.error("Error updating composite KPI assignment:", err);
+    res.status(500).json({ error: "خطا در بروزرسانی تخصیص شاخص ترکیبی به پروژه" });
   }
 });
 

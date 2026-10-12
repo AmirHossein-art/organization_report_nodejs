@@ -36,7 +36,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import WbsTreePane from "./WbsTree";
 import { CustomSelect } from "../components";
 import { toPersianDigits, normalizeDigits } from "../dateUtils";
-import { Project } from "../types";
+import { Project, CompositeKpi } from "../types";
 
 interface WbsViewerProps {
   projects: Project[];
@@ -321,6 +321,9 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
   // فوکوس روی کد خاص هنگام هدایت از درخت
   const [focusCode, setFocusCode] = useState<string | null>(null);
 
+  // شاخص‌های ترکیبی تخصیص‌یافته به این پروژه
+  const [projectCompositeKpis, setProjectCompositeKpis] = useState<CompositeKpi[]>([]);
+
   // بارگذاری لیست خلاصه پروژه‌های دارای WBS
   const loadWbsProjects = async () => {
     try {
@@ -353,10 +356,18 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
   const fetchWbsData = async (projectId: string) => {
     if (!projectId) {
       setData(null);
+      setProjectCompositeKpis([]);
       return;
     }
     setLoading(true);
     closeAll();
+
+    // واکشی شاخص‌های ترکیبی تخصیص‌یافته به این پروژه
+    fetch(`/api/projects/${projectId}/composite-kpis`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((cks) => setProjectCompositeKpis(Array.isArray(cks) ? cks : []))
+      .catch(() => setProjectCompositeKpis([]));
+
     try {
       const res = await fetch(`/api/wbs-data/${projectId}`);
       if (res.ok) {
@@ -857,6 +868,44 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
                           {k.formula && (
                             <p className="text-[11px] text-slate-400 font-medium">فرمول: {k.formula}</p>
                           )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* شاخص‌های ترکیبی تخصیص‌یافته به پروژه */}
+                {projectCompositeKpis.length > 0 && (
+                  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
+                    <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                      <Layers className="w-4 h-4 text-indigo-700" />
+                      <span>شاخص‌های ترکیبی تخصیص‌یافته به این پروژه ({toPersianDigits(projectCompositeKpis.length)})</span>
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {projectCompositeKpis.map((ck) => (
+                        <div
+                          key={ck.id}
+                          className="rounded-xl border border-indigo-100 p-4 bg-indigo-50/30 hover:border-indigo-300 transition-colors space-y-2"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-bold text-slate-900 text-xs">{ck.name}</span>
+                            <span className="text-[10px] font-bold bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-md border border-indigo-200">
+                              ترکیبی ({ck.operator})
+                            </span>
+                          </div>
+                          {ck.description && (
+                            <p className="text-xs text-slate-600 leading-relaxed font-normal">{ck.description}</p>
+                          )}
+                          <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-indigo-100/60">
+                            <span>واحد: <strong className="text-slate-800">{ck.unit}</strong></span>
+                            {ck.latest_value !== null && ck.latest_value !== undefined ? (
+                              <span className="font-bold text-emerald-800">
+                                آخرین عملکرد: {toPersianDigits(ck.latest_value)} {ck.unit}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400">در انتظار محاسبه</span>
+                            )}
+                          </div>
                         </div>
                       ))}
                     </div>

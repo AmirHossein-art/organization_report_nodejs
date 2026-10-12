@@ -205,6 +205,30 @@
   4. **Batch Standardization with Visual Review Highlights:** Automatically convert existing spreadsheets in `D:/Traffic/Websites/WBS/Excel` into 5-sheet PMBOK workbooks inside `D:/Traffic/Websites/WBS/Excel_Standardized` (`شناسنامه پروژه`, `ساختار شکست کار (WBS)`, `فرهنگ لغات WBS (Dictionary)`, `شاخص‌های عملکردی (KPI)`, `راهنما و پرامپت هوش مصنوعی`). Any missing parent phase or deliverable nodes synthesized by the system are styled in soft yellow fill (`#FEF08A`) with review annotations for human inspection.
 - **Rationale:** Delivers comprehensive data density without horizontal waste, preserves pure Persian characters across browser downloads, and standardizes disparate project spreadsheets into rigorous PMBOK structures with visual review cues.
 
+### D33 — Strategic Semantic Network (Ontology Linking Projects, WBS, Activities, KPIs & AI Agents)
+- **Decision:** Transition from isolated text reports and detached WBS tables to a formal Strategic Semantic Network (Knowledge Graph) linking:
+  1. Strategic Objectives ➔ Projects ➔ WBS Work Packages ➔ Deliverables ➔ Periodic Activities ➔ KPIs.
+  2. Deploy multi-agent AI reasoning directly across the structured graph to perform causality analysis, delay ripple propagation, deliverable-KPI gap identification, and scope creep detection.
+  3. Gate deputy-level AI self-auditing until this core semantic network is fully constructed, tested, and verified in production.
+- **Rationale:** Eliminates qualitative ambiguity in reporting, grounds AI evaluation in verified structural project commitments, and transforms the web application into an authentic municipal strategic management system.
+
+### D34 — Daily Performance Engineering & Security Hardening Framework
+- **Decision:** Establish a daily testing and optimization protocol focused on real bottlenecks rather than superficial horizontal container scaling:
+  1. Reject multi-container Docker replicas for immediate scaling due to local upload storage fragmentation and in-memory cache desynchronization under low-concurrency (10–15 users) workloads.
+  2. Prioritize PostgreSQL-native asynchronous job queues (`pg-boss`) for long-running AI audits and heavy Excel processing, reducing API response times to <100ms.
+  3. Implement durable AI response caching in PostgreSQL, HTTP ETag compression, and database composite indexing.
+  4. Enforce automated daily security auditing: Helmet HTTP security headers, granular rate limiting, strict BOLA/IDOR permissions testing, and dependency vulnerability scans (`npm audit`).
+- **Rationale:** Delivers massive, deterministic speed and security gains while preserving single-monolith operational simplicity and minimizing cloud hosting expenses on Railway.
+
+### D35 — Project-Scoped Composite KPIs & Cross-Surface Integration
+- **Decision:** Enable optional assignment of managerial composite KPIs to specific organizational projects:
+  1. **Schema & Relation:** Add optional `project_id Int?` on `CompositeKpi` with foreign key to `Project` (on delete set null) and index, backed by self-healing startup migration (`ensureDatabaseSchema`).
+  2. **Dual-Surface UI Assignment:** Support project selection in `CompositeKpiManagement.tsx` (creation form and edit modal) and provide dedicated "شاخص‌های ترکیبی تخصیص‌یافته به این پروژه" management cards with 1-click assignment/unassignment modals in `ProjectKpiManagement.tsx`.
+  3. **Universal Exploration & Analytics:** Integrate assigned composite metrics into `ProjectKpiAnalytics.tsx` dropdowns (with `[شاخص ترکیبی]` badges and live trend/breakdown rendering) and `WbsViewer.tsx` (Shenasnameh profile cards).
+  4. **Executive A4 PDF Export:** Seamlessly hydrate assigned composite metrics into Section 3 of `ReportsPdfDocument.tsx` with period-matched values and distinct `ترکیبی` badges in `KpiMatrixTable.tsx`.
+- **Rationale:** Connects high-level composite metrics to concrete organizational projects, giving managers visibility into macro indicators in project audits and official executive PDF exports.
+
+
 
 
 

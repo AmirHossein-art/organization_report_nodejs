@@ -13,8 +13,11 @@ import {
   ArrowDown,
   Eye,
   EyeOff,
+  Layers,
+  Link,
+  Unlink,
 } from "lucide-react";
-import { Project } from "../types";
+import { Project, CompositeKpi } from "../types";
 import { CustomSelect } from "../components";
 
 // 🌐 تبدیل اعداد به فارسی
@@ -95,6 +98,13 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
   const [editSortOrder, setEditSortOrder] = useState<string>("0");
   const [editIsActive, setEditIsActive] = useState<boolean>(true);
 
+  // شاخص‌های ترکیبی تخصیص‌یافته به این پروژه
+  const [projectCompositeKpis, setProjectCompositeKpis] = useState<CompositeKpi[]>([]);
+  const [allCompositeKpis, setAllCompositeKpis] = useState<CompositeKpi[]>([]);
+  const [assignModalOpen, setAssignModalOpen] = useState<boolean>(false);
+  const [selectedCompositeToAssign, setSelectedCompositeToAssign] = useState<number>(0);
+  const [assignLoading, setAssignLoading] = useState<boolean>(false);
+
   const flashSuccess = (msg: string) => {
     setSuccessMessage(msg);
     setTimeout(() => setSuccessMessage(""), 4000);
@@ -131,8 +141,84 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
     }
   };
 
+  // دریافت شاخص‌های ترکیبی تخصیص‌یافته به این پروژه
+  const fetchProjectCompositeKpis = async () => {
+    if (!selectedProjectId) {
+      setProjectCompositeKpis([]);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/projects/${selectedProjectId}/composite-kpis`);
+      if (res.ok) {
+        setProjectCompositeKpis(await res.json());
+      }
+    } catch (err) {
+      console.error("Error fetching project composite KPIs:", err);
+    }
+  };
+
+  // دریافت کل شاخص‌های ترکیبی سیستم جهت منوی تخصیص
+  const fetchAllCompositeKpis = async () => {
+    try {
+      const res = await fetch("/api/composite-kpis");
+      if (res.ok) {
+        setAllCompositeKpis(await res.json());
+      }
+    } catch (err) {
+      console.error("Error fetching all composite KPIs:", err);
+    }
+  };
+
+  const handleAssignComposite = async () => {
+    if (!selectedCompositeToAssign || !selectedProjectId) return;
+    setAssignLoading(true);
+    try {
+      const res = await fetch(`/api/projects/${selectedProjectId}/assign-composite-kpi`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ composite_kpi_id: selectedCompositeToAssign, action: "assign" }),
+      });
+      if (res.ok) {
+        flashSuccess("شاخص ترکیبی با موفقیت به این پروژه تخصیص یافت.");
+        setAssignModalOpen(false);
+        setSelectedCompositeToAssign(0);
+        fetchProjectCompositeKpis();
+        fetchAllCompositeKpis();
+      } else {
+        const d = await res.json();
+        flashError(d.error || "خطا در تخصیص شاخص ترکیبی.");
+      }
+    } catch (err) {
+      flashError("ارتباط با سرور برقرار نشد.");
+    } finally {
+      setAssignLoading(false);
+    }
+  };
+
+  const handleUnassignComposite = async (compositeId: number, compositeName: string) => {
+    if (!confirm(`آیا از لغو تخصیص شاخص ترکیبی «${compositeName}» از این پروژه اطمینان دارید؟\nاین شاخص حذف نمی‌شود و در سطح کلان سازمانی باقی خواهد ماند.`)) return;
+    try {
+      const res = await fetch(`/api/projects/${selectedProjectId}/assign-composite-kpi`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ composite_kpi_id: compositeId, action: "unassign" }),
+      });
+      if (res.ok) {
+        flashSuccess(`تخصیص شاخص «${compositeName}» از این پروژه لغو شد.`);
+        fetchProjectCompositeKpis();
+        fetchAllCompositeKpis();
+      } else {
+        const d = await res.json();
+        flashError(d.error || "خطا در لغو تخصیص شاخص.");
+      }
+    } catch (err) {
+      flashError("ارتباط با سرور برقرار نشد.");
+    }
+  };
+
   useEffect(() => {
     fetchKpis();
+    fetchProjectCompositeKpis();
   }, [selectedProjectId]);
 
   const resetCreateForm = () => {
@@ -669,6 +755,102 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
         </div>
       </div>
 
+      {/* بخش شاخص‌های ترکیبی تخصیص‌یافته به این پروژه */}
+      <div className="bg-white rounded-3xl border border-slate-200/90 shadow-2xs overflow-hidden">
+        <div className="p-4 bg-slate-50 border-b border-slate-200 font-bold text-slate-700 flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+          <div className="flex items-center gap-2">
+            <Layers className="w-5 h-5 text-emerald-700" />
+            <span>شاخص‌های ترکیبی تخصیص‌یافته به این پروژه</span>
+            <span className="bg-emerald-100 text-emerald-800 border border-emerald-200 px-2.5 py-0.5 rounded-full text-[11px] font-bold">
+              {toPersianDigits(projectCompositeKpis.length)} شاخص
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              fetchAllCompositeKpis();
+              setAssignModalOpen(true);
+            }}
+            className="bg-emerald-800 hover:bg-emerald-900 text-white px-3.5 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs self-start sm:self-auto"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>+ تخصیص شاخص ترکیبی به این پروژه</span>
+          </button>
+        </div>
+
+        <div className="p-4">
+          {projectCompositeKpis.length === 0 ? (
+            <div className="text-center py-8 text-slate-400">
+              هنوز هیچ شاخص ترکیبی به این پروژه تخصیص داده نشده است.
+              <span className="block text-[11px] text-slate-400 mt-1">
+                می‌توانید با دکمه بالا یکی از شاخص‌های ترکیبی موجود را به این پروژه منتسب کنید تا در پایش و گزارش‌های PDF نمایش داده شود.
+              </span>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {projectCompositeKpis.map((comp) => (
+                <div
+                  key={comp.id}
+                  className="p-4 rounded-2xl border border-slate-200 bg-white hover:border-emerald-300 transition-all flex flex-col justify-between space-y-3"
+                >
+                  <div className="space-y-1.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h4 className="font-bold text-slate-900 text-xs">{comp.name}</h4>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                          ترکیبی ({comp.operator})
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleUnassignComposite(comp.id, comp.name)}
+                        className="text-rose-500 hover:text-rose-700 bg-rose-50 p-1.5 rounded-lg text-[11px] flex items-center gap-1 cursor-pointer transition-colors"
+                        title="لغو تخصیص از پروژه"
+                      >
+                        <Unlink className="w-3.5 h-3.5" />
+                        <span>لغو تخصیص</span>
+                      </button>
+                    </div>
+
+                    {comp.description && (
+                      <p className="text-slate-500 text-[11px] leading-relaxed">{comp.description}</p>
+                    )}
+
+                    <div className="text-[11px] text-slate-600 bg-slate-50 p-2 rounded-xl space-y-1">
+                      <span className="text-slate-400 block text-[10px] font-bold">شاخص‌های تشکیل‌دهنده:</span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {comp.items.map((it) => (
+                          <span key={it.id} className="bg-white border border-slate-200 px-1.5 py-0.5 rounded text-[10.5px]">
+                            {it.projectKpi?.name || "شاخص"}
+                            <span className="text-slate-400 text-[9px] mr-1">({it.projectKpi?.project?.title})</span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-slate-100 pt-2 flex items-center justify-between text-[11px]">
+                    <span className="text-slate-500">
+                      واحد: <span className="font-bold text-slate-800">{comp.unit}</span>
+                      {comp.target_value !== null && comp.target_value !== undefined && (
+                        <> • هدف: <span className="font-bold text-slate-800">{toPersianDigits(comp.target_value)}</span></>
+                      )}
+                    </span>
+                    {comp.latest_value !== null && comp.latest_value !== undefined ? (
+                      <span className="font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200">
+                        آخرین عملکرد: {toPersianDigits(comp.latest_value)} {comp.unit}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400 text-[10px]">در انتظار محاسبه</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* مودال ویرایش */}
       {editingKpi && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-4">
@@ -816,6 +998,69 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* مودال تخصیص شاخص ترکیبی به این پروژه */}
+      {assignModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl border border-slate-200 p-6 space-y-4">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <h3 className="font-extrabold text-slate-900 text-sm flex items-center gap-2">
+                <Link className="w-4 h-4 text-emerald-700" />
+                <span>تخصیص شاخص ترکیبی به این پروژه</span>
+              </h3>
+              <button
+                onClick={() => setAssignModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <p className="text-slate-500 text-xs leading-relaxed">
+                از منوی زیر شاخص ترکیبی مورد نظر را انتخاب کنید تا به پروژه «{projects.find((p) => p.id === selectedProjectId)?.title}» متصل شود:
+              </p>
+
+              <div>
+                <label className="block text-slate-700 font-bold text-xs mb-1">انتخاب شاخص ترکیبی:</label>
+                <CustomSelect
+                  options={[
+                    { value: "0", label: "انتخاب شاخص..." },
+                    ...allCompositeKpis
+                      .filter((c) => c.project_id !== selectedProjectId)
+                      .map((c) => ({
+                        value: String(c.id),
+                        label: `${c.name} (${c.unit})${c.project ? ` [فعلاً در ${c.project.title}]` : " [کلان سازمانی]"}`,
+                      })),
+                  ]}
+                  value={String(selectedCompositeToAssign)}
+                  onChange={(val) => setSelectedCompositeToAssign(Number(val))}
+                  searchable={true}
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setAssignModalOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 text-xs font-bold cursor-pointer"
+                >
+                  انصراف
+                </button>
+                <button
+                  type="button"
+                  disabled={!selectedCompositeToAssign || assignLoading}
+                  onClick={handleAssignComposite}
+                  className="px-5 py-2 rounded-xl bg-emerald-800 hover:bg-emerald-900 disabled:bg-slate-300 text-white text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  {assignLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                  <span>تایید و تخصیص به پروژه</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

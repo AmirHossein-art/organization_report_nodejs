@@ -77,6 +77,7 @@ model Project {
   kpis         ProjectKpi[]
   nextActions  NextAction[]
   wbsSubmissions WbsSubmission[]
+  compositeKpis CompositeKpi[]
 }
 
 // ۳. جدول دوره‌های گزارش‌دهی
@@ -247,6 +248,7 @@ model DeadlineSetting {
 // ۸. جداول شاخص‌های ترکیبی مدیریتی (Composite KPIs)
 model CompositeKpi {
   id               Int                 @id @default(autoincrement())
+  project_id       Int?
   name             String
   description      String?             @db.Text
   unit             String
@@ -257,8 +259,11 @@ model CompositeKpi {
   sort_order       Int                 @default(0)
   created_at       DateTime            @default(now())
 
+  project          Project?            @relation(fields: [project_id], references: [id], onDelete: SetNull)
   items            CompositeKpiItem[]
   values           CompositeKpiValue[]
+
+  @@index([project_id])
 }
 
 model CompositeKpiItem {

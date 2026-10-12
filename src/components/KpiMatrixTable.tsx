@@ -85,7 +85,24 @@ export const KpiMatrixTable: React.FC<KpiMatrixTableProps> = ({
                   style={{ border: "1px solid #cbd5e1", padding: "4px 6px" }}
                   className="font-bold text-slate-900"
                 >
-                  <span>{kpiName}</span>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span>{kpiName}</span>
+                    {kv.is_composite && (
+                      <span
+                        style={{
+                          backgroundColor: "#e0e7ff",
+                          color: "#3730a3",
+                          border: "1px solid #c7d2fe",
+                          padding: "1px 4px",
+                          borderRadius: "4px",
+                          fontSize: "8.5px",
+                          fontWeight: "bold",
+                        }}
+                      >
+                        ترکیبی
+                      </span>
+                    )}
+                  </div>
                   {kpiMeta?.description && !compactForPrint && (
                     <span className="block text-[9.5px] text-slate-400 font-normal mt-0.5 truncate max-w-[200px]">
                       {kpiMeta.description}

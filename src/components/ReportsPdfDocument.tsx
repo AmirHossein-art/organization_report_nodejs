@@ -471,6 +471,7 @@ export default function ReportsPdfDocument({
   const [localProjects, setLocalProjects] = useState<Project[]>([]);
   const [localUsers, setLocalUsers] = useState<User[]>([]);
   const [localKpis, setLocalKpis] = useState<ProjectKpi[]>([]);
+  const [localCompositeKpis, setLocalCompositeKpis] = useState<any[]>([]);
   const [localNextActions, setLocalNextActions] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
 
@@ -558,8 +559,9 @@ export default function ReportsPdfDocument({
       !hasPropsUsers && localUsers.length === 0 ? fetch("/api/users").then((r) => (r.ok ? r.json() : [])) : Promise.resolve(null),
       localKpis.length === 0 ? fetch("/api/project-kpis").then((r) => (r.ok ? r.json() : [])).catch(() => []) : Promise.resolve(null),
       localNextActions.length === 0 ? fetch("/api/next-actions").then((r) => (r.ok ? r.json() : [])).catch(() => []) : Promise.resolve(null),
+      localCompositeKpis.length === 0 ? fetch("/api/composite-kpis").then((r) => (r.ok ? r.json() : [])).catch(() => []) : Promise.resolve(null),
     ])
-      .then(([reps, pers, projs, usrs, kps, acts]) => {
+      .then(([reps, pers, projs, usrs, kps, acts, comps]) => {
         if (Array.isArray(reps)) setLocalReports(reps);
         if (Array.isArray(pers) && pers.length > 0) {
           setLocalPeriods(pers);
@@ -572,6 +574,7 @@ export default function ReportsPdfDocument({
         if (Array.isArray(usrs)) setLocalUsers(usrs);
         if (Array.isArray(kps) && kps.length > 0) setLocalKpis(kps);
         if (Array.isArray(acts) && acts.length > 0) setLocalNextActions(acts);
+        if (Array.isArray(comps) && comps.length > 0) setLocalCompositeKpis(comps);
       })
       .catch((err) => console.error("Error fetching supplemental PDF data:", err))
       .finally(() => setLoading(false));
@@ -841,7 +844,37 @@ export default function ReportsPdfDocument({
       }
 
       // بخش ۳: شاخص‌های کلیدی عملکرد (KPI) با جدول ماتریسی فشرده
-      const hasStructuredKpis = Array.isArray(report.kpiValues) && report.kpiValues.length > 0;
+      // استخراج شاخص‌های ترکیبی تخصیص‌یافته به این پروژه
+      const assignedComposites = (localCompositeKpis || []).filter(
+        (c) => c.project_id === report.project_id && c.is_active
+      );
+
+      const compositeKpiRows = assignedComposites.map((c) => {
+        const periodVal = c.values?.find((v: any) => v.period_id === report.period_id);
+        const calcVal = periodVal?.calculated_value ?? (report.period_id === selectedPeriodId ? c.latest_value : null);
+        return {
+          id: `comp-${c.id}`,
+          is_composite: true,
+          project_kpi_id: 0,
+          name: c.name,
+          unit: c.unit,
+          target_value: c.target_value,
+          target_direction: c.target_direction,
+          current_value: calcVal,
+          calculated_value: calcVal,
+          baseline_value: null,
+          not_measured: calcVal === null || calcVal === undefined,
+          missing_reason: calcVal === null ? "محاسبه‌نشده" : undefined,
+          operator: c.operator,
+        };
+      });
+
+      const mergedKpiValues = [
+        ...(report.kpiValues || []),
+        ...compositeKpiRows,
+      ];
+
+      const hasStructuredKpis = mergedKpiValues.length > 0;
       const hasKpiText = Boolean(report.kpi_text && report.kpi_text.trim());
 
       if (hasStructuredKpis || hasKpiText) {
@@ -849,7 +882,7 @@ export default function ReportsPdfDocument({
           heading: "۳. شاخص‌های کلیدی عملکرد (KPI):",
           type: "kpi_table",
           items: [],
-          kpiValues: report.kpiValues || [],
+          kpiValues: mergedKpiValues,
           kpiText: report.kpi_text,
         });
       } else {
