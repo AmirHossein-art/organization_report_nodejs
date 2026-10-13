@@ -29,10 +29,10 @@ export const KpiInteractiveInput: React.FC<KpiInteractiveInputProps> = ({
 }) => {
   const disabled = Boolean(value.not_measured);
   const baselineNum =
-    kpi.baseline_value !== null && kpi.baseline_value !== undefined
-      ? Number(kpi.baseline_value)
-      : value.baseline_value !== "" && value.baseline_value !== null && value.baseline_value !== undefined
+    value.baseline_value !== "" && value.baseline_value !== null && value.baseline_value !== undefined
       ? Number(value.baseline_value)
+      : kpi.baseline_value !== null && kpi.baseline_value !== undefined
+      ? Number(kpi.baseline_value)
       : null;
 
   const currentNum =

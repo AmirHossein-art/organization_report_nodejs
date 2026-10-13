@@ -546,9 +546,10 @@ async function validateAndBuildKpiValues(
       if (current === null) {
         throw new KpiValidationError(`مقدار این دوره شاخص «${kpi.name}» باید عددی معتبر باشد.`);
       }
-      const baseline = (kpi.baseline_value !== undefined && kpi.baseline_value !== null)
-        ? kpi.baseline_value
-        : toNumberOrNull(v.baseline_value);
+      const submittedBaseline = toNumberOrNull(v.baseline_value);
+      const baseline = submittedBaseline !== null
+        ? submittedBaseline
+        : (kpi.baseline_value !== undefined && kpi.baseline_value !== null ? kpi.baseline_value : null);
 
       built.push({
         project_kpi_id: kpiId,
@@ -559,7 +560,10 @@ async function validateAndBuildKpiValues(
         missing_reason: null,
       });
     } else {
-      const baseline = toNumberOrNull(v.baseline_value) ?? (kpi.baseline_value !== undefined && kpi.baseline_value !== null ? kpi.baseline_value : null);
+      const submittedBaseline = toNumberOrNull(v.baseline_value);
+      const baseline = submittedBaseline !== null
+        ? submittedBaseline
+        : (kpi.baseline_value !== undefined && kpi.baseline_value !== null ? kpi.baseline_value : null);
       const current = toNumberOrNull(v.current_value);
       if (baseline === null) {
         throw new KpiValidationError(`مقدار مبنای شاخص «${kpi.name}» باید عددی معتبر باشد.`);
@@ -602,7 +606,7 @@ function parseNextActions(
   projectId?: number,
   userId?: number,
   role: "user" | "manager" = "user"
-): { action_text: string; target_date: Date; project_id?: number; user_id?: number; created_by_role?: "user" | "manager" }[] {
+): { action_text: string; target_date: Date; project_id?: number; user_id?: number; created_by_role?: "user" | "manager"; wbs_node_id?: number }[] {
   if (rawNextActions === undefined || rawNextActions === null || rawNextActions === "") {
     return [];
   }
@@ -631,12 +635,16 @@ function parseNextActions(
       throw new NextActionsValidationError(`تاریخ اقدام آتی شماره ${index + 1} معتبر نیست.`);
     }
 
+    const rawWbsNodeId = item?.wbs_node_id ? Number(item.wbs_node_id) : undefined;
+    const wbsNodeId = rawWbsNodeId && Number.isSafeInteger(rawWbsNodeId) && rawWbsNodeId > 0 ? rawWbsNodeId : undefined;
+
     return {
       action_text: actionText,
       target_date: date,
       project_id: projectId || undefined,
       user_id: userId || undefined,
       created_by_role: role,
+      wbs_node_id: wbsNodeId,
     };
   });
 }
@@ -1558,6 +1566,101 @@ app.get("/api/wbs-submissions/:id/download", authenticate, async (req: any, res)
     res.status(500).json({ error: "خطا در دریافت فایل ساختار شکست." });
   }
 });
+
+// دریافت گره‌های فعال ساختار شکست کار (WBS) یک پروژه جهت انتساب به اقدامات و نمایش شبکه
+app.get("/api/projects/:projectId/wbs-nodes", authenticate, async (req: any, res) => {
+  try {
+    const projectId = parseInt(req.params.projectId);
+    if (!Number.isSafeInteger(projectId) || projectId <= 0) {
+      return res.status(400).json({ error: "شناسه پروژه نامعتبر است." });
+    }
+
+    const project = await prisma.project.findUnique({ where: { id: projectId } });
+    if (!project) {
+      return res.status(404).json({ error: "پروژه یافت نشد." });
+    }
+
+    if (req.user.role !== "manager") {
+      const assignment = await prisma.userProject.findFirst({
+        where: { user_id: req.user.id, project_id: projectId },
+      });
+      if (!assignment && !project.is_active) {
+        return res.status(403).json({ error: "دسترسی به ساختار این پروژه مجاز نیست." });
+      }
+    }
+
+    const nodes = await prisma.wbsNode.findMany({
+      where: {
+        project_id: projectId,
+      },
+      include: {
+        kpiLinks: {
+          include: {
+            kpi: {
+              select: {
+                id: true,
+                name: true,
+                unit: true,
+                target_direction: true,
+              },
+            },
+          },
+        },
+        nextActions: {
+          where: {
+            is_completed: false,
+            is_cancelled: false,
+          },
+          select: {
+            id: true,
+            action_text: true,
+            target_date: true,
+            user: { select: { id: true, full_name: true } },
+          },
+        },
+      },
+      orderBy: [
+        { sort_order: "asc" },
+        { code: "asc" },
+      ],
+    });
+
+    // گره‌های فعال (عدم بایگانی)
+    const activeNodes = nodes.filter((n) => {
+      const attrs = n.attributes as any;
+      return !attrs || attrs.active !== false;
+    });
+
+    const formatted = activeNodes.map((n) => ({
+      id: n.id,
+      project_id: n.project_id,
+      code: n.code,
+      title: n.title,
+      level: n.level,
+      node_type: n.node_type,
+      parent_id: n.parent_id,
+      deliverable_text: n.deliverable_text,
+      responsible: n.responsible,
+      duration: n.duration,
+      start_date: n.start_date,
+      prerequisite: n.prerequisite,
+      notes: n.notes,
+      sort_order: n.sort_order,
+      linked_kpis: n.kpiLinks.map((l: any) => l.kpi),
+      active_actions: n.nextActions.map((a: any) => ({
+        id: a.id,
+        action_text: a.action_text,
+        target_date: a.target_date ? a.target_date.toISOString().split("T")[0] : null,
+        user_name: a.user?.full_name || null,
+      })),
+    }));
+
+    res.json(formatted);
+  } catch (error) {
+    console.error("Error fetching WBS nodes:", error);
+    res.status(500).json({ error: "خطا در واکشی گره‌های ساختار شکست." });
+  }
+});
 // -----------------------------
 // 5. Report Period Management
 // -----------------------------
@@ -1818,7 +1921,39 @@ app.get("/api/projects/:projectId/kpis", authenticate, async (req: any, res) => 
       where,
       orderBy: { sort_order: "asc" },
     });
-    res.json(kpis);
+
+    // واکشی آخرین گزارش ثبت‌شده این پروژه جهت استخراج زنجیره تجمعی شاخص‌ها
+    const latestReport = await prisma.report.findFirst({
+      where: { project_id: projectId },
+      orderBy: [
+        { period: { period_end: "desc" } },
+        { submitted_at: "desc" },
+      ],
+      include: {
+        kpiValues: true,
+      },
+    });
+
+    const latestValueMap = new Map<number, number>();
+    if (latestReport?.kpiValues) {
+      for (const kv of latestReport.kpiValues) {
+        if (!kv.not_measured && kv.current_value !== null && kv.current_value !== undefined) {
+          latestValueMap.set(kv.project_kpi_id, kv.current_value);
+        }
+      }
+    }
+
+    const enhancedKpis = kpis.map((k) => {
+      const hasLatest = latestValueMap.has(k.id);
+      const latestVal = hasLatest ? latestValueMap.get(k.id)! : null;
+      return {
+        ...k,
+        latest_value: latestVal,
+        effective_baseline: latestVal !== null ? latestVal : (k.baseline_value ?? null),
+      };
+    });
+
+    res.json(enhancedKpis);
   } catch (error) {
     console.error("Error fetching project KPIs:", error);
     res.status(500).json({ error: "خطا در دریافت شاخص‌های پروژه" });
@@ -3762,6 +3897,7 @@ app.get("/api/next-actions", authenticate, async (req: any, res) => {
       include: {
         project: { select: { id: true, title: true } },
         user: { select: { id: true, full_name: true, job_title: true } },
+        wbsNode: { select: { id: true, code: true, title: true, level: true } },
         report: {
           include: {
             project: { select: { id: true, title: true } },
@@ -3785,6 +3921,13 @@ app.get("/api/next-actions", authenticate, async (req: any, res) => {
       report_id: a.report_id,
       project_id: a.project_id || a.report?.project_id,
       user_id: a.user_id || a.report?.user_id,
+      wbs_node_id: a.wbs_node_id,
+      wbs_node: a.wbsNode ? {
+        id: a.wbsNode.id,
+        code: a.wbsNode.code,
+        title: a.wbsNode.title,
+        level: a.wbsNode.level,
+      } : null,
       created_by_role: a.created_by_role,
       action_text: a.action_text,
       target_date: a.target_date ? a.target_date.toISOString().split("T")[0] : null,
@@ -3820,7 +3963,7 @@ app.get("/api/next-actions", authenticate, async (req: any, res) => {
 
 app.post("/api/next-actions", authenticate, async (req: any, res) => {
   try {
-    const { project_id, user_id, action_text, target_date } = req.body;
+    const { project_id, user_id, action_text, target_date, wbs_node_id } = req.body;
     const trimmedText = typeof action_text === "string" ? action_text.trim() : "";
 
     if (!trimmedText) {
@@ -3857,6 +4000,18 @@ app.post("/api/next-actions", authenticate, async (req: any, res) => {
       return res.status(400).json({ error: "تاریخ سررسید وارد شده نامعتبر است." });
     }
 
+    // اعتبارسنجی گره ساختار شکست کار (WBS) در صورت ارسال
+    let validatedWbsNodeId: number | null = null;
+    if (wbs_node_id) {
+      const nid = Number(wbs_node_id);
+      if (Number.isSafeInteger(nid) && nid > 0) {
+        const node = await prisma.wbsNode.findUnique({ where: { id: nid } });
+        if (node && node.project_id === projectIdNum) {
+          validatedWbsNodeId = nid;
+        }
+      }
+    }
+
     // استخراج نقش ایجادکننده بر اساس هویت احرازشده در نشست (جلوگیری از جعل نقش مدیریتی توسط پرسنل)
     const createdByRole = req.user.role === "manager" ? "manager" : "user";
     const assignedUserId = req.user.role === "manager"
@@ -3867,6 +4022,7 @@ app.post("/api/next-actions", authenticate, async (req: any, res) => {
       data: {
         project_id: projectIdNum,
         user_id: assignedUserId,
+        wbs_node_id: validatedWbsNodeId,
         action_text: trimmedText,
         target_date: targetDateObj,
         created_by_role: createdByRole,
@@ -3876,6 +4032,7 @@ app.post("/api/next-actions", authenticate, async (req: any, res) => {
       include: {
         project: { select: { id: true, title: true } },
         user: { select: { id: true, full_name: true, job_title: true } },
+        wbsNode: { select: { id: true, code: true, title: true, level: true } },
       }
     });
 
@@ -3884,6 +4041,13 @@ app.post("/api/next-actions", authenticate, async (req: any, res) => {
       report_id: newAction.report_id,
       project_id: newAction.project_id,
       user_id: newAction.user_id,
+      wbs_node_id: newAction.wbs_node_id,
+      wbs_node: newAction.wbsNode ? {
+        id: newAction.wbsNode.id,
+        code: newAction.wbsNode.code,
+        title: newAction.wbsNode.title,
+        level: newAction.wbsNode.level,
+      } : null,
       created_by_role: newAction.created_by_role,
       action_text: newAction.action_text,
       target_date: newAction.target_date ? newAction.target_date.toISOString().split("T")[0] : null,

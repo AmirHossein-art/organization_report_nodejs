@@ -1135,9 +1135,12 @@ function ReportEditModal({
               missing_reason: existing.missing_reason || "",
             };
           } else {
+            const startingBaseline = k.effective_baseline !== null && k.effective_baseline !== undefined
+              ? String(k.effective_baseline)
+              : (k.baseline_value !== null && k.baseline_value !== undefined ? String(k.baseline_value) : "");
             initial[k.id] = {
               current_value: "",
-              baseline_value: k.baseline_value !== null && k.baseline_value !== undefined ? String(k.baseline_value) : "",
+              baseline_value: startingBaseline,
               not_measured: false,
               missing_reason: "",
             };
@@ -1253,9 +1256,9 @@ function ReportEditModal({
       return {
         project_kpi_id: k.id,
         current_value: Number(v.current_value),
-        baseline_value: k.input_type === "percentage_change"
-          ? (v.baseline_value !== "" && !isNaN(Number(v.baseline_value)) ? Number(v.baseline_value) : (k.baseline_value ?? null))
-          : (k.baseline_value !== null && k.baseline_value !== undefined ? Number(k.baseline_value) : (v.baseline_value !== "" && !isNaN(Number(v.baseline_value)) ? Number(v.baseline_value) : null)),
+        baseline_value: v.baseline_value !== "" && !isNaN(Number(v.baseline_value))
+          ? Number(v.baseline_value)
+          : (k.effective_baseline !== null && k.effective_baseline !== undefined ? Number(k.effective_baseline) : (k.baseline_value ?? null)),
         not_measured: false,
         missing_reason: null,
       };

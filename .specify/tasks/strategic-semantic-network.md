@@ -41,8 +41,8 @@
 - [ ] `T3.4` Defensively enforce Shamsi date formatting on all extracted commitments.
 
 ### Sub-Agent 4: Presentation & Interactive Visualizer Layer (US3)
-- [ ] `T4.1` Add WBS node picker to `NextAction` creation drawers in `ProjectNextActionsDrawer.tsx` and `SubmitReport.tsx`.
-- [ ] `T4.2` Render linked KPI badges and active commitments inside `WbsTreeTableRow` in `WbsViewer.tsx`.
+- [x] `T4.1` Add WBS node picker to `NextAction` creation drawers in `ProjectNextActionsDrawer.tsx` and `SubmitReport.tsx` with dedicated `GET /api/projects/:projectId/wbs-nodes` API.
+- [x] `T4.2` Render linked KPI badges and active commitments inside `WbsTreeTableRow` in `WbsViewer.tsx`; add zoom controls and Persian digit normalization in `WbsTree.tsx`.
 - [ ] `T4.3` Build interactive Strategic Network Explorer tab in `ManageProjectsHub.tsx`.
 
 ### Sub-Agent 5: Performance & Security Engineering

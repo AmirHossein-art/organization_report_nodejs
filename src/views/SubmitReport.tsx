@@ -70,6 +70,7 @@ interface SubmitReportProps {
 interface NextActionInput {
   action_text: string;
   target_date: string; 
+  wbs_node_id?: number | null;
 }
 
 export default function SubmitReport({ projects, periods, user, allReports, onRefresh, onNavigate }: SubmitReportProps) {
@@ -91,6 +92,9 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
   // مقادیر واردشده به تفکیک شناسه شاخص
   const [kpiValues, setKpiValues] = useState<Record<number, any>>({});
   const [selectedKpiFilter, setSelectedKpiFilter] = useState<number>(0); // 0 = همه شاخص‌ها
+  
+  // 🟢 گره‌های فعال ساختار شکست کار (WBS) جهت انتساب به اقدامات آتی
+  const [projectWbsNodes, setProjectWbsNodes] = useState<any[]>([]);
   
   const [loading, setLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
@@ -190,6 +194,18 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
       .finally(() => setPendingActionsLoading(false));
   }, [subProjectId, user?.id]);
 
+  // 🟢 واکشی گره‌های فعال WBS برای پروژه انتخاب‌شده
+  useEffect(() => {
+    if (!subProjectId) {
+      setProjectWbsNodes([]);
+      return;
+    }
+    fetch(`/api/projects/${subProjectId}/wbs-nodes`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((nodes) => setProjectWbsNodes(Array.isArray(nodes) ? nodes : []))
+      .catch(() => setProjectWbsNodes([]));
+  }, [subProjectId]);
+
   // 🟢 واکشی شاخص‌های فعالِ کاربردی برای پروژه و نوع گزارش انتخاب‌شده
   useEffect(() => {
     if (!subProjectId || !subPeriodId) {
@@ -205,9 +221,12 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
         // مقداردهی اولیه ورودی‌ها
         const initial: Record<number, any> = {};
         (Array.isArray(data) ? data : []).forEach((k) => {
+          const startingBaseline = k.effective_baseline !== null && k.effective_baseline !== undefined
+            ? String(k.effective_baseline)
+            : (k.baseline_value !== null && k.baseline_value !== undefined ? String(k.baseline_value) : "");
           initial[k.id] = {
             current_value: "",
-            baseline_value: k.baseline_value !== null && k.baseline_value !== undefined ? String(k.baseline_value) : "",
+            baseline_value: startingBaseline,
             not_measured: false,
             missing_reason: "",
           };
@@ -360,9 +379,9 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
       return {
         project_kpi_id: k.id,
         current_value: Number(v.current_value),
-        baseline_value: k.input_type === "percentage_change"
-          ? (v.baseline_value !== "" && !isNaN(Number(v.baseline_value)) ? Number(v.baseline_value) : (k.baseline_value ?? null))
-          : (k.baseline_value !== null && k.baseline_value !== undefined ? Number(k.baseline_value) : null),
+        baseline_value: v.baseline_value !== "" && !isNaN(Number(v.baseline_value))
+          ? Number(v.baseline_value)
+          : (k.effective_baseline !== null && k.effective_baseline !== undefined ? Number(k.effective_baseline) : (k.baseline_value ?? null)),
         not_measured: false,
         missing_reason: null,
       };
@@ -383,7 +402,7 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
         setActivitiesDone("");
         setExtraResultsNotes("");
         setSelectedActionIds([]);
-        setNextActions([{ action_text: "", target_date: "" }]);
+        setNextActions([{ action_text: "", target_date: "", wbs_node_id: null }]);
         setKpiValues({});
         setSubFiles(null);
         const fileInput = document.getElementById("report_files_input") as HTMLInputElement;
@@ -767,7 +786,7 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
                     <label className="text-sm font-bold text-slate-850">اقدامات آتی و برنامه پیش‌رو</label>
                     <button
                       type="button"
-                      onClick={() => setNextActions([...nextActions, { action_text: "", target_date: "" }])}
+                      onClick={() => setNextActions([...nextActions, { action_text: "", target_date: "", wbs_node_id: null }])}
                       className="text-xs bg-emerald-800 text-white px-3 py-1.5 rounded-xl font-medium hover:bg-emerald-900 flex items-center gap-1 transition-all cursor-pointer"
                     >
                       <Plus className="w-3.5 h-3.5" />
@@ -789,10 +808,32 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
                               updated[index].action_text = e.target.value;
                               setNextActions(updated);
                             }}
-                            placeholder="مثال: رفع باگ‌های ماژول احراز هویت..."
+                            placeholder="مثال: پیاده‌سازی تست‌های نهایی سامانه..."
                             className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:border-emerald-600"
                           />
                         </div>
+
+                        {projectWbsNodes.length > 0 && (
+                          <div className="w-full md:w-56">
+                            <label className="text-[11px] font-medium text-slate-400 block mb-1">بسته کاری WBS مرتبط</label>
+                            <select
+                              value={item.wbs_node_id || 0}
+                              onChange={(e) => {
+                                const updated = [...nextActions];
+                                updated[index].wbs_node_id = Number(e.target.value) || null;
+                                setNextActions(updated);
+                              }}
+                              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-emerald-600 truncate"
+                            >
+                              <option value={0}>— بدون انتساب به WBS —</option>
+                              {projectWbsNodes.map((n) => (
+                                <option key={n.id} value={n.id}>
+                                  [{toPersianDigits(n.code)}] {n.title}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
 
                         <div className="w-full md:w-44">
                           <label className="text-[11px] font-medium text-slate-400 block mb-1">تاریخ سررسید ددلاین روز</label>
