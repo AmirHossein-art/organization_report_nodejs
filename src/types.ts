@@ -64,6 +64,8 @@ export interface NextAction {
   report_id?: number | null;
   project_id?: number | null;
   user_id?: number | null;
+  wbs_node_id?: number | null;
+  wbsNode?: WbsNode | null;
   created_by_role?: "user" | "manager";
   action_text: string;
   target_date: string | null;
@@ -242,4 +244,46 @@ export interface CompositeKpi {
   values?: CompositeKpiValue[];
   latest_value?: number | null;
   latest_period_title?: string | null;
+}
+
+export interface WbsNode {
+  id: number;
+  project_id: number;
+  parent_id?: number | null;
+  code: string;
+  title: string;
+  level: number;
+  node_type: "phase" | "work_package" | "deliverable" | string;
+  deliverable_text?: string | null;
+  responsible?: string | null;
+  duration?: string | null;
+  start_date?: string | null;
+  prerequisite?: string | null;
+  notes?: string | null;
+  attributes?: Record<string, any> | null;
+  sort_order: number;
+  created_at?: string;
+  updated_at?: string;
+  parent?: WbsNode | null;
+  children?: WbsNode[];
+  kpiLinks?: KpiWbsLink[];
+}
+
+export interface KpiWbsLink {
+  id: number;
+  project_kpi_id: number;
+  wbs_node_id: number;
+  created_at?: string;
+  kpi?: ProjectKpi;
+  wbsNode?: WbsNode;
+}
+
+export interface ReportWbsLink {
+  id: number;
+  report_id: number;
+  wbs_node_id: number;
+  notes?: string | null;
+  created_at?: string;
+  report?: Report;
+  wbsNode?: WbsNode;
 }

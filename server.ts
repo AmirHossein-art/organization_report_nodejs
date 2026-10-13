@@ -19,6 +19,7 @@ import crypto from "node:crypto";
 import { config } from "./src/config/env";
 import { parseExcelWBS } from "./src/utils/wbsParser";
 import { parseWbsWorkbook } from "./src/utils/wbsDataParser";
+import { backfillWbsGraphs, replaceWbsFile, deleteWbsFile, WbsSyncError, readWbsGraph, lockWbsProject, applyWbsUploadInTx, removeWbsInTx, unlinkWbsFile } from "./src/services/wbsGraphSync";
 import { getDeadlineState } from "./src/deadline";
 import { ensureShamsiDate, isLastWeekOfShamsiMonth, shamsiToGregorian } from "./src/dateUtils";
 
@@ -297,6 +298,70 @@ async function ensureDatabaseSchema() {
       );
       CREATE INDEX IF NOT EXISTS "WbsSubmission_project_id_idx" ON "WbsSubmission"("project_id");
 
+      ALTER TABLE "NextAction" ADD COLUMN IF NOT EXISTS "wbs_node_id" INTEGER;
+      CREATE INDEX IF NOT EXISTS "NextAction_wbs_node_id_idx" ON "NextAction"("wbs_node_id");
+
+      CREATE TABLE IF NOT EXISTS "WbsNode" (
+        "id" SERIAL PRIMARY KEY,
+        "project_id" INTEGER NOT NULL REFERENCES "Project"("id") ON DELETE CASCADE,
+        "parent_id" INTEGER REFERENCES "WbsNode"("id") ON DELETE CASCADE,
+        "code" TEXT NOT NULL,
+        "title" TEXT NOT NULL,
+        "level" INTEGER NOT NULL DEFAULT 1,
+        "node_type" TEXT NOT NULL DEFAULT 'work_package',
+        "deliverable_text" TEXT,
+        "responsible" TEXT,
+        "duration" TEXT,
+        "start_date" TEXT,
+        "prerequisite" TEXT,
+        "notes" TEXT,
+        "attributes" JSONB,
+        "sort_order" INTEGER NOT NULL DEFAULT 0,
+        "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT "WbsNode_project_id_code_key" UNIQUE ("project_id", "code")
+      );
+      CREATE INDEX IF NOT EXISTS "WbsNode_project_id_idx" ON "WbsNode"("project_id");
+      CREATE INDEX IF NOT EXISTS "WbsNode_parent_id_idx" ON "WbsNode"("parent_id");
+      CREATE INDEX IF NOT EXISTS "WbsNode_code_idx" ON "WbsNode"("code");
+      CREATE INDEX IF NOT EXISTS "WbsNode_attributes_gin_idx" ON "WbsNode" USING GIN ("attributes");
+
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'NextAction_wbs_node_id_fkey' AND conrelid = '"NextAction"'::regclass) THEN
+          ALTER TABLE "NextAction" ADD CONSTRAINT "NextAction_wbs_node_id_fkey" FOREIGN KEY ("wbs_node_id") REFERENCES "WbsNode"("id") ON DELETE SET NULL;
+        END IF;
+      END $$;
+
+      CREATE TABLE IF NOT EXISTS "KpiWbsLink" (
+        "id" SERIAL PRIMARY KEY,
+        "project_kpi_id" INTEGER NOT NULL REFERENCES "ProjectKpi"("id") ON DELETE CASCADE,
+        "wbs_node_id" INTEGER NOT NULL REFERENCES "WbsNode"("id") ON DELETE CASCADE,
+        "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT "KpiWbsLink_project_kpi_id_wbs_node_id_key" UNIQUE ("project_kpi_id", "wbs_node_id")
+      );
+      CREATE INDEX IF NOT EXISTS "KpiWbsLink_project_kpi_id_idx" ON "KpiWbsLink"("project_kpi_id");
+      CREATE INDEX IF NOT EXISTS "KpiWbsLink_wbs_node_id_idx" ON "KpiWbsLink"("wbs_node_id");
+
+      CREATE TABLE IF NOT EXISTS "ReportWbsLink" (
+        "id" SERIAL PRIMARY KEY,
+        "report_id" INTEGER NOT NULL REFERENCES "Report"("id") ON DELETE CASCADE,
+        "wbs_node_id" INTEGER NOT NULL REFERENCES "WbsNode"("id") ON DELETE CASCADE,
+        "notes" TEXT,
+        "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT "ReportWbsLink_report_id_wbs_node_id_key" UNIQUE ("report_id", "wbs_node_id")
+      );
+      CREATE INDEX IF NOT EXISTS "ReportWbsLink_report_id_idx" ON "ReportWbsLink"("report_id");
+      CREATE INDEX IF NOT EXISTS "ReportWbsLink_wbs_node_id_idx" ON "ReportWbsLink"("wbs_node_id");
+
+      CREATE TABLE IF NOT EXISTS "AiAnalysisCache" (
+        "id" SERIAL PRIMARY KEY,
+        "cache_key" TEXT NOT NULL UNIQUE,
+        "data" JSONB NOT NULL,
+        "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS "AiAnalysisCache_cache_key_idx" ON "AiAnalysisCache"("cache_key");
+
       UPDATE "Project"
       SET "wbs_file_name" = convert_from(convert_to("wbs_file_name", 'LATIN1'), 'UTF8')
       WHERE "wbs_file_name" LIKE '%Ø%' OR "wbs_file_name" LIKE '%Ù%' OR "wbs_file_name" LIKE '%§%';
@@ -307,11 +372,13 @@ async function ensureDatabaseSchema() {
     `);
 
     console.log("Database schema checked and verified successfully.");
+    return true;
   } catch (error) {
     console.error("Warning: Error verifying database schema updates:", error);
+    return false;
   }
 }
-ensureDatabaseSchema();
+const schemaReady = ensureDatabaseSchema();
 
 // تمیزکاری خودکار وضعیت اقداماتی که در گزارش تیک نخورده بودند
 prisma.nextAction.updateMany({
@@ -1004,7 +1071,7 @@ app.patch("/api/projects/:id/order", authenticate, requireManager, async (req, r
   }
 });
 
-app.post("/api/projects", authenticate, requireManager, uploadWBS.single("wbs_file"), async (req, res) => {
+app.post("/api/projects", authenticate, requireManager, uploadWBS.single("wbs_file"), async (req: any, res) => {
   const file = req.file;
   try {
     const { title, description, code, project_type } = req.body;
@@ -1027,23 +1094,43 @@ app.post("/api/projects", authenticate, requireManager, uploadWBS.single("wbs_fi
       return res.status(400).json({ error: "کد پروژه تکراری است." });
     }
 
-    const maxProject = await prisma.project.findFirst({
-      orderBy: { order_index: "desc" },
-      select: { order_index: true },
-    });
-    const nextOrderIndex = (maxProject?.order_index ?? 0) + 1;
+    // اگر فایل WBS ارسال شده باشد، خارج از تراکنش خوانده و پارس می‌شود
+    const graph = file ? readWbsGraph(wbsDir, file.filename) : null;
 
-    const newProject = await prisma.project.create({
-      data: {
-        code: code.trim(),
-        title: title.trim(),
-        description: description ? description.trim() : null,
-        project_type: project_type === "monthly" ? "monthly" : "weekly",
-        order_index: nextOrderIndex,
-        wbs_file_name: file ? sanitizeOriginalFileName(file.originalname) : null,
-        wbs_storage_filename: file ? file.filename : null,
-      },
-    });
+    const newProject = await prisma.$transaction(async (tx) => {
+      const maxProject = await tx.project.findFirst({
+        orderBy: { order_index: "desc" },
+        select: { order_index: true },
+      });
+      const nextOrderIndex = (maxProject?.order_index ?? 0) + 1;
+
+      const project = await tx.project.create({
+        data: {
+          code: code.trim(),
+          title: title.trim(),
+          description: description ? description.trim() : null,
+          project_type: project_type === "monthly" ? "monthly" : "weekly",
+          order_index: nextOrderIndex,
+          wbs_file_name: file ? sanitizeOriginalFileName(file.originalname) : null,
+          wbs_storage_filename: file ? file.filename : null,
+        },
+      });
+
+      if (file && graph) {
+        await applyWbsUploadInTx(
+          tx,
+          project.id,
+          {
+            filename: file.filename,
+            originalname: sanitizeOriginalFileName(file.originalname),
+            uploaded_by: req.user.id,
+          },
+          graph
+        );
+      }
+
+      return project;
+    }, { timeout: 120000, maxWait: 15000 });
 
     res.status(201).json(newProject);
   } catch (error) {
@@ -1051,14 +1138,21 @@ app.post("/api/projects", authenticate, requireManager, uploadWBS.single("wbs_fi
       try { fs.unlinkSync(file.path); } catch (_) { }
     }
     console.error("Error creating project:", error);
-    res.status(500).json({ error: "خطا در ساخت پروژه در دیتابیس" });
+    res.status(error instanceof WbsSyncError ? error.status : 500).json({
+      error: error instanceof WbsSyncError ? error.message : "خطا در ساخت پروژه در دیتابیس",
+    });
   }
 });
 
-app.put("/api/projects/:id", authenticate, requireManager, uploadWBS.single("wbs_file"), async (req, res) => {
+app.put("/api/projects/:id", authenticate, requireManager, uploadWBS.single("wbs_file"), async (req: any, res) => {
   const file = req.file;
   try {
     const id = parseInt(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
+      return res.status(400).json({ error: "شناسه پروژه نامعتبر است." });
+    }
+
     const { title, code, description, remove_wbs_file, is_active, project_type } = req.body;
 
     if (project_type && project_type !== "weekly" && project_type !== "monthly") {
@@ -1066,74 +1160,93 @@ app.put("/api/projects/:id", authenticate, requireManager, uploadWBS.single("wbs
       return res.status(400).json({ error: "نوع پروژه باید هفتگی یا ماهانه باشد." });
     }
 
-    const existingProject = await prisma.project.findUnique({
-      where: { id },
-    });
-
-    if (!existingProject) {
-      if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
-      return res.status(404).json({ error: "پروژه مورد نظر یافت نشد." });
-    }
-
-    if (code && code.trim() !== existingProject.code) {
-      const dupeCode = await prisma.project.findUnique({
-        where: { code: code.trim() },
-      });
-      if (dupeCode) {
-        if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
-        return res.status(400).json({ error: "کد پروژه تکراری است." });
-      }
-    }
-
-    let updatedWbsFileName: string | null = existingProject.wbs_file_name;
-    let updatedWbsStorageFilename: string | null = existingProject.wbs_storage_filename;
-    let oldPhysicalPathToDelete: string | null = null;
-
     const isRemoveRequested =
       remove_wbs_file === "true" ||
       remove_wbs_file === true ||
       String(remove_wbs_file) === "true";
 
-    if (file) {
-      oldPhysicalPathToDelete = resolveProjectWbsFilePath(existingProject);
-      updatedWbsFileName = sanitizeOriginalFileName(file.originalname);
-      updatedWbsStorageFilename = file.filename;
-    } else if (isRemoveRequested) {
-      oldPhysicalPathToDelete = resolveProjectWbsFilePath(existingProject);
-      updatedWbsFileName = null;
-      updatedWbsStorageFilename = null;
-    }
+    // آماده‌سازی و پارس فایل جدید خارج از تراکنش
+    const graph = file ? readWbsGraph(wbsDir, file.filename) : null;
 
-    const parsedIsActive = parseBooleanField(is_active);
+    let cleanupFilesAfterCommit: string[] = [];
 
-    // به‌روزرسانی در دیتابیس قبل از حذف فایل فیزیکی قبلی
-    const updatedProject = await prisma.project.update({
-      where: { id },
-      data: {
-        title: title !== undefined ? title.trim() : undefined,
-        code: code !== undefined ? code.trim() : undefined,
-        description: description !== undefined ? description.trim() : undefined,
-        project_type:
-          project_type === "monthly" ? "monthly" : project_type === "weekly" ? "weekly" : undefined,
-        is_active: parsedIsActive !== undefined ? parsedIsActive : undefined,
-        wbs_file_name: updatedWbsFileName,
-        wbs_storage_filename: updatedWbsStorageFilename,
-      },
-    });
+    const updatedProject = await prisma.$transaction(async (tx) => {
+      await lockWbsProject(tx, id);
 
-    // پس از موفقیت در دیتابیس، فایل قدیمی پاک می‌شود
-    if (oldPhysicalPathToDelete && fs.existsSync(oldPhysicalPathToDelete)) {
-      try { fs.unlinkSync(oldPhysicalPathToDelete); } catch (_) { }
+      const existingProject = await tx.project.findUnique({
+        where: { id },
+      });
+
+      if (!existingProject) {
+        throw new WbsSyncError("پروژه مورد نظر یافت نشد.", 404);
+      }
+
+      if (code && code.trim() !== existingProject.code) {
+        const dupeCode = await tx.project.findUnique({
+          where: { code: code.trim() },
+        });
+        if (dupeCode) {
+          throw new WbsSyncError("کد پروژه تکراری است.", 400);
+        }
+      }
+
+      const parsedIsActive = parseBooleanField(is_active);
+
+      let updatedWbsFileName: string | null = existingProject.wbs_file_name;
+      let updatedWbsStorageFilename: string | null = existingProject.wbs_storage_filename;
+
+      if (file && graph) {
+        await applyWbsUploadInTx(
+          tx,
+          id,
+          {
+            filename: file.filename,
+            originalname: sanitizeOriginalFileName(file.originalname),
+            uploaded_by: req.user.id,
+          },
+          graph
+        );
+        updatedWbsFileName = sanitizeOriginalFileName(file.originalname);
+        updatedWbsStorageFilename = file.filename;
+      } else if (isRemoveRequested) {
+        const { filesToCleanup } = await removeWbsInTx(tx, id);
+        cleanupFilesAfterCommit = filesToCleanup;
+        updatedWbsFileName = null;
+        updatedWbsStorageFilename = null;
+      }
+
+      const project = await tx.project.update({
+        where: { id },
+        data: {
+          title: title !== undefined ? title.trim() : undefined,
+          code: code !== undefined ? code.trim() : undefined,
+          description: description !== undefined ? description.trim() : undefined,
+          project_type:
+            project_type === "monthly" ? "monthly" : project_type === "weekly" ? "weekly" : undefined,
+          is_active: parsedIsActive !== undefined ? parsedIsActive : undefined,
+          wbs_file_name: updatedWbsFileName,
+          wbs_storage_filename: updatedWbsStorageFilename,
+        },
+      });
+
+      return project;
+    }, { timeout: 120000, maxWait: 15000 });
+
+    // پس از کامیت موفقیت‌آمیز، فایل‌های فیزیکی WBS غیرمتصل پاک می‌شوند
+    for (const f of cleanupFilesAfterCommit) {
+      unlinkWbsFile(wbsDir, f);
     }
 
     res.json(updatedProject);
   } catch (error) {
-    // در صورت بروز خطا در دیتابیس، فایل جدید آپلود شده پاک می‌شود
+    // در صورت بروز خطا، فایل آپلود شده جدید پاک می‌شود
     if (file && fs.existsSync(file.path)) {
       try { fs.unlinkSync(file.path); } catch (_) { }
     }
     console.error("Error updating project:", error);
-    res.status(500).json({ error: "خطا در ویرایش اطلاعات پروژه در دیتابیس" });
+    res.status(error instanceof WbsSyncError ? error.status : 500).json({
+      error: error instanceof WbsSyncError ? error.message : "خطا در ویرایش اطلاعات پروژه در دیتابیس",
+    });
   }
 });
 
@@ -1337,102 +1450,27 @@ app.get("/api/wbs-data/:targetId", authenticate, requireManager, async (req: any
 // ثبت / جایگزینی ساختار شکست برای یک پروژه (فقط مدیر سیستم)
 app.post("/api/projects/:id/wbs-submissions", authenticate, requireManager, uploadWBS.single("wbs_file"), async (req: any, res) => {
   try {
-    const projectId = parseInt(req.params.id);
-    const file = req.file;
-
-    if (!file) {
-      return res.status(400).json({ error: "فایلی ارسال نشده است." });
-    }
-
-    const project = await prisma.project.findUnique({ where: { id: projectId } });
-    if (!project) {
-      return res.status(404).json({ error: "پروژه یافت نشد." });
-    }
-
-    // حذف فیزیکی فایل قدیمی در صورت تفاوت
-    if (project.wbs_storage_filename && project.wbs_storage_filename !== file.filename) {
-      const oldPath = safeResolvePath(wbsDir, project.wbs_storage_filename);
-      if (oldPath && fs.existsSync(oldPath)) {
-        try { fs.unlinkSync(oldPath); } catch (_) {}
-      }
-    }
-
-    // به‌روزرسانی پروژه با فایل جدید
-    const updatedProject = await prisma.project.update({
-      where: { id: projectId },
-      data: {
-        wbs_file_name: sanitizeOriginalFileName(file.originalname),
-        wbs_storage_filename: file.filename,
-      },
+    if (!req.file) return res.status(400).json({ error: "فایلی ارسال نشده است." });
+    const result = await replaceWbsFile(prisma, wbsDir, Number(req.params.id), {
+      filename: req.file.filename,
+      originalname: sanitizeOriginalFileName(req.file.originalname),
+      uploaded_by: req.user.id,
     });
-
-    // ثبت در تاریخچه ارسال‌ها
-    const submission = await prisma.wbsSubmission.create({
-      data: {
-        project_id: projectId,
-        uploaded_by: req.user.id,
-        file_name: sanitizeOriginalFileName(file.originalname),
-        storage_filename: file.filename,
-      },
-    });
-
-    res.status(201).json({
-      submission,
-      project: updatedProject,
-      message: "فایل ساختار شکست با موفقیت ثبت گردید.",
-    });
+    res.status(201).json({ ...result, message: "فایل و ساختار ارتباطی WBS با موفقیت ثبت گردید." });
   } catch (error) {
     console.error("Error uploading WBS submission:", error);
-    res.status(500).json({ error: "خطا در ثبت ساختار شکست." });
+    res.status(error instanceof WbsSyncError ? error.status : 500).json({ error: error instanceof WbsSyncError ? error.message : "خطا در ثبت ساختار شکست." });
   }
 });
 
 // حذف فایل ساختار شکست یک پروژه (فقط مدیر سیستم)
 app.delete("/api/projects/:id/wbs-file", authenticate, requireManager, async (req: any, res) => {
   try {
-    const projectId = parseInt(req.params.id);
-    const project = await prisma.project.findUnique({ where: { id: projectId } });
-    if (!project) {
-      return res.status(404).json({ error: "پروژه یافت نشد." });
-    }
-
-    // حذف فیزیکی فایل از دیسک
-    if (project.wbs_storage_filename) {
-      const filePath = safeResolvePath(wbsDir, project.wbs_storage_filename);
-      if (filePath && fs.existsSync(filePath)) {
-        try { fs.unlinkSync(filePath); } catch (_) {}
-      }
-    }
-
-    // حذف فیزیکی فایل‌های تاریخچه
-    const oldSubs = await prisma.wbsSubmission.findMany({ where: { project_id: projectId } });
-    for (const sub of oldSubs) {
-      if (sub.storage_filename && sub.storage_filename !== project.wbs_storage_filename) {
-        const subPath = safeResolvePath(wbsDir, sub.storage_filename);
-        if (subPath && fs.existsSync(subPath)) {
-          try { fs.unlinkSync(subPath); } catch (_) {}
-        }
-      }
-    }
-
-    // پاک‌سازی ارجاعات در دیتابیس
-    await prisma.$transaction([
-      prisma.project.update({
-        where: { id: projectId },
-        data: {
-          wbs_file_name: null,
-          wbs_storage_filename: null,
-        },
-      }),
-      prisma.wbsSubmission.deleteMany({
-        where: { project_id: projectId },
-      }),
-    ]);
-
+    await deleteWbsFile(prisma, wbsDir, Number(req.params.id));
     res.json({ success: true, message: "فایل ساختار شکست پروژه با موفقیت حذف گردید." });
   } catch (error) {
     console.error("Error deleting WBS file:", error);
-    res.status(500).json({ error: "خطا در حذف فایل ساختار شکست." });
+    res.status(error instanceof WbsSyncError ? error.status : 500).json({ error: error instanceof WbsSyncError ? error.message : "خطا در حذف فایل ساختار شکست." });
   }
 });
 
@@ -4937,6 +4975,7 @@ ${projectsDataForPrompt}`;
 // 13. Frontend Serving & Global Error Handler
 // -----------------------------
 async function startServer() {
+  if (!await schemaReady) throw new Error("Database schema initialization failed; refusing to serve inconsistent data.");
   if (config.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -4963,6 +5002,10 @@ async function startServer() {
 
   const server = app.listen(config.PORT, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${config.PORT} [${config.NODE_ENV}]`);
+    // Backfill every existing reference (including inactive projects), without blocking health checks.
+    backfillWbsGraphs(prisma, wbsDir).then(result => {
+      console.log("WBS graph backfill:", JSON.stringify(result));
+    }).catch(error => console.error("WBS graph backfill unavailable; retry on next restart:", error));
   });
 
   // خاموش شدن ایمن سرور (Graceful Shutdown)
@@ -4985,4 +5028,4 @@ async function startServer() {
   process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
-startServer();
+startServer().catch(error => { console.error("Server startup failed:", error); process.exit(1); });

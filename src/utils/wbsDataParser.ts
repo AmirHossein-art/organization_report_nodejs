@@ -18,6 +18,8 @@ export interface WbsTask {
   note: string;
   phase?: string;
   kpi?: string;
+  parent_code?: string;
+  attributes?: Record<string, string>;
 }
 
 export interface WbsKpi {
@@ -72,12 +74,16 @@ function pick(row: Record<string, any>, keys: string[]): string {
  * پارسر فوق‌هوشمند و داینامیک فایل‌های ساختار شکست کار (WBS):
  * پشتیبانی از فایل‌های چندشیتی (تمپلیت استاندارد PMBOK) و تک‌شیتی (فایل‌های جامع سازمانی ترافیک)
  */
-export function parseWbsWorkbook(filePath: string): ParsedWbsData {
-  if (!fs.existsSync(filePath)) {
-    throw new Error(`فایل اکسل WBS در مسیر یافت نشد: ${filePath}`);
+export function parseWbsWorkbook(filePathOrBuffer: string | Buffer): ParsedWbsData {
+  let workbook: XLSX.WorkBook;
+  if (Buffer.isBuffer(filePathOrBuffer)) {
+    workbook = XLSX.read(filePathOrBuffer, { type: "buffer" });
+  } else {
+    if (!fs.existsSync(filePathOrBuffer)) {
+      throw new Error(`فایل اکسل WBS در مسیر یافت نشد: ${filePathOrBuffer}`);
+    }
+    workbook = XLSX.readFile(filePathOrBuffer);
   }
-
-  const workbook = XLSX.readFile(filePath);
   const sheetNames = workbook.SheetNames;
 
   let projectTitle = "پروژه";
@@ -122,7 +128,7 @@ export function parseWbsWorkbook(filePath: string): ParsedWbsData {
     }
 
     // ب) واژه‌نامه WBS Dictionary در صورت وجود
-    const dictMap = new Map<string, { deliverables: string; owner: string; prerequisite: string; note: string; duration: string }>();
+    const dictMap = new Map<string, { deliverables: string; owner: string; prerequisite: string; note: string; duration: string; start_date: string; attributes: Record<string,string> }>();
     if (explicitDictSheetName && workbook.Sheets[explicitDictSheetName]) {
       const dSheet = workbook.Sheets[explicitDictSheetName];
       const dRows = XLSX.utils.sheet_to_json(dSheet, { defval: "" }) as Record<string, any>[];
@@ -133,8 +139,10 @@ export function parseWbsWorkbook(filePath: string): ParsedWbsData {
             deliverables: pick(row, ["نتایج و اقلام تحویل‌دادنی", "نتایج بسته‌های کاری", "خروجی", "تحویل‌دادنی"]),
             owner: pick(row, ["مسئول اجرا", "مسئول", "واحد متولی"]),
             prerequisite: pick(row, ["پیش‌نیازها", "پیش‌نیاز", "پیش نیاز"]),
-            note: pick(row, ["ملاحظات", "توضیحات", "معیار پذیرش"]),
+            note: pick(row, ["ملاحظات", "توضیحات"]),
             duration: pick(row, ["مدت تخمینی", "مدت (روز کاری)", "مدت"]),
+            start_date: pick(row, ["تاریخ شروع پیشنهادی", "تاریخ شروع"]),
+            attributes: Object.fromEntries(Object.entries(row).map(([key,value]) => [key,cellToString(value)])),
           });
         }
       }
@@ -162,11 +170,14 @@ export function parseWbsWorkbook(filePath: string): ParsedWbsData {
           dictItem?.deliverables ||
           pick(row, ["نتایج بسته های کاری", "نتایج بسته‌های کاری", "خروجی", "تحویل‌دادنی", "نتایج"]),
         owner: dictItem?.owner || pick(row, ["مسئول", "مسئول اجرا", "واحد متولی"]),
-        start_date: pick(row, ["تارخ شروع", "تاریخ شروع", "شروع"]),
+        start_date: dictItem?.start_date || pick(row, ["تارخ شروع", "تاریخ شروع", "شروع"]),
         duration: dictItem?.duration || pick(row, ["مدت (روز کاری)", "مدت روز کاری", "مدت (روز)", "مدت"]),
         prerequisite: dictItem?.prerequisite || pick(row, ["پیش نیاز", "پیش‌نیاز"]),
         note: dictItem?.note || pick(row, ["توضیح", "توضیحات", "ملاحظات"]),
         phase: pick(row, ["عنوان سطح / فاز", "فاز", "عنوان فاز"]),
+        kpi: pick(row, ["شاخص", "KPI"]),
+        parent_code: Object.keys(row).some(key=>key.includes("کد والد")) ? pick(row,["کد والد"]) : undefined,
+        attributes: {...Object.fromEntries(Object.entries(row).map(([key,value])=>[key,cellToString(value)])),...dictItem?.attributes},
       });
     }
 
@@ -356,6 +367,20 @@ export function parseWbsWorkbook(filePath: string): ParsedWbsData {
       const startIdx = findColIdx(["شروع (شمسی)", "تاریخ شروع", "شروع"]);
       const phaseIdx = findColIdx(["عنوان فاز", "نام فاز", "فاز", "شماره فاز"]);
       const noteIdx = findColIdx(["ملاحظات", "توضیحات", "توضیح"]);
+      const parentIdx = findColIdx([
+        "کد والد",
+        "والد",
+        "شناسه والد",
+        "parent_code",
+        "parent",
+      ]);
+      const prereqIdx = findColIdx([
+        "پیش‌نیازها",
+        "پیش‌نیاز",
+        "پیش نیازها",
+        "پیش نیاز",
+        "prerequisite",
+      ]);
 
       const seenKpis = new Set<string>();
 
@@ -378,6 +403,16 @@ export function parseWbsWorkbook(filePath: string): ParsedWbsData {
         const startDate = startIdx !== -1 ? cellToString(row[startIdx]) : "";
         const phase = phaseIdx !== -1 ? cellToString(row[phaseIdx]) : "";
         const note = noteIdx !== -1 ? cellToString(row[noteIdx]) : "";
+        const parentCodeRaw = parentIdx !== -1 ? cellToString(row[parentIdx]) : "";
+        const prerequisite = prereqIdx !== -1 ? cellToString(row[prereqIdx]) : "";
+
+        const rowAttributes: Record<string, string> = {};
+        for (let c = 0; c < activityHeaders.length; c++) {
+          const colName = activityHeaders[c]?.trim();
+          if (colName) {
+            rowAttributes[colName] = cellToString(row[c]);
+          }
+        }
 
         // جداسازی هوشمند مدت زمان از نام مسئول در صورت ادغام در یک سلول
         if (duration.includes("ستون") || duration.includes("مسئول") || !duration) {
@@ -400,10 +435,12 @@ export function parseWbsWorkbook(filePath: string): ParsedWbsData {
           owner,
           start_date: startDate,
           duration,
-          prerequisite: "",
+          prerequisite,
           note,
           phase,
           kpi,
+          parent_code: parentCodeRaw || undefined,
+          attributes: rowAttributes,
         });
 
         if (kpi && kpi !== "-" && kpi !== "_" && !seenKpis.has(kpi)) {

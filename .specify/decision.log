@@ -228,7 +228,11 @@
   4. **Executive A4 PDF Export:** Seamlessly hydrate assigned composite metrics into Section 3 of `ReportsPdfDocument.tsx` with period-matched values and distinct `ترکیبی` badges in `KpiMatrixTable.tsx`.
 - **Rationale:** Connects high-level composite metrics to concrete organizational projects, giving managers visibility into macro indicators in project audits and official executive PDF exports.
 
-
-
-
-
+### D36 — Transactional WBS Graph Sync & Existing-File Backfill
+- **Context:** Production already contains seven WBS files while the new graph schema has not yet been deployed. New uploads alone would leave old documents disconnected.
+- **Decision:** Build validated entity arrays with explicit-parent precedence and source provenance; atomically upsert WbsNode, Project metadata and WbsSubmission under a per-project PostgreSQL transaction advisory lock. Await schema readiness before HTTP serving and backfill current WBS references after startup, with isolated failures and a dry-run/apply CLI.
+- **History:** Preserve IDs for unchanged codes, archive removed nodes with `attributes.active=false`, retain previous workbook revisions, and reject full deletion with 409 when report/KPI/action links exist. Database rollback removes only the failed new upload; disk operations are not part of the PostgreSQL transaction.
+- **Alternatives:** Delete-and-reinsert loses linked IDs; fuzzy KPI/activity matching invents unsupported semantics; processing only future uploads misses existing projects; aborting all imports on a bad workbook blocks unrelated projects.
+- **Verification:** Isolated local DB `org_report_wbs_test_20261012`, restored from Railway snapshot: five valid graphs / 170 nodes; reimport preserves IDs and parents; transactional replacement/rollback/archive/guarded deletion tested. Typecheck and build passed. Independent review and production deployment remain pending.
+- **Source defects:** Project 4 is header-only; project 53 has conflicting duplicate codes. User explicitly owns repairs; leave files unchanged, report failure and retry after correction. This does not block infrastructure delivery.
+- **Trade-offs:** Excel parsing remains in-process, not a durable background queue. Keeping workbook revisions consumes volume storage. Current graph consumers must filter archived nodes. Separate Deliverable entities, formal prerequisite edges, approved KPI mappings and graph-grounded AI remain later phases.

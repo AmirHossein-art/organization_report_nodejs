@@ -78,6 +78,7 @@ model Project {
   nextActions  NextAction[]
   wbsSubmissions WbsSubmission[]
   compositeKpis CompositeKpi[]
+  wbsNodes     WbsNode[]
 }
 
 // ۳. جدول دوره‌های گزارش‌دهی
@@ -153,6 +154,7 @@ model Report {
   nextActions     NextAction[]     @relation("ReportNextActions")
   achievedActions NextAction[]     @relation("ReportAchievedActions")
   kpiValues       ReportKpiValue[]
+  wbsLinks        ReportWbsLink[]
 
   @@unique([project_id, period_id], name: "one_report_per_project_period")
 }
@@ -184,16 +186,20 @@ model NextAction {
   cancelled_by_user_name  String?
   canelled_period_id      Int?  
 
+  wbs_node_id             Int?
+
   report         Report?  @relation("ReportNextActions", fields: [report_id], references: [id], onDelete: Cascade)
   claimedReport  Report?  @relation("ReportAchievedActions", fields: [claimed_report_id], references: [id], onDelete: SetNull)
   project        Project? @relation(fields: [project_id], references: [id], onDelete: Cascade)
   user           User?    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  wbsNode        WbsNode? @relation(fields: [wbs_node_id], references: [id], onDelete: SetNull)
 
   @@index([project_id])
   @@index([user_id])
   @@index([report_id])
   @@index([claimed_report_id])
   @@index([is_cancelled])
+  @@index([wbs_node_id])
 }
 
 model ProjectKpi {
@@ -214,6 +220,7 @@ model ProjectKpi {
   project Project          @relation(fields: [project_id], references: [id], onDelete: Cascade)
   values  ReportKpiValue[]
   compositeItems CompositeKpiItem[]
+  wbsLinks KpiWbsLink[]
 
   @@index([project_id, is_active])
 }
@@ -311,4 +318,79 @@ model WbsSubmission {
   user    User    @relation(fields: [uploaded_by], references: [id], onDelete: Cascade)
 
   @@index([project_id])
+}
+
+// ۱۰. جدول گره‌های سلسله‌مراتبی ساختار شکست کار (Strategic WBS Nodes)
+model WbsNode {
+  id               Int      @id @default(autoincrement())
+  project_id       Int
+  parent_id        Int?
+  code             String   // e.g. "1", "1.1", "1.1.2"
+  title            String
+  level            Int      @default(1)
+  node_type        String   @default("work_package") // phase | work_package | deliverable
+  deliverable_text String?  @db.Text
+  responsible      String?
+  duration         String?
+  start_date       String?
+  prerequisite     String?
+  notes            String?  @db.Text
+  attributes       Json?    // NoSQL Hybrid JSONB (فرهنگ لغات، معیارهای پذیرش و متادیتای منعطف)
+  sort_order       Int      @default(0)
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+
+  project          Project  @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  parent           WbsNode? @relation("WbsHierarchy", fields: [parent_id], references: [id], onDelete: Cascade)
+  children         WbsNode[] @relation("WbsHierarchy")
+  kpiLinks         KpiWbsLink[]
+  nextActions      NextAction[]
+  reportLinks      ReportWbsLink[]
+
+  @@unique([project_id, code])
+  @@index([project_id])
+  @@index([parent_id])
+  @@index([code])
+}
+
+// ۱۱. جدول واسط پیوند شاخص‌های عملکرد با بسته‌های کاری WBS
+model KpiWbsLink {
+  id             Int        @id @default(autoincrement())
+  project_kpi_id Int
+  wbs_node_id    Int
+  created_at     DateTime   @default(now())
+
+  kpi            ProjectKpi @relation(fields: [project_kpi_id], references: [id], onDelete: Cascade)
+  wbsNode        WbsNode    @relation(fields: [wbs_node_id], references: [id], onDelete: Cascade)
+
+  @@unique([project_kpi_id, wbs_node_id])
+  @@index([project_kpi_id])
+  @@index([wbs_node_id])
+}
+
+// ۱۲. جدول واسط پیوند فعالیت‌های گزارش دوره‌ای با بسته‌های کاری WBS
+model ReportWbsLink {
+  id          Int      @id @default(autoincrement())
+  report_id   Int
+  wbs_node_id Int
+  notes       String?  @db.Text
+  created_at  DateTime @default(now())
+
+  report      Report   @relation(fields: [report_id], references: [id], onDelete: Cascade)
+  wbsNode     WbsNode  @relation(fields: [wbs_node_id], references: [id], onDelete: Cascade)
+
+  @@unique([report_id, wbs_node_id])
+  @@index([report_id])
+  @@index([wbs_node_id])
+}
+
+// ۱۳. جدول کش ماندگار تحلیل‌های استراتژیک هوش مصنوعی در PostgreSQL (NoSQL JSONB Cache)
+model AiAnalysisCache {
+  id          Int      @id @default(autoincrement())
+  cache_key   String   @unique
+  data        Json
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  @@index([cache_key])
 }

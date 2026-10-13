@@ -105,7 +105,11 @@ To execute this large-scale strategic transformation cleanly without context fra
    - Implement self-healing database migrations in `server.ts` startup.
 2. **Sub-Agent 2 — Ingestion & Graph Builder (Parsing & Normalization Engine)**:
    - Enhance `wbsDataParser.ts` to persist extracted WBS nodes into relational database entities alongside Excel disk storage.
-   - Map existing `ProjectKpi` and `NextAction` records to corresponding WBS codes automatically.
+   - Preserve existing `ProjectKpi`, `ReportWbsLink` and `NextAction` references across WBS replacements; do not invent new links from names or free-text prerequisites. Explicit entity-ID mapping is later work.
+   - Automatically import valid pre-existing project WBS files, including those already stored in Railway volumes. Per-project validation failures must leave source files and prior graph unchanged and must not block other projects.
+   - Preserve explicit source parent codes and dictionary metadata, reject conflicting duplicate codes/cycles, and retain source provenance.
+   - Removed codes are archived to preserve history; linked WBS cannot be physically deleted. New uploads and metadata/node writes must have rollback/cleanup coverage.
+   - Projects 4 and 53 have known invalid source files and are deferred to user correction; no automatic source rewriting is authorized.
 3. **Sub-Agent 3 — AI Strategic Graph Reasoning Agent (Cognitive Layer)**:
    - Refactor AI prompt pipelines (`analyze-single`, `analyze-deputy`, `strategic-analysis`) to feed structured graph sub-trees rather than flattened text dumps.
    - Implement Chain-of-Thought validation for impact analysis, delay propagation, and strategic score calculation.
