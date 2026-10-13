@@ -14,6 +14,7 @@ import {
   Target, 
   Cpu, 
   Search,
+  Lightbulb,
   User as UserIcon,
   Calendar,
   CheckSquare,
@@ -76,14 +77,43 @@ interface MyReportsProps {
 
 interface SingleReportAuditResult {
   executive_summary: string;
-  kpis_evaluation: Array<{
+  wbs_structural_audit?: {
+    missing_wbs_activities?: string[];
+    hierarchy_recommendations?: string[];
+    alignment_analysis?: string;
+  };
+  kpi_strategic_audit?: {
+    missing_kpis_recommendations?: Array<{
+      name: string;
+      unit: string;
+      reason: string;
+    }>;
+    blind_spots?: string[];
+    kpis_evaluation?: Array<{
+      kpi_name: string;
+      previous_value: string;
+      current_value: string;
+      has_kpi?: boolean;
+    }>;
+  };
+  next_actions_audit?: {
+    are_actions_deliverable_oriented?: boolean;
+    orientation_analysis?: string;
+    recommended_next_actions?: Array<{
+      action: string;
+      deadline: string;
+      wbs_code?: string;
+      reasoning?: string;
+    }>;
+  };
+  kpis_evaluation?: Array<{
     kpi_name: string;
     previous_value: string;
     current_value: string;
     has_kpi: boolean;
   }>;
   recommendations: string[];
-  future_actions_with_deadlines: Array<{
+  future_actions_with_deadlines?: Array<{
     action: string;
     deadline: string;
   }>;
@@ -92,7 +122,7 @@ interface SingleReportAuditResult {
     is_duplicate_risk: boolean;
     analysis_details: string;
   };
-  strategic_alignment: {
+  strategic_alignment?: {
     is_aligned: boolean;
     value_creation: string;
     wbs_matching_task: string;
@@ -509,11 +539,49 @@ function SingleReportAuditModal({
                   </span>
                 </div>
                 <p className="text-xs text-slate-700 leading-relaxed">
-                  {auditData.strategic_alignment?.alignment_analysis}
+                  {auditData.strategic_alignment?.alignment_analysis || auditData.wbs_structural_audit?.alignment_analysis}
                 </p>
                 <div className="text-xs bg-emerald-50/50 p-3 rounded-xl text-emerald-900 border border-emerald-100 font-medium">
                   📍 بسته کاری مرتبط: <strong>{auditData.strategic_alignment?.wbs_matching_task || "ثبت نشده"}</strong>
                 </div>
+
+                {/* ممیزی ساختار WBS و کشف فعالیت‌های مفقود */}
+                {auditData.wbs_structural_audit && (
+                  <div className="pt-3 border-t border-slate-100 space-y-3">
+                    {auditData.wbs_structural_audit.missing_wbs_activities && auditData.wbs_structural_audit.missing_wbs_activities.length > 0 && (
+                      <div className="bg-amber-50/70 border border-amber-200/80 p-3.5 rounded-xl space-y-2">
+                        <span className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+                          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                          <span>فعالیت‌های مفقود در WBS (با توجه به اهداف و ذات پروژه):</span>
+                        </span>
+                        <ul className="space-y-1.5 pr-2">
+                          {auditData.wbs_structural_audit.missing_wbs_activities.map((act: string, idx: number) => (
+                            <li key={idx} className="text-xs text-amber-950 flex items-start gap-1.5 leading-relaxed">
+                              <span className="text-amber-600 font-bold">•</span>
+                              <span>{act}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {auditData.wbs_structural_audit.hierarchy_recommendations && auditData.wbs_structural_audit.hierarchy_recommendations.length > 0 && (
+                      <div className="bg-slate-50 border border-slate-200/80 p-3 rounded-xl space-y-1.5">
+                        <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                          <Lightbulb className="w-4 h-4 text-indigo-600 shrink-0" />
+                          <span>پیشنهادات اصلاح سطح و سلسله‌مراتب WBS:</span>
+                        </span>
+                        <ul className="space-y-1 pr-2">
+                          {auditData.wbs_structural_audit.hierarchy_recommendations.map((rec: string, idx: number) => (
+                            <li key={idx} className="text-xs text-slate-600 leading-relaxed">
+                              • {rec}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* ۳. خلاصه مدیریتی */}
@@ -555,9 +623,52 @@ function SingleReportAuditModal({
                     </tbody>
                   </table>
                 </div>
+
+                {/* شاخص‌های پیشنهادی جدید و نقاط کور پایش */}
+                {auditData.kpi_strategic_audit && (
+                  <div className="pt-3 border-t border-slate-100 space-y-3">
+                    {auditData.kpi_strategic_audit.missing_kpis_recommendations && auditData.kpi_strategic_audit.missing_kpis_recommendations.length > 0 && (
+                      <div className="bg-blue-50/70 border border-blue-200/80 p-3.5 rounded-xl space-y-2">
+                        <span className="text-xs font-bold text-blue-950 flex items-center gap-1.5">
+                          <Target className="w-4 h-4 text-blue-700 shrink-0" />
+                          <span>شاخص‌های پیشنهادی هوش مصنوعی (متناسب با ذات و هدف پروژه):</span>
+                        </span>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-1">
+                          {auditData.kpi_strategic_audit.missing_kpis_recommendations.map((mk: any, idx: number) => (
+                            <div key={idx} className="bg-white p-2.5 rounded-lg border border-blue-100 shadow-2xs space-y-1 text-xs">
+                              <div className="flex items-center justify-between font-bold text-blue-900">
+                                <span>{mk.name}</span>
+                                <span className="bg-blue-100 text-blue-800 text-[10px] px-1.5 py-0.5 rounded">{mk.unit}</span>
+                              </div>
+                              {mk.reason && (
+                                <p className="text-[11px] text-slate-600 leading-relaxed">{mk.reason}</p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {auditData.kpi_strategic_audit.blind_spots && auditData.kpi_strategic_audit.blind_spots.length > 0 && (
+                      <div className="bg-rose-50/70 border border-rose-200/80 p-3 rounded-xl space-y-1.5">
+                        <span className="text-xs font-bold text-rose-950 flex items-center gap-1.5">
+                          <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                          <span>نقاط کور پایش (اقلام تحویل‌دادنی WBS فاقد شاخص عملکرد):</span>
+                        </span>
+                        <ul className="space-y-1 pr-2">
+                          {auditData.kpi_strategic_audit.blind_spots.map((bs: string, idx: number) => (
+                            <li key={idx} className="text-xs text-rose-900 leading-relaxed">
+                              ⚠️ {bs}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
-              {/* ۵. ددلاین‌ها */}
+              {/* ۵. ددلاین‌ها و ممیزی خروجی‌محور بودن اقدامات */}
               <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-3">
                 <h4 className="font-extrabold text-slate-900 text-sm flex items-center gap-2 border-b border-slate-100 pb-3">
                   <Clock className="w-5 h-5 text-amber-600" />
@@ -573,6 +684,59 @@ function SingleReportAuditModal({
                     </div>
                   ))}
                 </div>
+
+                {/* ممیزی خروجی‌محور بودن اقدامات و پیشنهادات AI */}
+                {auditData.next_actions_audit && (
+                  <div className="pt-3 border-t border-slate-100 space-y-3">
+                    <div className="flex items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-200/70 text-xs">
+                      <span className="font-bold text-slate-800">وضعیت خروجی‌محور بودن اقدامات:</span>
+                      <span className={`px-2.5 py-0.5 rounded-full font-bold text-[11px] ${
+                        auditData.next_actions_audit.are_actions_deliverable_oriented
+                          ? "bg-emerald-100 text-emerald-800 border border-emerald-300"
+                          : "bg-rose-100 text-rose-800 border border-rose-300"
+                      }`}>
+                        {auditData.next_actions_audit.are_actions_deliverable_oriented ? "✓ خروجی‌محور (Deliverable-Oriented)" : "⚠️ اقدامات روتین / نیازمند اصلاح"}
+                      </span>
+                    </div>
+
+                    {auditData.next_actions_audit.orientation_analysis && (
+                      <p className="text-xs text-slate-600 leading-relaxed px-1">
+                        {auditData.next_actions_audit.orientation_analysis}
+                      </p>
+                    )}
+
+                    {auditData.next_actions_audit.recommended_next_actions && auditData.next_actions_audit.recommended_next_actions.length > 0 && (
+                      <div className="bg-emerald-50/70 border border-emerald-200/80 p-3.5 rounded-xl space-y-2">
+                        <span className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                          <span>اقدامات آتی پیشنهادی هوش مصنوعی (بر اساس تاخیرها، WBS و عملکرد):</span>
+                        </span>
+                        <div className="space-y-2 pt-1">
+                          {auditData.next_actions_audit.recommended_next_actions.map((ra: any, idx: number) => (
+                            <div key={idx} className="bg-white p-3 rounded-xl border border-emerald-200/70 shadow-2xs space-y-1.5 text-xs">
+                              <div className="flex items-start justify-between gap-2">
+                                <span className="font-bold text-slate-900 leading-relaxed">{ra.action}</span>
+                                <span className="bg-emerald-100 text-emerald-900 px-2 py-0.5 rounded-md font-mono font-bold text-[11px] shrink-0">
+                                  📅 {ensureShamsiDate(ra.deadline)}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-3 text-[11px] text-slate-500">
+                                {ra.wbs_code && (
+                                  <span className="bg-slate-100 text-slate-700 px-1.5 py-0.2 rounded font-medium">
+                                    بسته WBS: {toPersianDigits(ra.wbs_code)}
+                                  </span>
+                                )}
+                                {ra.reasoning && (
+                                  <span className="text-slate-600">{ra.reasoning}</span>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* ۶. پیشنهادات AI */}

@@ -4495,6 +4495,119 @@ function formatKpiValuesForPrompt(kpiValues: any[] | undefined): string {
     .join("\n");
 }
 
+/**
+ * ساخت کانتکست ساختاریافته و جامع گراف پروژه جهت تزریق به پرامپت‌های استنتاج هوش مصنوعی
+ * شامل: شناسنامه و ذات پروژه + گره‌های WBS و تحویل‌دادنی‌ها + شاخص‌های مصوب + اقدامات باز
+ */
+async function buildProjectGraphPromptContext(projectId: number): Promise<string> {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+  });
+  if (!project) return "پروژه در دیتابیس یافت نشد.";
+
+  // ۱. گره‌های فعال ساختار شکست کار (WBS) از جدول PostgreSQL
+  const wbsNodes = await prisma.wbsNode.findMany({
+    where: { project_id: projectId },
+    include: {
+      kpiLinks: { include: { kpi: true } },
+    },
+    orderBy: [{ sort_order: "asc" }, { code: "asc" }],
+  });
+
+  const activeNodes = wbsNodes.filter((n) => {
+    const attrs = n.attributes as any;
+    return !attrs || attrs.active !== false;
+  });
+
+  let wbsSection = "";
+  if (activeNodes.length > 0) {
+    wbsSection = activeNodes
+      .map((n) => {
+        const deliv = n.deliverable_text ? ` [خروجی/تحویل‌دادنی: ${n.deliverable_text}]` : "";
+        const resp = n.responsible ? ` [مسئول: ${n.responsible}]` : "";
+        const dur = n.duration ? ` [مدت: ${n.duration}]` : "";
+        const prereq = n.prerequisite ? ` [پیش‌نیاز: ${n.prerequisite}]` : "";
+        const linkedKpis = n.kpiLinks.length > 0
+          ? ` [شاخص‌های متصل: ${n.kpiLinks.map((l: any) => l.kpi.name).join(", ")}]`
+          : " [بدون شاخص متصل]";
+        return `  - کد ${n.code} (سطح ${n.level}): ${n.title}${deliv}${resp}${dur}${prereq}${linkedKpis}`;
+      })
+      .join("\n");
+  } else {
+    const wbsPath = resolveProjectWbsFilePath(project);
+    if (wbsPath) {
+      try {
+        const parsed = parseExcelWBS(wbsPath);
+        wbsSection = parsed.formattedPromptText;
+      } catch (e: any) {
+        wbsSection = "خطا در خواندن فایل اکسل WBS.";
+      }
+    } else {
+      wbsSection = "سند مرجع WBS برای این پروژه در سامانه ثبت نشده است.";
+    }
+  }
+
+  // ۲. شاخص‌های مصوب و فعال پروژه
+  const projectKpis = await prisma.projectKpi.findMany({
+    where: { project_id: projectId, is_active: true },
+    orderBy: { sort_order: "asc" },
+  });
+
+  let kpiSection = "";
+  if (projectKpis.length > 0) {
+    kpiSection = projectKpis
+      .map((k, idx) => {
+        const targetStr = k.target_value !== null && k.target_value !== undefined
+          ? ` [هدف: ${k.target_direction === "minimum" ? "حداقل" : "حداکثر"} ${k.target_value}]`
+          : "";
+        const baseStr = k.baseline_value !== null && k.baseline_value !== undefined ? ` [مبنا: ${k.baseline_value}]` : "";
+        return `  ${idx + 1}. ${k.name} (واحد: ${k.unit})${baseStr}${targetStr}`;
+      })
+      .join("\n");
+  } else {
+    kpiSection = "هیچ شاخص مصوبی برای این پروژه در سامانه تعریف نشده است.";
+  }
+
+  // ۳. اقدامات و تعهدات باز و فعال پروژه
+  const openActions = await prisma.nextAction.findMany({
+    where: { project_id: projectId, is_completed: false, is_cancelled: false },
+    include: {
+      user: { select: { full_name: true } },
+      wbsNode: { select: { code: true, title: true } },
+    },
+    orderBy: { target_date: "asc" },
+  });
+
+  let actionsSection = "";
+  if (openActions.length > 0) {
+    actionsSection = openActions
+      .map((a, idx) => {
+        const dDate = a.target_date ? ensureShamsiDate(a.target_date) : "تعیین‌نشده";
+        const wbsRef = a.wbsNode?.code ? ` [متصل به WBS ${a.wbsNode.code}: ${a.wbsNode.title}]` : " [اقدام آزاد / بدون بسته WBS]";
+        const uRef = a.user?.full_name ? ` (مسئول: ${a.user.full_name})` : "";
+        return `  ${idx + 1}. ${a.action_text} (موعد سررسید: ${dDate})${wbsRef}${uRef}`;
+      })
+      .join("\n");
+  } else {
+    actionsSection = "اقدام آتی بازی در حال حاضر برای این پروژه ثبت نشده است.";
+  }
+
+  return `🏢 **شناسنامه، اهداف کلان و ذات راهبردی پروژه:**
+- عنوان مصوب پروژه: ${project.title}
+- کد پروژه: ${project.code}
+- نوع چرخه گزارش‌دهی: ${project.project_type === "monthly" ? "ماهانه" : "هفتگی"}
+- اهداف و شرح تفصیلی پروژه: ${project.description || "شرح تفصیلی در شناسنامه ثبت نشده است."}
+
+🌲 **ساختار شکست کار مرجع (WBS Nodes, Deliverables & Tasks):**
+${wbsSection}
+
+🎯 **شاخص‌های کلیدی عملکرد مصوب در سامانه (Approved KPIs):**
+${kpiSection}
+
+📋 **اقدامات و تعهدات آتی باز ثبت‌شده در پروژه:**
+${actionsSection}`;
+}
+
 // اندپوینت تحلیل استراتژیک کلان دوره (مدیریتی)
 app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, requireManager, aiLimiter, async (req, res) => {
   try {
@@ -4765,41 +4878,76 @@ app.post("/api/reports/analyze-single", authenticate, aiLimiter, async (req: any
 شاخص‌ها:\n${formatPreviousKpi(r)}`).join("\n\n")
       : "هیچ گزارش قبلی برای این کاربر ثبت نشده است (اولین گزارش کاربر).";
 
-    let wbsContextText = "سند WBS اکسل برای این پروژه بارگذاری نشده است.";
-    const wbsFilePath = resolveProjectWbsFilePath(currentReport.project);
-    if (wbsFilePath) {
-      try {
-        const parsed = parseExcelWBS(wbsFilePath);
-        wbsContextText = parsed.formattedPromptText;
-      } catch (e: any) {
-        console.warn("خطا در خواندن فایل اکسل WBS:", e.message);
-      }
-    }
+    const projectGraphContext = await buildProjectGraphPromptContext(currentReport.project_id);
 
-    const systemPrompt = `شما یک ارزیاب و ممیز ارشد مدیریت استراتژیک، کنترل پروژه و ترافیک شهری هستید.
-وظیفه شما ارزیابی دقیق "یک گزارش عملکرد" در برابر "سند استراتژیک و WBS مرجع پروژه" و "سابقه گزارش‌های قبلی کاربر" است.
-پاسخ شما باید حتماً و فقط یک جی‌سون (JSON) معتبر با کلید ریشه "analysis" باشد. ساختار مورد انتظار:
+    const systemPrompt = `شما یک ارزیاب و ممیز ارشد مدیریت استراتژیک، کنترل پروژه (استاندارد PMBOK) و ترافیک شهری هستید.
+وظیفه شما ارزیابی داده‌محور و استنتاجی "یک گزارش عملکرد دوره‌ای" بر روی شبکه ۳ ستون اصلی پروژه است:
+ستون ۱: ساختار شکست کار (WBS) در برابر اهداف کلان و ذات پروژه
+ستون ۲: شاخص‌های کلیدی عملکرد (KPIs) در برابر تحویل‌دادنی‌های WBS
+ستون ۳: اقدامات آتی در برابر خروجی‌محور بودن و پیشبرد پروژه
+
+مأموریت‌های ممیزی شما:
+۱. ممیزی ساختار WBS: با توجه به عنوان، ذات و هدف کلان پروژه بررسی کنید:
+   - آیا جای فعالیت یا بسته کاری مهمی در WBS خالی است که باید به آن اضافه شود؟ (missing_wbs_activities)
+   - آیا فعالیت یا سطحی نیاز به جابجایی یا قرارگیری به عنوان زیرشاخه سطح مشخصی دارد تا پروژه اصولی‌تر پیش برود؟ (hierarchy_recommendations)
+   - تحلیل انطباق فعالیت‌های انجام‌شده در این گزارش با بسته‌های مصوب WBS چیست؟
+۲. ممیزی شاخص‌های کلیدی عملکرد (KPIs):
+   - با توجه به هدف و ذات پروژه، چه KPIهای جدیدی کم است و باید به پروژه اضافه شود؟ (missing_kpis_recommendations با ذکر نام، واحد و علت)
+   - نقاط کور پایش (blind_spots): اقلام تحویل‌دادنی WBS که هیچ شاخصی ضامن سنجش کیفیت آن‌ها نیست.
+   - ارزیابی مقادیر شاخص‌های فعلی.
+۳. ممیزی اقدامات آتی (Next Actions Audit):
+   - بررسی دقیق اینکه آیا اقدامات آتی کارشناس واقعاً خروجی‌محور (Deliverable-driven) هستند و اقلام WBS را محقق می‌کنند یا کارهای روتین و اداری بی‌اثر می‌باشند؟ (are_actions_deliverable_oriented و orientation_analysis)
+   - پیشنهاد اقدامات آتی هوشمند و مشخص متناسب با تاخیرها، WBS و عملکرد تا الان (recommended_next_actions با موعدهای حتماً هجری شمسی).
+۴. سنجش اصالت و شباهت‌سنجی با گزارش‌های قبلی (repetitiveness_assessment).
+۵. خلاصه مدیریتی فشرده اقدامات انجام‌شده (executive_summary).
+
+پاسخ شما باید حتماً و فقط یک جی‌سون (JSON) معتبر با کلید ریشه "analysis" باشد بدون هیچ کلمه یا Markdown اضافی.
+ساختار مورد انتظار:
 {
   "analysis": {
     "executive_summary": "خلاصه مدیریتی پروژه با محوریت مهم‌ترین اقدامات انجام‌شده در این گزارش...",
-    "kpis_evaluation": [
-      {
-        "kpi_name": "نام شاخص ذکر شده",
-        "previous_value": "مقدار سابقه قبلی یا 'ثبت نشده در سابقه'",
-        "current_value": "مقدار فعلی یا 'فاقد شاخص'",
-        "has_kpi": true
-      }
-    ],
-    "recommendations": [
-      "پیشنهاد و اقدام کارآمد ۱...",
-      "پیشنهاد ۲..."
-    ],
-    "future_actions_with_deadlines": [
-      {
-        "action": "شرح اقدام آتی",
-        "deadline": "تاریخ هدف حتماً به هجری شمسی (مثلاً ۱۴۰۵/۰۶/۲۰) یا 'تعیین‌نشده'"
-      }
-    ],
+    "wbs_structural_audit": {
+      "missing_wbs_activities": [
+        "شرح بسته کاری یا فعالیت مفقود ۱ که جای آن با توجه به هدف و ذات پروژه در WBS خالی است",
+        "فعالیت مفقود ۲"
+      ],
+      "hierarchy_recommendations": [
+        "پیشنهاد جابجایی یا زیرشاخه شدن فلان فعالیت برای انضباط سلسله‌مراتبی پروژه"
+      ],
+      "alignment_analysis": "بررسی تطابق استراتژیک فعالیت‌های این گزارش با کدهای WBS"
+    },
+    "kpi_strategic_audit": {
+      "missing_kpis_recommendations": [
+        {
+          "name": "عنوان شاخص پیشنهادی جدید متناسب با ذات پروژه",
+          "unit": "واحد سنجش",
+          "reason": "چرا تعریف این شاخص برای این پروژه ضروری است"
+        }
+      ],
+      "blind_spots": [
+        "قلم تحویل‌دادنی در WBS که در حال حاضر هیچ شاخصی برای سنجش آن تعریف نشده است"
+      ],
+      "kpis_evaluation": [
+        {
+          "kpi_name": "نام شاخص ذکر شده",
+          "previous_value": "مقدار سابقه قبلی یا 'ثبت نشده در سابقه'",
+          "current_value": "مقدار فعلی یا 'فاقد شاخص'",
+          "has_kpi": true
+        }
+      ]
+    },
+    "next_actions_audit": {
+      "are_actions_deliverable_oriented": true,
+      "orientation_analysis": "تحلیل ممیزی خروجی‌محور بودن اقدامات آتی اعلام‌شده در برابر امور روتین اداری",
+      "recommended_next_actions": [
+        {
+          "action": "شرح اقدام آتی پیشنهادی مشخص",
+          "deadline": "تاریخ هدف حتماً به تقویم شمسی (مثلاً ۱۴۰۵/۰۸/۱۵)",
+          "wbs_code": "کد بسته کاری WBS مرتبط",
+          "reasoning": "چرا این اقدام باید در اولویت قرار گیرد"
+        }
+      ]
+    },
     "repetitiveness_assessment": {
       "similarity_percentage": 15,
       "is_duplicate_risk": false,
@@ -4810,18 +4958,35 @@ app.post("/api/reports/analyze-single", authenticate, aiLimiter, async (req: any
       "value_creation": "عالی / متوسط / ضعیف",
       "wbs_matching_task": "کد یا نام بسته کاری WBS مرتبط",
       "alignment_analysis": "بررسی تطابق استراتژیک فعالیت با هدف پروژه."
-    }
+    },
+    "kpis_evaluation": [
+      {
+        "kpi_name": "نام شاخص ذکر شده",
+        "previous_value": "مقدار سابقه قبلی یا 'ثبت نشده در سابقه'",
+        "current_value": "مقدار فعلی یا 'فاقد شاخص'",
+        "has_kpi": true
+      }
+    ],
+    "future_actions_with_deadlines": [
+      {
+        "action": "شرح اقدام آتی کارشناس",
+        "deadline": "تاریخ هدف به هجری شمسی (مثلاً ۱۴۰۵/۰۸/۱۰) یا 'تعیین‌نشده'"
+      }
+    ],
+    "recommendations": [
+      "پیشنهاد و اقدام کارآمد ۱...",
+      "پیشنهاد ۲..."
+    ]
   }
 }
-نکته مهم: خروجی باید فقط JSON معتبر به زبان فارسی باشد بدون هیچ عبارت اضافه یا Markdown. کلیه تاریخ‌ها و ددلاین‌ها باید الزاماً و بدون استثنا به تقویم هجری شمسی باشند.`;
+نکته مهم: کلیه تاریخ‌ها و ددلاین‌ها باید الزاماً و بدون استثنا به تقویم هجری شمسی باشند.`;
 
     const currentKpiSection = (currentReport.kpiValues && currentReport.kpiValues.length > 0)
       ? `شاخص‌های ساختاریافته:\n${formatKpiValuesForPrompt(currentReport.kpiValues)}`
       : `شاخص‌ها (متن آزاد): ${currentReport.kpi_text || "ثبت نشده"}`;
 
     const userPrompt = `
-🏢 **سند مرجع WBS و اهداف استراتژیک پروژه:**
-${wbsContextText}
+${projectGraphContext}
 
 ---
 📜 **سابقه گزارش‌های قبلی همین کارشناس (جهت بررسی شباهت و کپی‌برداری):**
@@ -4839,11 +5004,19 @@ ${currentKpiSection}
 
     const result: any = await callAiWithFallback(systemPrompt, userPrompt, { forceRefresh: Boolean(force_refresh) });
 
-    if (result && result.analysis && Array.isArray(result.analysis.future_actions_with_deadlines)) {
-      result.analysis.future_actions_with_deadlines = result.analysis.future_actions_with_deadlines.map((act: any) => ({
-        ...act,
-        deadline: act.deadline ? ensureShamsiDate(act.deadline) : "تعیین‌نشده",
-      }));
+    if (result && result.analysis) {
+      if (Array.isArray(result.analysis.future_actions_with_deadlines)) {
+        result.analysis.future_actions_with_deadlines = result.analysis.future_actions_with_deadlines.map((act: any) => ({
+          ...act,
+          deadline: act.deadline ? ensureShamsiDate(act.deadline) : "تعیین‌نشده",
+        }));
+      }
+      if (result.analysis.next_actions_audit && Array.isArray(result.analysis.next_actions_audit.recommended_next_actions)) {
+        result.analysis.next_actions_audit.recommended_next_actions = result.analysis.next_actions_audit.recommended_next_actions.map((act: any) => ({
+          ...act,
+          deadline: act.deadline ? ensureShamsiDate(act.deadline) : "تعیین‌نشده",
+        }));
+      }
     }
 
     res.json(result);
@@ -5116,10 +5289,18 @@ ${projectsDataForPrompt}`;
 
     const shouldForceRefresh = Boolean(force_refresh || (manager_comment && manager_comment.trim()));
     const deputyCacheKey = `deputy-analysis:period:${period_id}:deputy:${resolvedDeputyName || deputy_name || user_id}`;
-    const result = await callAiWithFallback(systemPrompt, userPrompt, {
+    const result: any = await callAiWithFallback(systemPrompt, userPrompt, {
       forceRefresh: shouldForceRefresh,
       cacheKey: deputyCacheKey,
     });
+
+    if (result && result.analysis && Array.isArray(result.analysis.next_period_commitments)) {
+      result.analysis.next_period_commitments = result.analysis.next_period_commitments.map((act: any) => ({
+        ...act,
+        deadline: act.deadline ? ensureShamsiDate(act.deadline) : "تعیین‌نشده",
+      }));
+    }
+
     res.json(result);
   } catch (err: any) {
     console.error("Deputy AI Analysis Error:", err);

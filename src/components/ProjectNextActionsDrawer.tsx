@@ -16,12 +16,15 @@ import {
 } from "lucide-react";
 import { Project, User } from "../types";
 import { ShamsiDatePicker, CustomSelect } from "../components";
+import { toPersianDigits } from "../dateUtils";
 
 export interface NextActionItem {
   id: number;
   report_id?: number | null;
   project_id?: number | null;
   user_id?: number | null;
+  wbs_node_id?: number | null;
+  wbs_node?: { id: number; code: string; title: string; level?: number } | null;
   created_by_role?: "user" | "manager";
   action_text: string;
   target_date: string | null;
@@ -62,13 +65,22 @@ export default function ProjectNextActionsModal({
   const [newActionText, setNewActionText] = useState("");
   const [newTargetDate, setNewTargetDate] = useState("");
   const [newUserId, setNewUserId] = useState<number>(0);
+  const [newWbsNodeId, setNewWbsNodeId] = useState<number>(0);
+  const [wbsNodes, setWbsNodes] = useState<any[]>([]);
   const [projectUsers, setProjectUsers] = useState<User[]>([]);
   const [isSubmittingNew, setIsSubmittingNew] = useState(false);
   const [formError, setFormError] = useState("");
 
-  // واکشی اعضای پروژه برای انتصاب وظیفه
+  // واکشی اعضای پروژه و گره‌های ساختار شکست کار (WBS)
   useEffect(() => {
     if (!isOpen || !project) return;
+
+    // واکشی گره‌های فعال WBS پروژه
+    fetch(`/api/projects/${project.id}/wbs-nodes`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((nodes) => setWbsNodes(Array.isArray(nodes) ? nodes : []))
+      .catch(() => setWbsNodes([]));
+
     fetch("/api/user-projects")
       .then((r) => (r.ok ? r.json() : []))
       .then(async (allocations: any[]) => {
@@ -181,6 +193,7 @@ export default function ProjectNextActionsModal({
         body: JSON.stringify({
           project_id: project.id,
           user_id: newUserId > 0 ? newUserId : null,
+          wbs_node_id: newWbsNodeId > 0 ? newWbsNodeId : null,
           action_text: newActionText.trim(),
           target_date: newTargetDate,
           created_by_role: "manager",
@@ -191,6 +204,7 @@ export default function ProjectNextActionsModal({
         setNewActionText("");
         setNewTargetDate("");
         setNewUserId(0);
+        setNewWbsNodeId(0);
         setShowAddForm(false);
         if (onRefresh) onRefresh();
       } else {
@@ -373,6 +387,26 @@ export default function ProjectNextActionsModal({
                   ]}
                 />
               </div>
+
+              {wbsNodes.length > 0 && (
+                <div className="sm:col-span-12 space-y-1">
+                  <label className="text-[11px] font-bold text-slate-700 block flex items-center gap-1.5">
+                    <FolderGit2 className="w-3.5 h-3.5 text-emerald-700" />
+                    <span>بسته کاری و کد WBS مرتبط (اختیاری)</span>
+                  </label>
+                  <CustomSelect
+                    value={newWbsNodeId}
+                    onChange={(val: string | number) => setNewWbsNodeId(Number(val))}
+                    options={[
+                      { value: 0, label: "— بدون انتساب به WBS (اقدام آزاد پروژه) —" },
+                      ...wbsNodes.map((n) => ({
+                        value: n.id,
+                        label: `[${toPersianDigits(n.code)}] ${n.title}`,
+                      })),
+                    ]}
+                  />
+                </div>
+              )}
             </div>
 
             <div className="flex justify-end gap-2 pt-1">
@@ -425,6 +459,12 @@ export default function ProjectNextActionsModal({
                               <span className="inline-flex items-center gap-1 bg-purple-100 text-purple-800 text-[9px] font-extrabold px-1.5 py-0.2 rounded mt-1">
                                 <Crown className="w-2.5 h-2.5" />
                                 ابلاغیه مدیریتی
+                              </span>
+                            )}
+                            {item.wbs_node && (
+                              <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-800 border border-emerald-200/80 text-[9px] font-extrabold px-1.5 py-0.5 rounded mt-1 mr-1" title={item.wbs_node.title}>
+                                <FolderGit2 className="w-2.5 h-2.5 text-emerald-600" />
+                                <span>WBS: {toPersianDigits(item.wbs_node.code)}</span>
                               </span>
                             )}
                           </div>

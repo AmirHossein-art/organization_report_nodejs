@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Clock, ShieldAlert, LogOut, CheckCircle2 } from "lucide-react";
+import { Clock, ShieldCheck, LogOut, CheckCircle2 } from "lucide-react";
+import { toPersianDigits } from "../dateUtils";
 
 interface SessionTimeoutModalProps {
   /**
@@ -110,50 +111,53 @@ export const SessionTimeoutModal: React.FC<SessionTimeoutModalProps> = ({
 
   const minutes = Math.floor(remainingSeconds / 60);
   const seconds = remainingSeconds % 60;
-  const formattedTime = `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+  const formattedMinutes = toPersianDigits(minutes.toString().padStart(2, "0"));
+  const formattedSeconds = toPersianDigits(seconds.toString().padStart(2, "0"));
+  const formattedTime = `${formattedMinutes}:${formattedSeconds}`;
   const progressPercent = Math.max(0, Math.min(100, (remainingSeconds / countdownSeconds) * 100));
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200" dir="rtl">
-      <div className="bg-white rounded-3xl shadow-2xl border border-amber-200 max-w-md w-full overflow-hidden text-right">
-        {/* هدر مودال */}
-        <div className="bg-gradient-to-r from-amber-500 to-amber-600 px-6 py-5 text-white flex items-center justify-between">
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4 animate-in fade-in duration-200" dir="rtl">
+      <div className="bg-white rounded-3xl shadow-2xl border border-emerald-100 max-w-md w-full overflow-hidden text-right font-sans">
+        {/* هدر مودال — تم سبز ملایم و سرمه‌ای سازمانی */}
+        <div className="bg-gradient-to-r from-emerald-800 to-slate-900 px-6 py-5 text-white flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-white/20 flex items-center justify-center backdrop-blur-md">
-              <ShieldAlert className="w-6 h-6 text-white" />
+            <div className="w-10 h-10 rounded-2xl bg-white/10 border border-white/10 flex items-center justify-center backdrop-blur-md">
+              <ShieldCheck className="w-5 h-5 text-emerald-300" />
             </div>
             <div>
-              <h3 className="font-bold text-base font-sans">هشدار پایان نشست امنیتی</h3>
-              <p className="text-amber-100 text-xs">سامانه پیگیری استراتژیک سازمان</p>
+              <h3 className="font-bold text-sm tracking-tight font-sans">حفظ امنیت نشست کاربری</h3>
+              <p className="text-emerald-200/80 text-[11px] font-sans">سامانه پیگیری استراتژیک سازمان</p>
             </div>
           </div>
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-black/20 text-white font-mono font-bold text-sm">
-            <Clock className="w-4 h-4 text-amber-200 animate-pulse" />
-            <span>{formattedTime}</span>
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-black/25 border border-white/10 text-emerald-200 font-bold text-xs font-sans">
+            <Clock className="w-3.5 h-3.5 text-emerald-300 animate-pulse" />
+            <span className="tracking-wider">{formattedTime}</span>
           </div>
         </div>
 
         {/* بدنه و توضیحات */}
-        <div className="p-6 space-y-5">
-          <div className="text-sm text-slate-600 leading-relaxed space-y-2">
+        <div className="p-6 space-y-4 font-sans">
+          <div className="text-xs text-slate-600 leading-relaxed space-y-2.5">
             <p>
-              به دلیل حفظ امنیت اطلاعات سازمانی و عدم فعالیت در سامانه ظرف <strong className="text-slate-800">۲۵ دقیقه گذشته</strong>، نشست کاری شما به صورت خودکار پایان خواهد یافت.
+              به دلیل عدم فعالیت در سامانه طی <strong className="text-emerald-950 font-bold">{toPersianDigits(25)} دقیقه گذشته</strong>، جهت محافظت از اطلاعات سازمان، نشست کاری شما به صورت خودکار پایان خواهد یافت.
             </p>
-            <p className="text-xs text-slate-500 bg-amber-50 border border-amber-200/60 p-3 rounded-2xl">
-              ⚠️ در صورت خروج خودکار، فرم‌های ثبت‌نشده ذخیره نخواهند شد. اگر همچنان پشت سیستم هستید، روی دکمه «ادامه کار در سامانه» کلیک فرمایید.
-            </p>
+            <div className="bg-emerald-50/70 border border-emerald-200/60 p-3 rounded-2xl text-[11px] text-emerald-900 flex items-start gap-2">
+              <span className="text-emerald-600 font-bold">ℹ</span>
+              <span>در صورتی که پشت سیستم حضور دارید، لطفاً جهت ادامه فعالیت و حفظ فرم‌های در حال تکمیل، روی دکمه «ادامه کار در سامانه» کلیک فرمایید.</span>
+            </div>
           </div>
 
           {/* نوار زمان باقی‌مانده */}
-          <div className="space-y-1.5">
-            <div className="flex justify-between text-xs font-medium text-slate-500">
-              <span>زمان باقی‌مانده تا خروج قطعی:</span>
-              <span className="font-mono text-amber-600 font-bold">{remainingSeconds} ثانیه</span>
+          <div className="space-y-1.5 pt-1">
+            <div className="flex justify-between text-[11px] font-medium text-slate-500">
+              <span>فرصت باقی‌مانده تا خروج خودکار:</span>
+              <span className="text-emerald-800 font-bold">{toPersianDigits(remainingSeconds)} ثانیه</span>
             </div>
-            <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden border border-slate-200">
+            <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden border border-slate-200/70">
               <div
                 className={`h-full transition-all duration-1000 rounded-full ${
-                  remainingSeconds < 60 ? "bg-rose-500 animate-pulse" : "bg-amber-500"
+                  remainingSeconds < 30 ? "bg-rose-500 animate-pulse" : "bg-emerald-600"
                 }`}
                 style={{ width: `${progressPercent}%` }}
               />
@@ -161,19 +165,19 @@ export const SessionTimeoutModal: React.FC<SessionTimeoutModalProps> = ({
           </div>
 
           {/* دکمه‌های اقدام */}
-          <div className="flex items-center gap-3 pt-2">
+          <div className="flex items-center gap-2.5 pt-2">
             <button
               type="button"
               onClick={handleStayLoggedIn}
-              className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-3 px-4 rounded-2xl shadow-md shadow-emerald-600/20 transition-all hover:scale-[1.02] active:scale-[0.98] text-sm cursor-pointer"
+              className="flex-1 flex items-center justify-center gap-2 bg-emerald-800 hover:bg-emerald-900 text-white font-medium py-2.5 px-4 rounded-xl shadow-sm transition-all hover:scale-[1.01] active:scale-[0.99] text-xs cursor-pointer"
             >
-              <CheckCircle2 className="w-5 h-5" />
+              <CheckCircle2 className="w-4 h-4 text-emerald-200" />
               <span>ادامه کار در سامانه</span>
             </button>
             <button
               type="button"
               onClick={() => onLogout()}
-              className="flex items-center justify-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium py-3 px-4 rounded-2xl transition-all text-sm cursor-pointer"
+              className="flex items-center justify-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium py-2.5 px-4 rounded-xl transition-all text-xs cursor-pointer border border-slate-200/60"
             >
               <LogOut className="w-4 h-4 text-slate-500" />
               <span>خروج</span>

@@ -6,7 +6,7 @@
 // - کلیک روی بدنهٔ کارت → پرش به همان آیتم در نمای جزئیات (از طریق onOpenDetails)
 import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
 import { toPersianDigits } from "../dateUtils";
 
 interface WbsTask {
@@ -111,13 +111,13 @@ function buildTree(tasks: WbsTask[]): WBSNode[] {
 
     while (parentCode) {
       if (!nodeMap.has(parentCode)) {
-        let parentName = `فاز ${parentCode}`;
+        let parentName = `فاز ${toPersianDigits(parentCode)}`;
         if (t.phase && (parentCode.length === 1 || parentCode.startsWith("P"))) {
           parentName = t.phase;
         } else if (t.deliverables && parentCode.split(".").length === 2) {
           parentName = t.deliverables.slice(0, 35);
         } else {
-          parentName = `بسته کاری ${parentCode}`;
+          parentName = `بسته کاری ${toPersianDigits(parentCode)}`;
         }
 
         nodeMap.set(parentCode, {
@@ -248,7 +248,7 @@ function NodeCard({ node, depth, maxDepth, isOpen, hasChildren, onToggle, onOpen
         {toPersianDigits(node.code)}
       </div>
       <div dir="rtl" className="text-center text-[13px] leading-snug mt-1 whitespace-nowrap" style={{ color: text }}>
-        {node.name}
+        {toPersianDigits(node.name)}
       </div>
 
       {hasChildren && (
@@ -334,10 +334,12 @@ function Branch({ node, openState, toggle, maxDepth, onOpenDetails }: BranchProp
 // ============================================================
 export default function WbsTreePane({ data, onOpenDetails }: { data: WbsTreeData; onOpenDetails: (code: string) => void }) {
   const [openState, setOpenState] = useState<Record<string, boolean>>({});
+  const [zoom, setZoom] = useState(1);
 
   // با عوض شدن پروژه، وضعیت باز/بسته از نو
   useEffect(() => {
     setOpenState({});
+    setZoom(1);
   }, [data]);
 
   const tree = useMemo(() => buildTree(data.tasks), [data]);
@@ -350,13 +352,52 @@ export default function WbsTreePane({ data, onOpenDetails }: { data: WbsTreeData
     });
   };
 
+  const handleZoomIn = () => setZoom((prev) => Math.min(1.6, Number((prev + 0.1).toFixed(2))));
+  const handleZoomOut = () => setZoom((prev) => Math.max(0.4, Number((prev - 0.1).toFixed(2))));
+  const handleResetZoom = () => setZoom(1);
+
   /* پنجرهٔ ثابت با اسکرول داخلی (افقی + عمودی) — ابعاد صفحه تغییر نمی‌کند */
   return (
     <div
-      className="wbs-scroll overflow-auto bg-white rounded-2xl border border-slate-200 shadow-sm"
+      className="relative wbs-scroll overflow-auto bg-white rounded-2xl border border-slate-200 shadow-sm"
       style={{ height: "calc(100vh - 280px)", minHeight: 420 }}
     >
-      <div dir="ltr" className="w-full py-6 min-w-max">
+      {/* دکمه‌های شناور بزرگ‌نمایی / کوچک‌نمایی درخت WBS */}
+      <div className="sticky top-4 right-4 z-30 inline-flex items-center gap-1.5 bg-white/95 backdrop-blur-md px-2.5 py-1.5 rounded-2xl border border-slate-200/90 shadow-md text-xs float-right mr-4 mt-2">
+        <button
+          type="button"
+          onClick={handleZoomIn}
+          className="p-1 hover:bg-slate-100 rounded-lg text-slate-700 transition-colors cursor-pointer"
+          title="بزرگ‌نمایی"
+        >
+          <ZoomIn className="w-4 h-4" />
+        </button>
+        <span className="font-mono font-bold text-slate-700 px-1 text-[11px] min-w-[36px] text-center">
+          {toPersianDigits(Math.round(zoom * 100))}٪
+        </span>
+        <button
+          type="button"
+          onClick={handleZoomOut}
+          className="p-1 hover:bg-slate-100 rounded-lg text-slate-700 transition-colors cursor-pointer"
+          title="کوچک‌نمایی"
+        >
+          <ZoomOut className="w-4 h-4" />
+        </button>
+        <button
+          type="button"
+          onClick={handleResetZoom}
+          className="p-1 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-800 transition-colors cursor-pointer mr-0.5 border-r border-slate-200 pr-1.5"
+          title="بازنشانی زوم به ۱۰۰٪"
+        >
+          <RotateCcw className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      <div
+        dir="ltr"
+        className="w-full py-6 min-w-max transition-transform origin-top"
+        style={{ transform: `scale(${zoom})` }}
+      >
         <div dir="rtl" className="px-6 text-[13px] font-semibold text-neutral-400 mb-4">
           ساختار شکست کار (WBS)
         </div>
@@ -369,7 +410,7 @@ export default function WbsTreePane({ data, onOpenDetails }: { data: WbsTreeData
               style={{ backgroundColor: ROOT_COLOR, width: "fit-content", margin: "0 auto" }}
             >
               <div dir="rtl" className="text-white text-[15px] font-bold text-center whitespace-nowrap">
-                {data.projectTitle}
+                {toPersianDigits(data.projectTitle)}
               </div>
             </div>
           </div>

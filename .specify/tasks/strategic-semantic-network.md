@@ -32,13 +32,13 @@
 **Future-consumer contract:** Current graph queries MUST exclude `attributes.active=false` nodes; archived nodes are historical references only. Excel KPI text and prerequisites are source metadata, not approved KPI links or proven causal edges. Never fuzzy-link them automatically.
 
 ### Sub-Agent 3: AI Cognitive & Graph Reasoning Layer (US2)
-- [ ] `T3.1` Build structured graph serializer `buildProjectGraphPromptContext(project_id, period_id)` in `server.ts`.
-- [ ] `T3.2` Upgrade `/api/reports/analyze-single` prompt to evaluate activity progress directly against assigned WBS node codes.
-- [ ] `T3.3` Upgrade `/api/reports/analyze-deputy` and `/api/ai/strategic-analysis` prompts to execute:
+- [x] `T3.1` Build structured graph serializer `buildProjectGraphPromptContext(project_id)` in `server.ts` integrating project goals, WBS nodes, KPIs, and open commitments.
+- [x] `T3.2` Upgrade `/api/reports/analyze-single` prompt to execute tripartite evaluation (WBS missing activities/hierarchy recommendations, missing KPI recommendations & blind spots, deliverable-oriented action audit & smart recommendations).
+- [x] `T3.3` Upgrade `/api/reports/analyze-deputy` and `/api/ai/strategic-analysis` prompts to execute:
   - Causal delay ripple tracing across prerequisite tasks.
   - Blind-spot analysis (deliverables lacking KPIs).
   - Scope creep detection.
-- [ ] `T3.4` Defensively enforce Shamsi date formatting on all extracted commitments.
+- [x] `T3.4` Defensively enforce Shamsi date formatting on all extracted commitments and recommended next actions (`ensureShamsiDate`).
 
 ### Sub-Agent 4: Presentation & Interactive Visualizer Layer (US3)
 - [x] `T4.1` Add WBS node picker to `NextAction` creation drawers in `ProjectNextActionsDrawer.tsx` and `SubmitReport.tsx` with dedicated `GET /api/projects/:projectId/wbs-nodes` API.

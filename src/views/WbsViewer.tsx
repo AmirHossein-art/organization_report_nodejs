@@ -324,6 +324,9 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
   // شاخص‌های ترکیبی تخصیص‌یافته به این پروژه
   const [projectCompositeKpis, setProjectCompositeKpis] = useState<CompositeKpi[]>([]);
 
+  // داده‌های گراف شبکه WBS شامل پیوندهای مصوب KPI و اقدامات فعال
+  const [wbsGraphNodes, setWbsGraphNodes] = useState<any[]>([]);
+
   // بارگذاری لیست خلاصه پروژه‌های دارای WBS
   const loadWbsProjects = async () => {
     try {
@@ -367,6 +370,12 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
       .then((r) => (r.ok ? r.json() : []))
       .then((cks) => setProjectCompositeKpis(Array.isArray(cks) ? cks : []))
       .catch(() => setProjectCompositeKpis([]));
+
+    // واکشی گره‌های گراف WBS و پیوندهای KPI و اقدامات فعال
+    fetch(`/api/projects/${projectId}/wbs-nodes`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((gnodes) => setWbsGraphNodes(Array.isArray(gnodes) ? gnodes : []))
+      .catch(() => setWbsGraphNodes([]));
 
     try {
       const res = await fetch(`/api/wbs-data/${projectId}`);
@@ -444,6 +453,18 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
     if (!data?.tasks) return [];
     return buildWbsTreeNodes(data.tasks);
   }, [data?.tasks]);
+
+  // نگاشت دسترسی سریع به اطلاعات گره‌های گراف (شامل شاخص‌ها و اقدامات فعال) بر اساس کد
+  const wbsGraphByCode = useMemo(() => {
+    const map = new Map<string, any>();
+    for (const n of wbsGraphNodes) {
+      if (n.code) {
+        map.set(n.code.trim(), n);
+        map.set(normalizeDigits(n.code.trim()), n);
+      }
+    }
+    return map;
+  }, [wbsGraphNodes]);
 
   // وضعیت باز/بسته بودن سطوح مختلف در جدول
   const [expandedTreeNodes, setExpandedTreeNodes] = useState<Record<string, boolean>>({});
@@ -1048,6 +1069,7 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
                                   isExpanded={Boolean(expandedTreeNodes[node.code])}
                                   onToggle={() => toggleTreeNode(node.code)}
                                   highlighted={focusCode === node.code}
+                                  graphNode={wbsGraphByCode.get(node.code.trim()) || wbsGraphByCode.get(normalizeDigits(node.code.trim()))}
                                 />
                               ))}
                             </tbody>
@@ -1156,6 +1178,7 @@ function WbsTreeTableRow({
   isExpanded,
   onToggle,
   highlighted,
+  graphNode,
 }: {
   node: WbsTreeNode;
   depth: number;
@@ -1163,6 +1186,7 @@ function WbsTreeTableRow({
   isExpanded: boolean;
   onToggle: () => void;
   highlighted?: boolean;
+  graphNode?: any;
 }) {
   const code = (node.code || "").trim();
   const isPhase = depth === 1 || (node.task.phase && node.task.name.includes("فاز"));
@@ -1201,7 +1225,7 @@ function WbsTreeTableRow({
         className="py-3 px-3 border-l border-slate-100 min-w-[260px]"
         style={{ paddingRight: `${Math.max(12, (depth - 1) * 22 + 12)}px` }}
       >
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
           {hasChildren ? (
             <button
               type="button"
@@ -1240,6 +1264,16 @@ function WbsTreeTableRow({
           {hasChildren && (
             <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full font-medium shrink-0">
               {toPersianDigits(node.children.length)} زیرمجموعه
+            </span>
+          )}
+
+          {graphNode?.active_actions && graphNode.active_actions.length > 0 && (
+            <span
+              className="inline-flex items-center gap-1 bg-amber-50 text-amber-900 border border-amber-300 text-[10px] font-bold px-1.5 py-0.5 rounded-md shrink-0 shadow-2xs cursor-help mr-auto"
+              title={graphNode.active_actions.map((a: any) => `• ${a.action_text} (موعد: ${toPersianDigits(a.target_date || "نامشخص")}${a.user_name ? ` - مسئول: ${a.user_name}` : ""})`).join("\n")}
+            >
+              <Clock className="w-2.5 h-2.5 text-amber-600" />
+              <span>{toPersianDigits(graphNode.active_actions.length)} اقدام فعال</span>
             </span>
           )}
         </div>
@@ -1306,17 +1340,32 @@ function WbsTreeTableRow({
       </td>
 
       {/* ۸. شاخص (KPI) */}
-      <td className="py-3 px-3 border-l border-slate-100 min-w-[140px]">
-        {t.kpi && t.kpi !== "-" && t.kpi !== "---" ? (
-          <div className="flex items-center gap-1 text-emerald-800 bg-emerald-50/80 px-2 py-0.5 rounded-md border border-emerald-200 text-[11px] font-semibold">
-            <Target className="w-3 h-3 text-emerald-600 shrink-0" />
-            <span className="truncate" title={t.kpi}>
-              {t.kpi}
-            </span>
-          </div>
-        ) : (
-          <span className="text-slate-300">—</span>
-        )}
+      <td className="py-3 px-3 border-l border-slate-100 min-w-[150px]">
+        <div className="space-y-1">
+          {graphNode?.linked_kpis && graphNode.linked_kpis.length > 0 && (
+            <div className="flex flex-col gap-1">
+              {graphNode.linked_kpis.map((kpi: any) => (
+                <div key={kpi.id} className="flex items-center gap-1 text-emerald-950 bg-emerald-100/90 px-1.5 py-0.5 rounded-md border border-emerald-300 text-[10px] font-bold shadow-2xs">
+                  <Target className="w-3 h-3 text-emerald-700 shrink-0" />
+                  <span className="truncate" title={`شاخص مصوب متصل: ${kpi.name} (${kpi.unit || ""})`}>
+                    {kpi.name}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {t.kpi && t.kpi !== "-" && t.kpi !== "---" && (
+            <div className="flex items-center gap-1 text-slate-700 bg-slate-50 px-2 py-0.5 rounded-md border border-slate-200 text-[10px] font-medium">
+              <span className="text-[9px] text-slate-400 font-bold shrink-0">اکسل:</span>
+              <span className="truncate" title={t.kpi}>
+                {t.kpi}
+              </span>
+            </div>
+          )}
+          {(!graphNode?.linked_kpis || graphNode.linked_kpis.length === 0) && (!t.kpi || t.kpi === "-" || t.kpi === "---") && (
+            <span className="text-slate-300">—</span>
+          )}
+        </div>
       </td>
 
       {/* ۹. پیش‌نیازها */}
