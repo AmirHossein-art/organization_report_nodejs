@@ -46,7 +46,7 @@
 - [ ] `T4.3` Build interactive Strategic Network Explorer tab in `ManageProjectsHub.tsx`.
 
 ### Sub-Agent 5: Performance & Security Engineering
-- [ ] `T5.1` [P] Add `AiAnalysisCache` table in PostgreSQL to replace volatile in-memory cache.
-- [ ] `T5.2` [P] Mount `helmet` middleware and enforce strict CSP and security headers in `server.ts`.
-- [ ] `T5.3` Add composite indexes on `Report(period_id, project_id)` and `NextAction(project_id, is_completed, is_cancelled)`.
+- [x] `T5.1` [P] Add `AiAnalysisCache` table in PostgreSQL and two-tier cache service (`src/services/aiCache.ts`) replacing volatile in-memory cache.
+- [x] `T5.2` [P] Enhance `helmet` middleware (HSTS 1 year, strict-origin referrer policy) and security rate limiting in `server.ts`.
+- [x] `T5.3` Add composite indexes on `Report(period_id, project_id)` and `NextAction(project_id, is_completed, is_cancelled)`.
 - [ ] `T5.4` Log daily benchmarks and audit status to Obsidian `Daily-Performance-and-Security-Log.md`.

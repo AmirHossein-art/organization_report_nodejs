@@ -14,12 +14,20 @@ import cookieParser from "cookie-parser";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
-import crypto from "node:crypto";
 
 import { config } from "./src/config/env";
 import { parseExcelWBS } from "./src/utils/wbsParser";
 import { parseWbsWorkbook } from "./src/utils/wbsDataParser";
 import { backfillWbsGraphs, replaceWbsFile, deleteWbsFile, WbsSyncError, readWbsGraph, lockWbsProject, applyWbsUploadInTx, removeWbsInTx, unlinkWbsFile } from "./src/services/wbsGraphSync";
+import {
+  getCachedAiResponse,
+  setCachedAiResponse,
+  updateCachedAiResponse,
+  invalidateAiCache,
+  generateAiCacheKey,
+  getAiCacheStats,
+  clearAllAiCache,
+} from "./src/services/aiCache";
 import { getDeadlineState } from "./src/deadline";
 import { ensureShamsiDate, isLastWeekOfShamsiMonth, shamsiToGregorian } from "./src/dateUtils";
 
@@ -30,11 +38,13 @@ const app = express();
 app.set("trust proxy", 1);
 app.disable("x-powered-by");
 
-// ۲. هدرهای امنیتی پایه با Helmet
+// ۲. هدرهای امنیتی مستحکم با Helmet
 app.use(
   helmet({
     contentSecurityPolicy: false, // برای اجرای بدون مشکل Vite SPA و Three.js
     crossOriginEmbedderPolicy: false,
+    referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+    hsts: { maxAge: 31536000, includeSubDomains: true },
   })
 );
 
@@ -361,6 +371,9 @@ async function ensureDatabaseSchema() {
         "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
       CREATE INDEX IF NOT EXISTS "AiAnalysisCache_cache_key_idx" ON "AiAnalysisCache"("cache_key");
+
+      CREATE INDEX IF NOT EXISTS "NextAction_project_status_idx" ON "NextAction"("project_id", "is_completed", "is_cancelled");
+      CREATE INDEX IF NOT EXISTS "Report_period_project_idx" ON "Report"("period_id", "project_id");
 
       UPDATE "Project"
       SET "wbs_file_name" = convert_from(convert_to("wbs_file_name", 'LATIN1'), 'UTF8')
@@ -4053,22 +4066,8 @@ app.delete("/api/next-actions/:id", authenticate, async (req: any, res) => {
 // 12. AI Strategy & Audit Endpoints
 // -----------------------------
 
-// ساختار داده کش
-interface CachedAiResponse {
-  data: { analysis: any; model_used: string };
-  expiresAt: number;
-  createdAt: string;
-}
-// حافظه موقت کش و تنظیم زمان پیش‌فرض (پیش‌فرض: ۱ هفته)
-const aiResponseCache = new Map<string, CachedAiResponse>();
+// تنظیم مدت زمان اعتبار کش (پیش‌فرض: ۱ هفته)
 const AI_CACHE_TTL_MS = (Number(process.env.AI_CACHE_TTL_MINUTES) || 60 * 24 * 7) * 60 * 1000;
-// تابع تولید کلید یکتا بر اساس محتوای پرامپت‌ها
-function generateAiCacheKey(systemPrompt: string, userPrompt: string): string {
-  return crypto
-    .createHash("sha256")
-    .update(`${systemPrompt}:::${userPrompt}`)
-    .digest("hex");
-}
 
 // کشف مدل‌های کاندید هر تامین‌کننده (کش ۲۴ ساعته برای جلوگیری از فراخوانی مکرر لیست مدل‌ها)
 const aiModelDiscoveryCache = new Map<string, { models: string[]; discoveredAt: number }>();
@@ -4147,18 +4146,19 @@ async function callAiWithFallback(
   options: { forceRefresh?: boolean; cacheKey?: string } = {}
 ) {
   const cacheKey = options.cacheKey || generateAiCacheKey(systemPrompt, userPrompt);
-  const now = Date.now();
-  // ۱. بررسی وجود در کش و معتبر بودن تاریخ انقضا
-  if (!options.forceRefresh && aiResponseCache.has(cacheKey)) {
-    const cached = aiResponseCache.get(cacheKey)!;
-    if (cached.expiresAt > now) {
+  
+  // ۱. بررسی کش دو لایه‌ای (L1 حافظه رم + L2 دیتابیس PostgreSQL)
+  if (options.forceRefresh) {
+    await invalidateAiCache(prisma, cacheKey);
+  } else {
+    const cached = await getCachedAiResponse(prisma, cacheKey, AI_CACHE_TTL_MS);
+    if (cached) {
       return {
         ...cached.data,
         cached: true,
         cached_at: cached.createdAt,
       };
     }
-    aiResponseCache.delete(cacheKey); // پاکسازی کش منقضی‌شده
   }
 
   // پیکربندی تامین‌کننده‌ها — اگر نام مدل «auto» یا نامشخص باشد، از لیست خود تامین‌کننده کشف می‌شود
@@ -4273,11 +4273,7 @@ async function callAiWithFallback(
         model_used: provider.name,
       };
 
-      aiResponseCache.set(cacheKey, {
-        data: result,
-        expiresAt: now + AI_CACHE_TTL_MS,
-        createdAt: new Date().toISOString(),
-      });
+      await setCachedAiResponse(prisma, cacheKey, result, AI_CACHE_TTL_MS);
 
       return result;
     } catch (err: any) {
@@ -4535,10 +4531,9 @@ app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, r
           }));
       }
 
-      // به‌روزرسانی مقدار نهایی فیلتر و پالایش‌شده در کش سرور
-      if (strategicCacheKey && aiResponseCache.has(strategicCacheKey)) {
-        const cachedEntry = aiResponseCache.get(strategicCacheKey)!;
-        cachedEntry.data = result;
+      // به‌روزرسانی مقدار نهایی فیلتر و پالایش‌شده در کش دو لایه‌ای سرور و دیتابیس
+      if (strategicCacheKey) {
+        await updateCachedAiResponse(prisma, strategicCacheKey, result, AI_CACHE_TTL_MS);
       }
     }
 
@@ -4968,6 +4963,25 @@ ${projectsDataForPrompt}`;
       ? "خطایی در پردازش تحلیل معاونت توسط هوش مصنوعی رخ داد."
       : (err.message || "خطا در پردازش هوش مصنوعی.");
     res.status(500).json({ error: clientError });
+  }
+});
+
+// اندپوینت‌های پایش و مدیریت کش پایدار هوش مصنوعی (ویژه مدیران)
+app.get("/api/ai/cache-stats", authenticate, requireManager, async (_req, res) => {
+  try {
+    const stats = await getAiCacheStats(prisma);
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ error: "خطا در واکشی وضعیت کش هوش مصنوعی" });
+  }
+});
+
+app.post("/api/ai/clear-cache", authenticate, requireManager, async (_req, res) => {
+  try {
+    await clearAllAiCache(prisma);
+    res.json({ success: true, message: "کل کش هوش مصنوعی (حافظه و دیتابیس) با موفقیت پاکسازی شد." });
+  } catch (error) {
+    res.status(500).json({ error: "خطا در پاکسازی کش هوش مصنوعی" });
   }
 });
 

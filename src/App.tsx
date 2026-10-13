@@ -5,6 +5,7 @@ import Sidebar from "./components/sidebar";
 import Login from "./views/Login";
 import GatewayPortal from "./views/GatewayPortal";
 import MustChangePasswordModal from "./components/MustChangePasswordModal";
+import { SessionTimeoutModal } from "./components/SessionTimeoutModal";
 
 // وارد کردن تمام ویوهای ماژولار
 import HomeDashboard from "./views/HomeDashboard";
@@ -135,6 +136,9 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col md:flex-row bg-slate-50/50 font-sans" dir="rtl">
+      {/* 🛡️ سامانه پایش امنیتی عدم فعالیت و خروج خودکار (OWASP Inactivity Guard) */}
+      <SessionTimeoutModal onLogout={handleLogout} />
+
       {/* 🔒 لایه مودال تغییر اجباری رمز عبور در صورت فعال بودن پرچم */}
       {user && user.must_change_password && (
         <MustChangePasswordModal

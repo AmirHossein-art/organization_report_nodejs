@@ -157,6 +157,7 @@ model Report {
   wbsLinks        ReportWbsLink[]
 
   @@unique([project_id, period_id], name: "one_report_per_project_period")
+  @@index([period_id, project_id])
 }
 
 model NextAction {
@@ -200,6 +201,7 @@ model NextAction {
   @@index([claimed_report_id])
   @@index([is_cancelled])
   @@index([wbs_node_id])
+  @@index([project_id, is_completed, is_cancelled])
 }
 
 model ProjectKpi {
