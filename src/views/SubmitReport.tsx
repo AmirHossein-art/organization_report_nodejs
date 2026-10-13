@@ -93,9 +93,6 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
   const [kpiValues, setKpiValues] = useState<Record<number, any>>({});
   const [selectedKpiFilter, setSelectedKpiFilter] = useState<number>(0); // 0 = همه شاخص‌ها
   
-  // 🟢 گره‌های فعال ساختار شکست کار (WBS) جهت انتساب به اقدامات آتی
-  const [projectWbsNodes, setProjectWbsNodes] = useState<any[]>([]);
-  
   const [loading, setLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
@@ -193,18 +190,6 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
       .catch(() => setPendingActions([]))
       .finally(() => setPendingActionsLoading(false));
   }, [subProjectId, user?.id]);
-
-  // 🟢 واکشی گره‌های فعال WBS برای پروژه انتخاب‌شده
-  useEffect(() => {
-    if (!subProjectId) {
-      setProjectWbsNodes([]);
-      return;
-    }
-    fetch(`/api/projects/${subProjectId}/wbs-nodes`)
-      .then((r) => (r.ok ? r.json() : []))
-      .then((nodes) => setProjectWbsNodes(Array.isArray(nodes) ? nodes : []))
-      .catch(() => setProjectWbsNodes([]));
-  }, [subProjectId]);
 
   // 🟢 واکشی شاخص‌های فعالِ کاربردی برای پروژه و نوع گزارش انتخاب‌شده
   useEffect(() => {
@@ -812,28 +797,6 @@ export default function SubmitReport({ projects, periods, user, allReports, onRe
                             className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:border-emerald-600"
                           />
                         </div>
-
-                        {projectWbsNodes.length > 0 && (
-                          <div className="w-full md:w-56">
-                            <label className="text-[11px] font-medium text-slate-400 block mb-1">بسته کاری WBS مرتبط</label>
-                            <select
-                              value={item.wbs_node_id || 0}
-                              onChange={(e) => {
-                                const updated = [...nextActions];
-                                updated[index].wbs_node_id = Number(e.target.value) || null;
-                                setNextActions(updated);
-                              }}
-                              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-emerald-600 truncate"
-                            >
-                              <option value={0}>— بدون انتساب به WBS —</option>
-                              {projectWbsNodes.map((n) => (
-                                <option key={n.id} value={n.id}>
-                                  [{toPersianDigits(n.code)}] {n.title}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        )}
 
                         <div className="w-full md:w-44">
                           <label className="text-[11px] font-medium text-slate-400 block mb-1">تاریخ سررسید ددلاین روز</label>
