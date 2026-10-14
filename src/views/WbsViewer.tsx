@@ -31,12 +31,13 @@ import {
   Search,
   GitBranch,
   Table,
+  Brain,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import WbsTreePane from "./WbsTree";
 import { CustomSelect } from "../components";
 import { toPersianDigits, normalizeDigits } from "../dateUtils";
-import { Project, CompositeKpi } from "../types";
+import { Project, CompositeKpi, ProjectMemory } from "../types";
 
 interface WbsViewerProps {
   projects: Project[];
@@ -327,6 +328,10 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
   // داده‌های گراف شبکه WBS شامل پیوندهای مصوب KPI و اقدامات فعال
   const [wbsGraphNodes, setWbsGraphNodes] = useState<any[]>([]);
 
+  // حافظه زنده و تکاملی هوش مصنوعی از این پروژه (Project Memory Dossier)
+  const [projectMemory, setProjectMemory] = useState<ProjectMemory | null>(null);
+  const [evolvingMemory, setEvolvingMemory] = useState(false);
+
   // بارگذاری لیست خلاصه پروژه‌های دارای WBS
   const loadWbsProjects = async () => {
     try {
@@ -377,6 +382,12 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
       .then((gnodes) => setWbsGraphNodes(Array.isArray(gnodes) ? gnodes : []))
       .catch(() => setWbsGraphNodes([]));
 
+    // واکشی حافظه تکاملی هوش مصنوعی از پروژه
+    fetch(`/api/projects/${projectId}/memory`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((mem) => setProjectMemory(mem?.version > 0 ? mem : null))
+      .catch(() => setProjectMemory(null));
+
     try {
       const res = await fetch(`/api/wbs-data/${projectId}`);
       if (res.ok) {
@@ -400,6 +411,32 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  // همگام‌سازی و تکامل دستی حافظه تکاملی پروژه توسط مدیر
+  const handleEvolveMemory = async () => {
+    if (!selectedProjectId) return;
+    setEvolvingMemory(true);
+    try {
+      const res = await fetch(`/api/projects/${selectedProjectId}/memory/evolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.memory) {
+          setProjectMemory(json.memory);
+          setFeedback({ type: "success", text: "شناخت و حافظه تکاملی پروژه با موفقیت توسط هوش مصنوعی به‌روزرسانی شد." });
+        }
+      } else {
+        const err = await res.json().catch(() => null);
+        setFeedback({ type: "error", text: err?.error || "خطا در به‌روزرسانی حافظه تکاملی پروژه." });
+      }
+    } catch {
+      setFeedback({ type: "error", text: "ارتباط با سرور جهت تکامل حافظه برقرار نشد." });
+    } finally {
+      setEvolvingMemory(false);
     }
   };
 
@@ -932,6 +969,106 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
                     </div>
                   </div>
                 )}
+
+                {/* ۴. شناخت و حافظه تکاملی هوش مصنوعی از پروژه (Living AI Dossier) */}
+                <div className="bg-white rounded-2xl border border-emerald-100/90 shadow-sm p-5 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-emerald-100/60 pb-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-800 flex items-center justify-center border border-emerald-200 shrink-0">
+                        <Brain className="w-5 h-5 text-emerald-700" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-bold text-slate-850 text-sm">
+                            شناخت و حافظه تکاملی هوش مصنوعی از این پروژه
+                          </h3>
+                          {projectMemory && (
+                            <span className="text-[10px] bg-emerald-100 text-emerald-900 font-extrabold px-2 py-0.5 rounded-full border border-emerald-300">
+                              نسخه {toPersianDigits(projectMemory.version)}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-400 mt-0.5">تحلیل انباشته از ذات پروژه، موانع مزمن، الگوی تعهدات و درس‌آموخته‌ها</p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleEvolveMemory}
+                      disabled={evolvingMemory}
+                      className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-50 self-start sm:self-auto"
+                    >
+                      <Sparkles className={`w-3.5 h-3.5 ${evolvingMemory ? "animate-spin" : "text-amber-500"}`} />
+                      <span>{evolvingMemory ? "در حال همگام‌سازی..." : "همگام‌سازی و تکامل حافظه"}</span>
+                    </button>
+                  </div>
+
+                  {projectMemory ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 text-xs">
+                      {/* ۱. ذات و بافتار هویتی */}
+                      <div className="bg-slate-50/70 p-4 rounded-xl border border-slate-200/80 space-y-1.5">
+                        <span className="font-bold text-slate-900 flex items-center gap-1.5">
+                          <Building2 className="w-4 h-4 text-emerald-700" />
+                          <span>شناخت ماهیت و بافتار پروژه (DNA):</span>
+                        </span>
+                        <p className="text-slate-600 leading-relaxed font-normal">
+                          {projectMemory.dna_summary}
+                        </p>
+                      </div>
+
+                      {/* ۲. الگوی تعهدپذیری */}
+                      <div className="bg-slate-50/70 p-4 rounded-xl border border-slate-200/80 space-y-1.5">
+                        <span className="font-bold text-slate-900 flex items-center gap-1.5">
+                          <Clock className="w-4 h-4 text-blue-700" />
+                          <span>الگوی وفای به عهد و سابقه ددلاین‌ها:</span>
+                        </span>
+                        <p className="text-slate-600 leading-relaxed font-normal">
+                          {projectMemory.reliability_notes || "داده‌های کافی جهت ارزیابی آماری ثبت نشده است."}
+                        </p>
+                      </div>
+
+                      {/* ۳. موانع و گره‌های مزمن */}
+                      <div className="bg-amber-50/40 p-4 rounded-xl border border-amber-200/70 space-y-2">
+                        <span className="font-bold text-amber-950 flex items-center gap-1.5">
+                          <AlertTriangle className="w-4 h-4 text-amber-600" />
+                          <span>موانع و گلوگاه‌های مزمن تکرارشونده:</span>
+                        </span>
+                        {projectMemory.chronic_bottlenecks ? (
+                          <div className="space-y-1 text-slate-700 pr-1">
+                            {projectMemory.chronic_bottlenecks.split("\n").map((b, idx) => (
+                              <p key={idx} className="leading-relaxed">{b}</p>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-slate-400 italic font-normal">مانع یا تاخیر حاد تکرارشونده‌ای گزارش نشده است.</p>
+                        )}
+                      </div>
+
+                      {/* ۴. درس‌آموخته‌ها */}
+                      <div className="bg-emerald-50/40 p-4 rounded-xl border border-emerald-200/70 space-y-2">
+                        <span className="font-bold text-emerald-950 flex items-center gap-1.5">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-700" />
+                          <span>درس‌آموخته‌ها و تجارب راهبردی انباشته:</span>
+                        </span>
+                        {projectMemory.lessons_learned ? (
+                          <div className="space-y-1 text-slate-700 pr-1">
+                            {projectMemory.lessons_learned.split("\n").map((l, idx) => (
+                              <p key={idx} className="leading-relaxed">{l}</p>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-slate-400 italic font-normal">با ثبت و ممیزی گزارش‌های دوره‌ای، تجارب جدید انباشته خواهند شد.</p>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="py-8 text-center space-y-2 text-slate-400">
+                      <Brain className="w-8 h-8 text-slate-300 mx-auto" />
+                      <p className="text-xs">هنوز پرونده حافظه تکاملی برای این پروژه شکل نگرفته است.</p>
+                      <p className="text-[11px] text-slate-400">با اولین ممیزی گزارش یا کلیک روی دکمه «همگام‌سازی و تکامل حافظه»، شناخت اولیه هوش مصنوعی ایجاد خواهد شد.</p>
+                    </div>
+                  )}
+                </div>
               </motion.div>
             )}
 

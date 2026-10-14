@@ -28,6 +28,11 @@ import {
   getAiCacheStats,
   clearAllAiCache,
 } from "./src/services/aiCache";
+import {
+  getProjectMemory,
+  formatProjectMemoryForPrompt,
+  evolveProjectMemory,
+} from "./src/services/projectMemory";
 import { getDeadlineState } from "./src/deadline";
 import { ensureShamsiDate, isLastWeekOfShamsiMonth, shamsiToGregorian } from "./src/dateUtils";
 
@@ -371,6 +376,20 @@ async function ensureDatabaseSchema() {
         "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
       CREATE INDEX IF NOT EXISTS "AiAnalysisCache_cache_key_idx" ON "AiAnalysisCache"("cache_key");
+
+      CREATE TABLE IF NOT EXISTS "ProjectMemory" (
+        "id" SERIAL PRIMARY KEY,
+        "project_id" INTEGER NOT NULL UNIQUE REFERENCES "Project"("id") ON DELETE CASCADE,
+        "dna_summary" TEXT NOT NULL,
+        "chronic_bottlenecks" TEXT NOT NULL DEFAULT '',
+        "reliability_notes" TEXT NOT NULL DEFAULT '',
+        "lessons_learned" TEXT NOT NULL DEFAULT '',
+        "version" INTEGER NOT NULL DEFAULT 1,
+        "attributes" JSONB,
+        "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS "ProjectMemory_project_id_idx" ON "ProjectMemory"("project_id");
 
       CREATE INDEX IF NOT EXISTS "NextAction_project_status_idx" ON "NextAction"("project_id", "is_completed", "is_cancelled");
       CREATE INDEX IF NOT EXISTS "Report_period_project_idx" ON "Report"("period_id", "project_id");
@@ -1659,6 +1678,49 @@ app.get("/api/projects/:projectId/wbs-nodes", authenticate, async (req: any, res
   } catch (error) {
     console.error("Error fetching WBS nodes:", error);
     res.status(500).json({ error: "خطا در واکشی گره‌های ساختار شکست." });
+  }
+});
+
+// دریافت حافظه تکاملی هوش مصنوعی از یک پروژه (Living Project Dossier)
+app.get("/api/projects/:projectId/memory", authenticate, async (req: any, res) => {
+  try {
+    const projectId = parseInt(req.params.projectId);
+    if (!Number.isSafeInteger(projectId) || projectId <= 0) {
+      return res.status(400).json({ error: "شناسه پروژه نامعتبر است." });
+    }
+
+    const memory = await getProjectMemory(prisma, projectId);
+    res.json(memory || {
+      project_id: projectId,
+      dna_summary: "",
+      chronic_bottlenecks: "",
+      reliability_notes: "",
+      lessons_learned: "",
+      version: 0,
+    });
+  } catch (error) {
+    console.error("Error fetching project memory:", error);
+    res.status(500).json({ error: "خطا در دریافت حافظه پروژه" });
+  }
+});
+
+// بازتولید یا تکامل دستی حافظه پروژه توسط مدیر
+app.post("/api/projects/:projectId/memory/evolve", authenticate, requireManager, async (req: any, res) => {
+  try {
+    const projectId = parseInt(req.params.projectId);
+    if (!Number.isSafeInteger(projectId) || projectId <= 0) {
+      return res.status(400).json({ error: "شناسه پروژه نامعتبر است." });
+    }
+
+    const evolved = await evolveProjectMemory(prisma, projectId, req.body?.latest_audit);
+    if (!evolved) {
+      return res.status(404).json({ error: "پروژه یافت نشد یا تکامل حافظه ناموفق بود." });
+    }
+
+    res.json({ success: true, memory: evolved });
+  } catch (error) {
+    console.error("Error evolving project memory:", error);
+    res.status(500).json({ error: "خطا در به‌روزرسانی حافظه پروژه" });
   }
 });
 // -----------------------------
@@ -4592,6 +4654,10 @@ async function buildProjectGraphPromptContext(projectId: number): Promise<string
     actionsSection = "اقدام آتی بازی در حال حاضر برای این پروژه ثبت نشده است.";
   }
 
+  // ۴. حافظه تکاملی و شناخت انباشته تاریخی هوش مصنوعی از این پروژه
+  const memory = await getProjectMemory(prisma, projectId);
+  const memorySection = formatProjectMemoryForPrompt(memory);
+
   return `🏢 **شناسنامه، اهداف کلان و ذات راهبردی پروژه:**
 - عنوان مصوب پروژه: ${project.title}
 - کد پروژه: ${project.code}
@@ -4605,7 +4671,8 @@ ${wbsSection}
 ${kpiSection}
 
 📋 **اقدامات و تعهدات آتی باز ثبت‌شده در پروژه:**
-${actionsSection}`;
+${actionsSection}
+${memorySection}`;
 }
 
 // اندپوینت تحلیل استراتژیک کلان دوره (مدیریتی)
@@ -5017,6 +5084,11 @@ ${currentKpiSection}
           deadline: act.deadline ? ensureShamsiDate(act.deadline) : "تعیین‌نشده",
         }));
       }
+
+      // تکامل غیرمسدودکننده حافظه زنده پروژه در پس‌زمینه (Living Project Dossier Evolution)
+      evolveProjectMemory(prisma, currentReport.project_id, result.analysis).catch((memErr) => {
+        console.warn("Background memory evolution notice:", memErr instanceof Error ? memErr.message : memErr);
+      });
     }
 
     res.json(result);

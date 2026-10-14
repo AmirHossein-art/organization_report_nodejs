@@ -23,6 +23,20 @@ export interface Project {
   is_active: boolean;
   created_at: string;
   updatedAt?: string;
+  memory?: ProjectMemory | null;
+}
+
+export interface ProjectMemory {
+  id: number;
+  project_id: number;
+  dna_summary: string;
+  chronic_bottlenecks: string;
+  reliability_notes: string;
+  lessons_learned: string;
+  version: number;
+  attributes?: Record<string, any> | null;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface ReportPeriod {

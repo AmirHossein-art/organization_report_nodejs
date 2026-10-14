@@ -79,6 +79,7 @@ model Project {
   wbsSubmissions WbsSubmission[]
   compositeKpis CompositeKpi[]
   wbsNodes     WbsNode[]
+  memory       ProjectMemory?
 }
 
 // ۳. جدول دوره‌های گزارش‌دهی
@@ -395,4 +396,22 @@ model AiAnalysisCache {
   updated_at  DateTime @updatedAt
 
   @@index([cache_key])
+}
+
+// ۱۴. حافظه تکاملی هوش مصنوعی برای هر پروژه (Living Project Dossier)
+model ProjectMemory {
+  id                  Int      @id @default(autoincrement())
+  project_id          Int      @unique
+  dna_summary         String   @db.Text
+  chronic_bottlenecks String   @default("") @db.Text
+  reliability_notes   String   @default("") @db.Text
+  lessons_learned     String   @default("") @db.Text
+  version             Int      @default(1)
+  attributes          Json?
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  project             Project  @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@index([project_id])
 }

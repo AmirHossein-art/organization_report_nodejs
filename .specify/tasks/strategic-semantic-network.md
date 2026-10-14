@@ -39,6 +39,7 @@
   - Blind-spot analysis (deliverables lacking KPIs).
   - Scope creep detection.
 - [x] `T3.4` Defensively enforce Shamsi date formatting on all extracted commitments and recommended next actions (`ensureShamsiDate`).
+- [x] `T3.5` Implement Living Project Dossier (`ProjectMemory` schema, self-healing DDL, `src/services/projectMemory.ts`, non-blocking evolution on audit, and Shenasnameh visual dossier card in `WbsViewer.tsx`).
 
 ### Sub-Agent 4: Presentation & Interactive Visualizer Layer (US3)
 - [x] `T4.1` Add WBS node picker to `NextAction` creation drawers in `ProjectNextActionsDrawer.tsx` and `SubmitReport.tsx` with dedicated `GET /api/projects/:projectId/wbs-nodes` API.
