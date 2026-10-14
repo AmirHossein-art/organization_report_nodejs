@@ -597,7 +597,7 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-right dir-rtl font-sans text-xs focus:outline-none focus:border-emerald-600"
                 />
                 <span className="text-[10px] text-slate-400 block mt-0.5">
-                  نقطه شروع سنجش رشد
+                  نقطه شروع سنجش (در صورت خالی بودن، اولین عدد ثبت‌شده مبنا خواهد شد)
                 </span>
               </div>
               <div>
@@ -944,7 +944,7 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-right dir-rtl font-sans text-xs focus:outline-none focus:border-emerald-600"
                   />
                   <span className="text-[10px] text-slate-400 block mt-0.5">
-                    نقطه شروع سنجش رشد
+                    نقطه شروع سنجش (در صورت خالی بودن، اولین عدد ثبت‌شده مبنا خواهد شد)
                   </span>
                 </div>
                 <div>

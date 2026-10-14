@@ -28,7 +28,7 @@ export const KpiInteractiveInput: React.FC<KpiInteractiveInputProps> = ({
   onChange,
 }) => {
   const disabled = Boolean(value.not_measured);
-  const baselineNum =
+  const rawBaseline =
     value.baseline_value !== "" && value.baseline_value !== null && value.baseline_value !== undefined
       ? Number(value.baseline_value)
       : kpi.baseline_value !== null && kpi.baseline_value !== undefined
@@ -40,24 +40,26 @@ export const KpiInteractiveInput: React.FC<KpiInteractiveInputProps> = ({
       ? Number(value.current_value)
       : null;
 
-  // بررسی کاهش غیرمجاز نسبت به پیشرفت قبلی
+  // اولین عددی که در KPI وارد می‌شود به عنوان مبنا در نظر گرفته می‌شود
+  const baselineNum = rawBaseline !== null ? rawBaseline : currentNum;
+  const isFirstBaselineEntry = rawBaseline === null && currentNum !== null;
+
+  // بررسی کاهش غیرمجاز نسبت به پیشرفت قبلی (فقط وقتی مبنای قبلی وجود دارد)
   const isRegressed =
     !disabled &&
-    baselineNum !== null &&
+    rawBaseline !== null &&
     currentNum !== null &&
-    currentNum < baselineNum;
+    currentNum < rawBaseline;
 
   // محاسبه پیش‌نمایش درصد تغییر (برای درصد تغییر)
   let percentageChangePreview: string | null = null;
-  if (
-    kpi.input_type === "percentage_change" &&
-    !disabled &&
-    baselineNum !== null &&
-    baselineNum !== 0 &&
-    currentNum !== null
-  ) {
-    const pct = ((currentNum - baselineNum) / baselineNum) * 100;
-    percentageChangePreview = `${toPersianDigits(pct.toFixed(1))}٪`;
+  if (kpi.input_type === "percentage_change" && !disabled && currentNum !== null) {
+    if (isFirstBaselineEntry) {
+      percentageChangePreview = "۰٪ (مبنای اولیه)";
+    } else if (rawBaseline !== null && rawBaseline !== 0) {
+      const pct = ((currentNum - rawBaseline) / rawBaseline) * 100;
+      percentageChangePreview = `${toPersianDigits(pct.toFixed(1))}٪`;
+    }
   }
 
   // محاسبه عرض قطعات نوار پیشرفت (0 تا 100)
@@ -72,20 +74,28 @@ export const KpiInteractiveInput: React.FC<KpiInteractiveInputProps> = ({
   if (currentNum !== null) {
     if (isPercentageUnit) {
       totalPercent = Math.max(0, Math.min(100, currentNum));
-      basePercent = baselineNum !== null ? Math.max(0, Math.min(100, baselineNum)) : 0;
+      basePercent = isFirstBaselineEntry
+        ? totalPercent
+        : rawBaseline !== null
+        ? Math.max(0, Math.min(100, rawBaseline))
+        : 0;
     } else {
       totalPercent = Math.max(0, Math.min(100, (currentNum / targetNum) * 100));
-      basePercent = baselineNum !== null ? Math.max(0, Math.min(100, (baselineNum / targetNum) * 100)) : 0;
+      basePercent = isFirstBaselineEntry
+        ? totalPercent
+        : rawBaseline !== null
+        ? Math.max(0, Math.min(100, (rawBaseline / targetNum) * 100))
+        : 0;
     }
-  } else if (baselineNum !== null) {
+  } else if (rawBaseline !== null) {
     basePercent = isPercentageUnit
-      ? Math.max(0, Math.min(100, baselineNum))
-      : Math.max(0, Math.min(100, (baselineNum / targetNum) * 100));
+      ? Math.max(0, Math.min(100, rawBaseline))
+      : Math.max(0, Math.min(100, (rawBaseline / targetNum) * 100));
   }
 
   basePercent = Math.min(basePercent, totalPercent > 0 ? totalPercent : basePercent);
   const growthPercent = Math.max(0, totalPercent - basePercent);
-  const growthRaw = currentNum !== null && baselineNum !== null ? currentNum - baselineNum : null;
+  const growthRaw = currentNum !== null && rawBaseline !== null ? currentNum - rawBaseline : null;
 
   return (
     <div className="bg-white p-4 rounded-2xl border border-slate-200/70 space-y-3 shadow-2xs font-sans">
@@ -94,9 +104,17 @@ export const KpiInteractiveInput: React.FC<KpiInteractiveInputProps> = ({
         <div>
           <div className="flex items-center gap-2 flex-wrap">
             <h5 className="text-sm font-bold text-slate-850">{kpi.name}</h5>
-            {baselineNum !== null && (
+            {rawBaseline !== null ? (
               <span className="font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200 text-[10px]">
-                پیشرفت قبلی: {toPersianDigits(baselineNum)} {kpi.unit}
+                پیشرفت قبلی: {toPersianDigits(rawBaseline)} {kpi.unit}
+              </span>
+            ) : isFirstBaselineEntry ? (
+              <span className="font-semibold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200 text-[10px]">
+                مبنای پروژه (اولین ثبت): {toPersianDigits(currentNum!)} {kpi.unit}
+              </span>
+            ) : (
+              <span className="font-normal text-slate-400 bg-slate-50 px-2 py-0.5 rounded-lg border border-slate-200 text-[10px]">
+                مبنا تعیین نشده (اولین ورودی مبنا خواهد شد)
               </span>
             )}
             {hasTarget && (
@@ -168,7 +186,7 @@ export const KpiInteractiveInput: React.FC<KpiInteractiveInputProps> = ({
                     ? "bg-rose-50 border-rose-400 text-rose-900 focus:border-rose-600"
                     : "bg-slate-50 border-slate-200 focus:border-emerald-600 focus:bg-white"
                 }`}
-                placeholder={`مثال: ${baselineNum !== null ? baselineNum : "۱۰"}`}
+                placeholder={rawBaseline !== null ? `مثال: ${rawBaseline}` : "اولین ثبت (مبنای پروژه)"}
               />
             </div>
           </div>

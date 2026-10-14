@@ -265,6 +265,7 @@ model CompositeKpi {
   target_value     Float?
   target_direction KpiTargetDirection  @default(minimum)
   operator         CompositeOperator   @default(sum)
+  formula          String?
   is_active        Boolean             @default(true)
   sort_order       Int                 @default(0)
   created_at       DateTime            @default(now())

@@ -1362,11 +1362,8 @@ function ReportEditModal({
     if (!v) return true;
     if (v.not_measured) return !v.missing_reason || !v.missing_reason.trim();
     if (k.input_type === "direct") return v.current_value === "" || v.current_value === null || isNaN(Number(v.current_value));
-    const baselineToUse = v.baseline_value !== "" && v.baseline_value !== null ? v.baseline_value : k.baseline_value;
-    return (
-      baselineToUse === "" || baselineToUse === null || baselineToUse === undefined || isNaN(Number(baselineToUse)) ||
-      v.current_value === "" || v.current_value === null || isNaN(Number(v.current_value))
-    );
+    // برای شاخص‌های درصدی: در صورت عدم وجود مبنا، اولین ورودی مبنا در نظر گرفته می‌شود
+    return v.current_value === "" || v.current_value === null || isNaN(Number(v.current_value));
   });
 
   const handleSave = async (e: React.FormEvent) => {
@@ -1422,7 +1419,9 @@ function ReportEditModal({
         current_value: Number(v.current_value),
         baseline_value: v.baseline_value !== "" && !isNaN(Number(v.baseline_value))
           ? Number(v.baseline_value)
-          : (k.effective_baseline !== null && k.effective_baseline !== undefined ? Number(k.effective_baseline) : (k.baseline_value ?? null)),
+          : (k.effective_baseline !== null && k.effective_baseline !== undefined
+              ? Number(k.effective_baseline)
+              : (k.baseline_value ?? Number(v.current_value))),
         not_measured: false,
         missing_reason: null,
       };

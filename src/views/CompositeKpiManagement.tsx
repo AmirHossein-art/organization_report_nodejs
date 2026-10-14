@@ -39,6 +39,12 @@ import {
 } from "../types";
 import { toPersianDigits } from "../dateUtils";
 import { CustomSelect } from "../components";
+import {
+  validateFormula,
+  evaluateFormula,
+  getVariableKeyForIndex,
+  formatFormulaForDisplay,
+} from "../utils/formulaEvaluator";
 
 interface BaseKpiItem {
   id: number;
@@ -144,6 +150,7 @@ export default function CompositeKpiManagement() {
   // استیت فرمول‌ساز مرکزی (Builder)
   const [selectedKpis, setSelectedKpis] = useState<BaseKpiItem[]>([]);
   const [operator, setOperator] = useState<CompositeOperator>("sum");
+  const [formula, setFormula] = useState<string>("");
   const [name, setName] = useState<string>("");
   const [unit, setUnit] = useState<string>("درصد");
   const [targetValue, setTargetValue] = useState<string>("");
@@ -168,6 +175,7 @@ export default function CompositeKpiManagement() {
   const [editTargetDirection, setEditTargetDirection] = useState<"minimum" | "maximum">("minimum");
   const [editDescription, setEditDescription] = useState<string>("");
   const [editOperator, setEditOperator] = useState<CompositeOperator>("sum");
+  const [editFormula, setEditFormula] = useState<string>("");
   const [editItems, setEditItems] = useState<BaseKpiItem[]>([]);
   const [isUpdating, setIsUpdating] = useState<boolean>(false);
   const [editCandidateKpiId, setEditCandidateKpiId] = useState<number>(0);
@@ -355,9 +363,106 @@ export default function CompositeKpiManagement() {
     }
   };
 
+  // درج کاراکتر، عملگر یا متغیر در فرمول
+  const insertIntoFormula = (text: string, isEdit = false) => {
+    if (isEdit) {
+      setEditFormula((prev) => (prev ? `${prev} ${text}` : text));
+    } else {
+      setFormula((prev) => (prev ? `${prev} ${text}` : text));
+    }
+  };
+
+  // اعمال قالب‌های محاسباتی آماده
+  const applyFormulaTemplate = (type: "sum" | "avg" | "diff" | "ratio" | "weighted", isEdit = false) => {
+    const items = isEdit ? editItems : selectedKpis;
+    if (items.length === 0) return;
+    const vars = items.map((_, idx) => getVariableKeyForIndex(idx));
+    let tpl = "";
+    if (type === "sum") {
+      tpl = vars.join(" + ");
+      if (!isEdit) setOperator("sum");
+      else setEditOperator("sum");
+    } else if (type === "avg") {
+      tpl = `(${vars.join(" + ")}) / ${vars.length}`;
+      if (!isEdit) setOperator("average");
+      else setEditOperator("average");
+    } else if (type === "diff") {
+      tpl = vars.join(" - ");
+      if (!isEdit) setOperator("difference");
+      else setEditOperator("difference");
+    } else if (type === "ratio") {
+      if (vars.length >= 2) {
+        tpl = `(${vars[0]} / ${vars[1]}) * 100`;
+      } else {
+        tpl = `(${vars[0]} / 100) * 100`;
+      }
+      if (!isEdit) setOperator("ratio_percentage");
+      else setEditOperator("ratio_percentage");
+    } else if (type === "weighted") {
+      const w = Number((1 / vars.length).toFixed(2));
+      tpl = vars.map((v) => `(${v} * ${w})`).join(" + ");
+      if (!isEdit) setOperator("sum");
+      else setEditOperator("sum");
+    }
+    if (isEdit) {
+      setEditFormula(tpl);
+    } else {
+      setFormula(tpl);
+    }
+  };
+
+  // اعتبارسنجی و تست زنده فرمول در فرم ایجاد
+  const formulaValidation = useMemo(() => {
+    if (!formula.trim()) return null;
+    const availableVars = selectedKpis.map((_, idx) => getVariableKeyForIndex(idx));
+    const valRes = validateFormula(formula, availableVars);
+    if (!valRes.valid) return { valid: false, error: valRes.error, sampleResult: null, usedVariables: [] };
+
+    const sampleMap: Record<string, number> = {};
+    selectedKpis.forEach((_, idx) => {
+      const vKey = getVariableKeyForIndex(idx);
+      sampleMap[vKey] = (idx + 1) * 20; // 20, 40, 60...
+    });
+    const evalRes = evaluateFormula(formula, sampleMap);
+    return {
+      valid: true,
+      error: null,
+      usedVariables: valRes.usedVariables,
+      sampleResult: evalRes.success ? evalRes.result : null,
+    };
+  }, [formula, selectedKpis]);
+
+  // اعتبارسنجی و تست زنده فرمول در مودال ویرایش
+  const editFormulaValidation = useMemo(() => {
+    if (!editFormula.trim()) return null;
+    const availableVars = editItems.map((_, idx) => getVariableKeyForIndex(idx));
+    const valRes = validateFormula(editFormula, availableVars);
+    if (!valRes.valid) return { valid: false, error: valRes.error, sampleResult: null, usedVariables: [] };
+
+    const sampleMap: Record<string, number> = {};
+    editItems.forEach((_, idx) => {
+      const vKey = getVariableKeyForIndex(idx);
+      sampleMap[vKey] = (idx + 1) * 20;
+    });
+    const evalRes = evaluateFormula(editFormula, sampleMap);
+    return {
+      valid: true,
+      error: null,
+      usedVariables: valRes.usedVariables,
+      sampleResult: evalRes.success ? evalRes.result : null,
+    };
+  }, [editFormula, editItems]);
+
   // پیش‌نمایش فرمول به فارسی
   const formulaPreviewText = useMemo(() => {
     if (selectedKpis.length === 0) return "هنوز شاخصی انتخاب نشده است.";
+    if (formula.trim()) {
+      const varMap: Record<string, string> = {};
+      selectedKpis.forEach((k, idx) => {
+        varMap[getVariableKeyForIndex(idx)] = k.name;
+      });
+      return formatFormulaForDisplay(formula, varMap);
+    }
     const names = selectedKpis.map((k) => `«${k.name}»`);
     if (operator === "sum") {
       return names.join(" + ");
@@ -378,7 +483,7 @@ export default function CompositeKpiManagement() {
       return `نسبت ${names.join(" به ")} × ۱۰۰٪`;
     }
     return names.join(" + ");
-  }, [selectedKpis, operator]);
+  }, [selectedKpis, operator, formula]);
 
   // ثبت شاخص ترکیبی جدید
   const handleCreateComposite = async (e: React.FormEvent) => {
@@ -402,6 +507,15 @@ export default function CompositeKpiManagement() {
       return;
     }
 
+    if (formula.trim()) {
+      const availableVars = selectedKpis.map((_, idx) => getVariableKeyForIndex(idx));
+      const valRes = validateFormula(formula.trim(), availableVars);
+      if (!valRes.valid) {
+        flashError(`خطا در فرمول محاسباتی: ${valRes.error}`);
+        return;
+      }
+    }
+
     setIsSaving(true);
     try {
       const payload = {
@@ -409,6 +523,7 @@ export default function CompositeKpiManagement() {
         description: description.trim() || null,
         unit: unit.trim(),
         operator,
+        formula: formula.trim() || null,
         target_value: targetValue === "" ? null : Number(targetValue),
         target_direction: targetDirection,
         item_kpi_ids: selectedKpis.map((k) => k.id),
@@ -427,6 +542,7 @@ export default function CompositeKpiManagement() {
         setName("");
         setDescription("");
         setTargetValue("");
+        setFormula("");
         setSelectedKpis([]);
         setSelectedProjectId(null);
         fetchCompositeKpis();
@@ -516,6 +632,7 @@ export default function CompositeKpiManagement() {
     setEditTargetDirection(composite.target_direction || "minimum");
     setEditDescription(composite.description || "");
     setEditOperator(composite.operator || "sum");
+    setEditFormula(composite.formula || "");
     setEditProjectId(composite.project_id || null);
     setEditCandidateKpiId(0);
 
@@ -559,6 +676,15 @@ export default function CompositeKpiManagement() {
       return;
     }
 
+    if (editFormula.trim()) {
+      const availableVars = editItems.map((_, idx) => getVariableKeyForIndex(idx));
+      const valRes = validateFormula(editFormula.trim(), availableVars);
+      if (!valRes.valid) {
+        flashError(`خطا در فرمول محاسباتی: ${valRes.error}`);
+        return;
+      }
+    }
+
     setIsUpdating(true);
     try {
       const payload = {
@@ -566,6 +692,7 @@ export default function CompositeKpiManagement() {
         description: editDescription.trim() || null,
         unit: editUnit.trim(),
         operator: editOperator,
+        formula: editFormula.trim() || null,
         target_value: editTargetValue === "" ? null : Number(editTargetValue),
         target_direction: editTargetDirection,
         item_kpi_ids: editItems.map((k) => k.id),
@@ -956,8 +1083,8 @@ export default function CompositeKpiManagement() {
                   <React.Fragment key={`${kpi.id}_${idx}`}>
                     <div className="p-3 bg-white rounded-2xl border border-slate-200 shadow-2xs flex items-center justify-between gap-3 flex-wrap sm:flex-nowrap">
                       <div className="flex items-center gap-2.5 min-w-0">
-                        <span className="w-6 h-6 rounded-full bg-slate-900 text-white text-[11px] font-bold flex items-center justify-center shrink-0">
-                          {toPersianDigits(idx + 1)}
+                        <span className="w-7 h-7 rounded-xl bg-emerald-700 text-white text-xs font-black flex items-center justify-center shrink-0 shadow-xs" title={`نماد متغیر در فرمول: ${getVariableKeyForIndex(idx)}`}>
+                          {getVariableKeyForIndex(idx)}
                         </span>
                         <div className="min-w-0">
                           <p className="text-xs font-bold text-slate-900 truncate">{kpi.name}</p>
@@ -1025,43 +1152,144 @@ export default function CompositeKpiManagement() {
 
         {/* فرم مشخصات شاخص ترکیبی */}
         <form onSubmit={handleCreateComposite} className="space-y-4">
-          {/* انتخاب عملگر */}
-          <div>
-            <label className="block text-slate-700 font-bold text-xs mb-2">
-              عملگر ریاضی ترکیب شاخص‌ها *
-            </label>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
-              {(Object.keys(OPERATOR_CONFIG) as CompositeOperator[]).map((op) => {
-                const conf = OPERATOR_CONFIG[op];
-                const isSelected = operator === op;
-                return (
-                  <button
-                    key={op}
-                    type="button"
-                    onClick={() => setOperator(op)}
-                    className={`p-3.5 rounded-2xl text-right border transition-all cursor-pointer flex flex-col justify-between gap-2.5 ${
-                      isSelected
-                        ? "bg-emerald-50/90 border-emerald-500 shadow-sm text-emerald-950 ring-2 ring-emerald-500/20"
-                        : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100/80"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2 w-full">
-                      <span className="font-black text-xs text-slate-900">{conf.label}</span>
-                      <span
-                        className={`w-9 h-9 rounded-xl flex items-center justify-center font-black text-lg transition-transform shrink-0 ${
-                          isSelected
-                            ? "bg-emerald-600 text-white scale-110 shadow-xs"
-                            : "bg-slate-200/80 text-slate-700"
-                        }`}
-                      >
-                        {conf.symbol}
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-slate-500 leading-relaxed font-normal">{conf.desc}</p>
-                  </button>
-                );
-              })}
+          {/* محیط فرمول‌نویسی ریاضی آزاد (Formula Editor) */}
+          <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-4 space-y-3.5">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <label className="text-slate-800 font-extrabold text-xs flex items-center gap-1.5">
+                <Calculator className="w-4 h-4 text-emerald-700" />
+                <span>محیط فرمول‌نویسی شاخص ترکیبی (فرمول آزاد)</span>
+              </label>
+              <span className="text-[10.5px] text-slate-500">
+                با کلیک روی متغیرها یا عملگرها، عبارت ریاضی مورد نظر خود را بنویسید.
+              </span>
             </div>
+
+            {/* نوار متغیرهای شاخص‌های انتخاب‌شده */}
+            {selectedKpis.length > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-[10px] text-slate-500 font-bold ml-1">درج متغیر:</span>
+                {selectedKpis.map((k, idx) => {
+                  const vKey = getVariableKeyForIndex(idx);
+                  return (
+                    <button
+                      key={vKey}
+                      type="button"
+                      onClick={() => insertIntoFormula(vKey)}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white hover:bg-emerald-50 text-slate-800 hover:text-emerald-950 border border-slate-200 hover:border-emerald-300 text-xs font-bold transition-all shadow-2xs cursor-pointer"
+                      title={`افزودن متغیر ${vKey} (${k.name})`}
+                    >
+                      <span className="w-5 h-5 rounded-md bg-emerald-600 text-white font-black text-[10px] flex items-center justify-center">
+                        {vKey}
+                      </span>
+                      <span className="truncate max-w-[130px]">{k.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* جعبه ابزار عملگرها و قالب‌های آماده */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[10px] text-slate-500 font-bold ml-1">عملگرها:</span>
+              {["+", "-", "*", "/", "(", ")", "%", "^"].map((sym) => (
+                <button
+                  key={sym}
+                  type="button"
+                  onClick={() => insertIntoFormula(sym)}
+                  className="w-8 h-8 rounded-xl bg-white hover:bg-slate-100 text-slate-800 border border-slate-200 font-mono font-black text-sm flex items-center justify-center shadow-2xs transition-all cursor-pointer"
+                >
+                  {sym === "*" ? "×" : sym === "/" ? "÷" : sym === "-" ? "−" : sym}
+                </button>
+              ))}
+
+              <div className="h-4 w-px bg-slate-300 mx-1" />
+
+              <span className="text-[10px] text-slate-500 font-bold">قالب‌ها:</span>
+              <button
+                type="button"
+                onClick={() => applyFormulaTemplate("sum")}
+                className="px-2.5 py-1 rounded-lg bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 border border-slate-200 text-[10.5px] font-bold transition-all cursor-pointer"
+              >
+                جمع (A + B + ...)
+              </button>
+              <button
+                type="button"
+                onClick={() => applyFormulaTemplate("avg")}
+                className="px-2.5 py-1 rounded-lg bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 border border-slate-200 text-[10.5px] font-bold transition-all cursor-pointer"
+              >
+                میانگین (A + B + ...) / N
+              </button>
+              <button
+                type="button"
+                onClick={() => applyFormulaTemplate("ratio")}
+                className="px-2.5 py-1 rounded-lg bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 border border-slate-200 text-[10.5px] font-bold transition-all cursor-pointer"
+              >
+                نسبت درصدی (A / B) × ۱۰۰
+              </button>
+              <button
+                type="button"
+                onClick={() => applyFormulaTemplate("weighted")}
+                className="px-2.5 py-1 rounded-lg bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 border border-slate-200 text-[10.5px] font-bold transition-all cursor-pointer"
+              >
+                میانگین وزنی
+              </button>
+              <button
+                type="button"
+                onClick={() => applyFormulaTemplate("diff")}
+                className="px-2.5 py-1 rounded-lg bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 border border-slate-200 text-[10.5px] font-bold transition-all cursor-pointer"
+              >
+                تفاضل (A − B)
+              </button>
+            </div>
+
+            {/* کادر متنی فرمول با فونت مونو */}
+            <div>
+              <input
+                type="text"
+                dir="ltr"
+                value={formula}
+                onChange={(e) => setFormula(e.target.value)}
+                placeholder="فرمول را اینجا بنویسید، مثال: (A * 0.4) + (B * 0.6)  یا  (A / B) * 100"
+                className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 font-mono text-sm text-slate-900 focus:outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 shadow-inner"
+              />
+            </div>
+
+            {/* وضعیت اعتبارسنجی و پیش‌نمایش تست زنده */}
+            {formulaValidation ? (
+              <div
+                className={`p-2.5 rounded-xl border text-xs flex items-center justify-between gap-2 flex-wrap ${
+                  formulaValidation.valid
+                    ? "bg-emerald-50/80 border-emerald-300 text-emerald-950"
+                    : "bg-rose-50 border-rose-300 text-rose-900"
+                }`}
+              >
+                <div className="flex items-center gap-1.5 font-medium">
+                  {formulaValidation.valid ? (
+                    <>
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>
+                        فرمول معتبر است. متغیرهای استفاده‌شده:{" "}
+                        <strong>{formulaValidation.usedVariables.join(", ")}</strong>
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                      <span>{formulaValidation.error}</span>
+                    </>
+                  )}
+                </div>
+                {formulaValidation.valid && formulaValidation.sampleResult !== null && (
+                  <div className="font-mono text-xs bg-emerald-100/90 text-emerald-900 px-2.5 py-0.5 rounded-lg border border-emerald-300">
+                    محاسبه نمونه: <strong>{formulaValidation.sampleResult}</strong>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-[11px] text-slate-400">
+                در صورت خالی گذاشتن فرمول، به صورت خودکار مقادیر شاخص‌ها با هم جمع (Sum) خواهند شد.
+              </p>
+            )}
           </div>
 
           {/* فیلدهای نام، واحد، هدف */}
@@ -1256,24 +1484,40 @@ export default function CompositeKpiManagement() {
                           </p>
                         )}
                       </div>
-                      <span className={`px-2 py-0.5 rounded-lg text-[10.5px] font-bold border shrink-0 ${opConf.badgeClass}`}>
-                        {opConf.label}
-                      </span>
+                      {composite.formula ? (
+                        <span className="px-2 py-0.5 rounded-lg text-[10.5px] font-bold border shrink-0 bg-emerald-50 text-emerald-800 border-emerald-300 font-mono">
+                          فرمول: {composite.formula}
+                        </span>
+                      ) : (
+                        <span className={`px-2 py-0.5 rounded-lg text-[10.5px] font-bold border shrink-0 ${opConf.badgeClass}`}>
+                          {opConf.label}
+                        </span>
+                      )}
                     </div>
 
                     {/* اجزای فرمول */}
-                    <div className="bg-slate-50 rounded-xl p-2.5 space-y-1 text-[11px]">
-                      <span className="text-slate-400 font-bold block text-[10px]">اجزای سازنده:</span>
+                    <div className="bg-slate-50 rounded-xl p-2.5 space-y-1.5 text-[11px]">
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400 font-bold block text-[10px]">اجزای متغیرها و شاخص‌ها:</span>
+                        {composite.formula && (
+                          <span className="text-[10px] text-emerald-800 font-bold bg-emerald-100/70 px-2 py-0.5 rounded border border-emerald-200">
+                            فرمول ریاضی آزاد
+                          </span>
+                        )}
+                      </div>
                       <div className="flex items-center gap-1.5 flex-wrap">
                         {composite.items.map((it, idx) => (
                           <React.Fragment key={it.id}>
-                            <span className="font-semibold text-slate-700 bg-white border border-slate-200 px-2 py-0.5 rounded-md">
-                              {it.projectKpi?.name || "شاخص"}
-                              <span className="text-[9.5px] text-slate-400 mr-1">
+                            <span className="font-semibold text-slate-700 bg-white border border-slate-200 px-2 py-0.5 rounded-md flex items-center gap-1">
+                              <span className="font-mono font-black text-emerald-700 text-[10px] bg-emerald-50 px-1 rounded border border-emerald-200">
+                                {getVariableKeyForIndex(idx)}
+                              </span>
+                              <span>{it.projectKpi?.name || "شاخص"}</span>
+                              <span className="text-[9.5px] text-slate-400 mr-0.5">
                                 ({it.projectKpi?.project?.title})
                               </span>
                             </span>
-                            {idx < composite.items.length - 1 && (
+                            {idx < composite.items.length - 1 && !composite.formula && (
                               <span className="font-black text-emerald-700 text-xs">{opConf.symbol}</span>
                             )}
                           </React.Fragment>
@@ -1567,38 +1811,144 @@ export default function CompositeKpiManagement() {
             </div>
 
             <form onSubmit={handleUpdateComposite} className="space-y-4">
-              {/* انتخاب عملگر با دکمه‌های شکیل و فونت بزرگ */}
-              <div>
-                <label className="block text-slate-700 font-bold text-xs mb-2">عملگر ریاضی ترکیب شاخص‌ها *</label>
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-                  {(Object.keys(OPERATOR_CONFIG) as CompositeOperator[]).map((op) => {
-                    const conf = OPERATOR_CONFIG[op];
-                    const isSelected = editOperator === op;
-                    return (
-                      <button
-                        key={`edit_op_${op}`}
-                        type="button"
-                        onClick={() => setEditOperator(op)}
-                        className={`p-2.5 rounded-xl text-right border transition-all cursor-pointer flex flex-col justify-between gap-1.5 ${
-                          isSelected
-                            ? "bg-emerald-50 border-emerald-500 shadow-2xs text-emerald-950 ring-1 ring-emerald-500"
-                            : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-1 w-full">
-                          <span className="font-bold text-[11px] truncate">{conf.label}</span>
-                          <span
-                            className={`w-7 h-7 rounded-lg flex items-center justify-center font-black text-sm shrink-0 ${
-                              isSelected ? "bg-emerald-600 text-white" : "bg-slate-200 text-slate-700"
-                            }`}
-                          >
-                            {conf.symbol}
-                          </span>
-                        </div>
-                      </button>
-                    );
-                  })}
+              {/* محیط فرمول‌نویسی ریاضی آزاد در مودال ویرایش */}
+              <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <label className="text-slate-800 font-extrabold text-xs flex items-center gap-1.5">
+                    <Calculator className="w-4 h-4 text-emerald-700" />
+                    <span>محیط فرمول‌نویسی شاخص ترکیبی (فرمول آزاد)</span>
+                  </label>
+                  <span className="text-[10px] text-slate-500">
+                    با کلیک روی متغیرها یا عملگرها، فرمول را ویرایش کنید.
+                  </span>
                 </div>
+
+                {/* نوار متغیرهای شاخص‌های انتخاب‌شده */}
+                {editItems.length > 0 && (
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[10px] text-slate-500 font-bold ml-1">درج متغیر:</span>
+                    {editItems.map((k, idx) => {
+                      const vKey = getVariableKeyForIndex(idx);
+                      return (
+                        <button
+                          key={`edit_v_${vKey}`}
+                          type="button"
+                          onClick={() => insertIntoFormula(vKey, true)}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white hover:bg-emerald-50 text-slate-800 hover:text-emerald-950 border border-slate-200 hover:border-emerald-300 text-xs font-bold transition-all shadow-2xs cursor-pointer"
+                          title={`افزودن متغیر ${vKey} (${k.name})`}
+                        >
+                          <span className="w-5 h-5 rounded-md bg-emerald-600 text-white font-black text-[10px] flex items-center justify-center">
+                            {vKey}
+                          </span>
+                          <span className="truncate max-w-[120px]">{k.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* جعبه ابزار عملگرها و قالب‌های آماده */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px] text-slate-500 font-bold ml-1">عملگرها:</span>
+                  {["+", "-", "*", "/", "(", ")", "%", "^"].map((sym) => (
+                    <button
+                      key={`edit_sym_${sym}`}
+                      type="button"
+                      onClick={() => insertIntoFormula(sym, true)}
+                      className="w-8 h-8 rounded-xl bg-white hover:bg-slate-100 text-slate-800 border border-slate-200 font-mono font-black text-sm flex items-center justify-center shadow-2xs transition-all cursor-pointer"
+                    >
+                      {sym === "*" ? "×" : sym === "/" ? "÷" : sym === "-" ? "−" : sym}
+                    </button>
+                  ))}
+
+                  <div className="h-4 w-px bg-slate-300 mx-1" />
+
+                  <span className="text-[10px] text-slate-500 font-bold">قالب‌ها:</span>
+                  <button
+                    type="button"
+                    onClick={() => applyFormulaTemplate("sum", true)}
+                    className="px-2 py-1 rounded-lg bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 border border-slate-200 text-[10.5px] font-bold transition-all cursor-pointer"
+                  >
+                    جمع (A + B + ...)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyFormulaTemplate("avg", true)}
+                    className="px-2 py-1 rounded-lg bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 border border-slate-200 text-[10.5px] font-bold transition-all cursor-pointer"
+                  >
+                    میانگین
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyFormulaTemplate("ratio", true)}
+                    className="px-2 py-1 rounded-lg bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 border border-slate-200 text-[10.5px] font-bold transition-all cursor-pointer"
+                  >
+                    نسبت درصدی
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyFormulaTemplate("weighted", true)}
+                    className="px-2 py-1 rounded-lg bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 border border-slate-200 text-[10.5px] font-bold transition-all cursor-pointer"
+                  >
+                    میانگین وزنی
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyFormulaTemplate("diff", true)}
+                    className="px-2 py-1 rounded-lg bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-800 border border-slate-200 text-[10.5px] font-bold transition-all cursor-pointer"
+                  >
+                    تفاضل
+                  </button>
+                </div>
+
+                {/* کادر متنی فرمول */}
+                <div>
+                  <input
+                    type="text"
+                    dir="ltr"
+                    value={editFormula}
+                    onChange={(e) => setEditFormula(e.target.value)}
+                    placeholder="فرمول را اینجا بنویسید، مثال: (A * 0.4) + (B * 0.6)"
+                    className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2 font-mono text-sm text-slate-900 focus:outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 shadow-inner"
+                  />
+                </div>
+
+                {/* وضعیت اعتبارسنجی در مودال ویرایش */}
+                {editFormulaValidation ? (
+                  <div
+                    className={`p-2.5 rounded-xl border text-xs flex items-center justify-between gap-2 flex-wrap ${
+                      editFormulaValidation.valid
+                        ? "bg-emerald-50/80 border-emerald-300 text-emerald-950"
+                        : "bg-rose-50 border-rose-300 text-rose-900"
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5 font-medium">
+                      {editFormulaValidation.valid ? (
+                        <>
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                          <span>
+                            فرمول معتبر است. متغیرها:{" "}
+                            <strong>{editFormulaValidation.usedVariables.join(", ")}</strong>
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                          <span>{editFormulaValidation.error}</span>
+                        </>
+                      )}
+                    </div>
+                    {editFormulaValidation.valid && editFormulaValidation.sampleResult !== null && (
+                      <div className="font-mono text-xs bg-emerald-100/90 text-emerald-900 px-2.5 py-0.5 rounded-lg border border-emerald-300">
+                        محاسبه نمونه: <strong>{editFormulaValidation.sampleResult}</strong>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-slate-400">
+                    در صورت خالی بودن فرمول، عملگر جمع روی شاخص‌ها اعمال می‌شود.
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -1686,8 +2036,8 @@ export default function CompositeKpiManagement() {
                       className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-2"
                     >
                       <div className="flex items-center gap-2 min-w-0">
-                        <span className="w-5 h-5 rounded-full bg-slate-800 text-white text-[10px] font-bold flex items-center justify-center shrink-0">
-                          {toPersianDigits(idx + 1)}
+                        <span className="w-6 h-6 rounded-lg bg-emerald-700 text-white text-xs font-black flex items-center justify-center shrink-0 shadow-xs" title={`نماد متغیر در فرمول: ${getVariableKeyForIndex(idx)}`}>
+                          {getVariableKeyForIndex(idx)}
                         </span>
                         <div className="min-w-0">
                           <p className="text-xs font-bold text-slate-900 truncate">{it.name}</p>

@@ -246,3 +246,14 @@
   4. **Shenasnameh Visualization Surface:** Render the living project memory in `WbsViewer.tsx` (Shenasnameh tab) with version badges, 4-quadrant layout, and 1-click manual re-synthesis controls.
 - **Rationale:** Requires less than 1 MB of storage for 100+ municipal projects on the existing PostgreSQL infrastructure (eliminating any need for expensive external VPS or vector databases), while granting AI models cumulative historical intelligence across months of municipal execution.
 - **Verification:** Unit and PostgreSQL integration tests in `tests/project-memory.test.ts` verifying upsert, versioning, prompt formatting, empirical reliability calculation, and cascade deletion. Total test suite reaches 21 passing tests.
+
+### D38 — First-Value KPI Baseline Inception & Free-Form Math Expression Engine for Composite KPIs
+- **Context:**
+  1. Municipal project managers frequently define project KPIs without knowing the starting baseline value in advance. Requiring upfront static baselines blocked submission or forced arbitrary zeros.
+  2. Composite KPIs previously relied solely on 5 rigid, fixed mathematical operators (`sum`, `average`, `difference`, `multiply`, `ratio_percentage`). Complex formulas (weighted averages e.g. `(A * 0.4) + (B * 0.6)`, custom quotients, or multi-variable indexes) could not be modeled.
+- **Decision:**
+  1. **First-Value Baseline Inception:** When a KPI is reported for the first time without an explicit pre-existing baseline (`baseline_value: null`), the system automatically treats the first entered measurement (`current_value`) as the contract baseline. In the first period, growth is zero and baseline matches current value. In `server.ts` `validateAndBuildKpiValues`, `ProjectKpi.baseline_value` is updated to persist this initial baseline permanently.
+  2. **Safe Free-Form Math Formula Engine:** Built a zero-dependency, AST/recursive-descent mathematical parser and evaluator (`src/utils/formulaEvaluator.ts`) supporting arbitrary expressions, operator precedence (`^`, `*`, `/`, `%`, `+`, `-`), parentheses, functions (`min`, `max`, `avg`, `round`, `abs`, `sqrt`), Persian numeral normalization (`۰-۹`, `×`, `÷`, `−`), and variable mapping (`A`, `B`, `C`...).
+  3. **Formula Editor UI:** Replaced the restrictive 5-button selector in `CompositeKpiManagement.tsx` (creation and edit modals) with an interactive Formula Editor featuring variable insertion badges, math symbol toolbars, quick formula templates, real-time syntax validation, and live test evaluation preview.
+  4. **Universal Display Surfaces:** Integrated `formula` across `server.ts` periodic recalculation, `ProjectKpiAnalytics.tsx`, `WbsViewer.tsx`, `ReportsPdfDocument.tsx`, and `KpiMatrixTable.tsx`.
+- **Verification:** 6 unit tests in `tests/formula-evaluator.test.ts` and 2 PostgreSQL integration tests in `tests/kpi-formula-and-first-baseline.test.ts`. Total test suite passes cleanly at 29 tests with 0 TypeScript/build errors.

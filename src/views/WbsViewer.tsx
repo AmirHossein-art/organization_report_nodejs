@@ -947,8 +947,8 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
                         >
                           <div className="flex items-center justify-between gap-2">
                             <span className="font-bold text-slate-900 text-xs">{ck.name}</span>
-                            <span className="text-[10px] font-bold bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-md border border-indigo-200">
-                              ترکیبی ({ck.operator})
+                            <span className="text-[10px] font-bold bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-md border border-indigo-200 font-mono">
+                              {ck.formula ? `فرمول: ${ck.formula}` : `ترکیبی (${ck.operator})`}
                             </span>
                           </div>
                           {ck.description && (

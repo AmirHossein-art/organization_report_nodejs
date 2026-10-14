@@ -99,7 +99,7 @@ export const KpiMatrixTable: React.FC<KpiMatrixTableProps> = ({
                           fontWeight: "bold",
                         }}
                       >
-                        ترکیبی
+                        {kv.formula ? `فرمول: ${kv.formula}` : "ترکیبی"}
                       </span>
                     )}
                   </div>

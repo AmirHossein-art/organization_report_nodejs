@@ -866,6 +866,7 @@ export default function ReportsPdfDocument({
           not_measured: calcVal === null || calcVal === undefined,
           missing_reason: calcVal === null ? "محاسبه‌نشده" : undefined,
           operator: c.operator,
+          formula: c.formula,
         };
       });
 

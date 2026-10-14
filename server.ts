@@ -33,6 +33,11 @@ import {
   formatProjectMemoryForPrompt,
   evolveProjectMemory,
 } from "./src/services/projectMemory";
+import {
+  evaluateFormula,
+  validateFormula,
+  getVariableKeyForIndex,
+} from "./src/utils/formulaEvaluator";
 import { getDeadlineState } from "./src/deadline";
 import { ensureShamsiDate, isLastWeekOfShamsiMonth, shamsiToGregorian } from "./src/dateUtils";
 
@@ -275,6 +280,7 @@ async function ensureDatabaseSchema() {
       );
 
       ALTER TABLE "CompositeKpi" ADD COLUMN IF NOT EXISTS "project_id" INTEGER REFERENCES "Project"("id") ON DELETE SET NULL;
+      ALTER TABLE "CompositeKpi" ADD COLUMN IF NOT EXISTS "formula" TEXT;
       CREATE INDEX IF NOT EXISTS "CompositeKpi_project_id_idx" ON "CompositeKpi"("project_id");
 
       CREATE TABLE IF NOT EXISTS "CompositeKpiItem" (
@@ -566,9 +572,20 @@ async function validateAndBuildKpiValues(
         throw new KpiValidationError(`مقدار این دوره شاخص «${kpi.name}» باید عددی معتبر باشد.`);
       }
       const submittedBaseline = toNumberOrNull(v.baseline_value);
-      const baseline = submittedBaseline !== null
+      let baseline = submittedBaseline !== null
         ? submittedBaseline
         : (kpi.baseline_value !== undefined && kpi.baseline_value !== null ? kpi.baseline_value : null);
+
+      if (baseline === null) {
+        // اولین عددی که در KPI وارد می‌شود به عنوان مبنا تثبیت می‌شود
+        baseline = current;
+        if (kpi.baseline_value === null || kpi.baseline_value === undefined) {
+          await prisma.projectKpi.update({
+            where: { id: kpiId },
+            data: { baseline_value: current },
+          }).catch((err) => console.warn("Failed to persist first baseline for KPI:", err));
+        }
+      }
 
       built.push({
         project_kpi_id: kpiId,
@@ -580,20 +597,26 @@ async function validateAndBuildKpiValues(
       });
     } else {
       const submittedBaseline = toNumberOrNull(v.baseline_value);
-      const baseline = submittedBaseline !== null
+      let baseline = submittedBaseline !== null
         ? submittedBaseline
         : (kpi.baseline_value !== undefined && kpi.baseline_value !== null ? kpi.baseline_value : null);
       const current = toNumberOrNull(v.current_value);
-      if (baseline === null) {
-        throw new KpiValidationError(`مقدار مبنای شاخص «${kpi.name}» باید عددی معتبر باشد.`);
-      }
       if (current === null) {
         throw new KpiValidationError(`مقدار دوره جاری شاخص «${kpi.name}» باید عددی معتبر باشد.`);
       }
-      if (baseline === 0) {
-        throw new KpiValidationError(`مقدار مبنای شاخص «${kpi.name}» نمی‌تواند صفر باشد.`);
+
+      if (baseline === null) {
+        // اولین عددی که در KPI وارد می‌شود به عنوان مبنا تثبیت می‌شود
+        baseline = current;
+        if (kpi.baseline_value === null || kpi.baseline_value === undefined) {
+          await prisma.projectKpi.update({
+            where: { id: kpiId },
+            data: { baseline_value: current },
+          }).catch((err) => console.warn("Failed to persist first baseline for KPI:", err));
+        }
       }
-      const calculated = ((current - baseline) / baseline) * 100;
+
+      const calculated = baseline === 0 ? 0 : ((current - baseline) / baseline) * 100;
       built.push({
         project_kpi_id: kpiId,
         current_value: current,
@@ -2346,9 +2369,11 @@ async function calculateCompositeKpiForPeriod(compositeKpiId: number, periodId: 
       measuredItems.push({ val, order: item.order_index, kpiId: pk.id });
     }
 
+    const varKey = getVariableKeyForIndex(compositeKpi.items.indexOf(item));
     details.push({
       kpi_id: pk.id,
       kpi_name: pk.name,
+      variable_key: varKey,
       project_id: pk.project_id,
       project_title: pk.project.title,
       deputy_name: deputyName,
@@ -2371,8 +2396,29 @@ async function calculateCompositeKpiForPeriod(compositeKpiId: number, periodId: 
     status = "computed";
   }
 
-  const op = compositeKpi.operator;
-  if (measuredItems.length > 0) {
+  const hasCustomFormula = Boolean(compositeKpi.formula && compositeKpi.formula.trim());
+
+  if (hasCustomFormula) {
+    // ارزیابی بر اساس موتور فرمول‌نویسی آزاد و امن
+    const varMap: Record<string, number | null> = {};
+    compositeKpi.items.forEach((item, idx) => {
+      const vKey = getVariableKeyForIndex(idx);
+      const measured = measuredItems.find((m) => m.kpiId === item.project_kpi_id);
+      varMap[vKey] = measured ? measured.val : null;
+      varMap[`K${idx + 1}`] = measured ? measured.val : null;
+    });
+
+    const evalRes = evaluateFormula(compositeKpi.formula!, varMap);
+    if (evalRes.success && evalRes.result !== null) {
+      calculatedValue = evalRes.result;
+      status = measuredItems.length === compositeKpi.items.length ? "computed" : "partial";
+    } else {
+      calculatedValue = null;
+      status = measuredItems.length === 0 ? "not_measured" : "partial";
+    }
+  } else if (measuredItems.length > 0) {
+    // پشتیبانی سازگار با عقب از عملگرهای قدیمی
+    const op = compositeKpi.operator;
     if (op === "sum") {
       calculatedValue = measuredItems.reduce((acc, curr) => acc + curr.val, 0);
     } else if (op === "average") {
@@ -2698,6 +2744,7 @@ app.post("/api/composite-kpis", authenticate, requireManager, async (req, res) =
       target_value,
       target_direction,
       operator,
+      formula,
       item_kpi_ids,
       sort_order,
       project_id,
@@ -2713,12 +2760,21 @@ app.post("/api/composite-kpis", authenticate, requireManager, async (req, res) =
       return res.status(400).json({ error: "واحد سنجش الزامی است." });
     }
 
-    if (!COMPOSITE_OPERATORS.includes(operator)) {
-      return res.status(400).json({ error: "عملگر ریاضی نامعتبر است." });
-    }
+    const effectiveOperator = COMPOSITE_OPERATORS.includes(operator) ? operator : "sum";
 
     if (!Array.isArray(item_kpi_ids) || item_kpi_ids.length < 2) {
       return res.status(400).json({ error: "حداقل دو شاخص پایه برای ترکیب الزامی است." });
+    }
+
+    // اعتبارسنجی فرمول ریاضی سفارشی در صورت ارسال
+    let trimmedFormula: string | null = null;
+    if (typeof formula === "string" && formula.trim()) {
+      trimmedFormula = formula.trim();
+      const availableVars = item_kpi_ids.map((_, idx) => getVariableKeyForIndex(idx));
+      const valRes = validateFormula(trimmedFormula, availableVars);
+      if (!valRes.valid) {
+        return res.status(400).json({ error: `خطا در فرمول: ${valRes.error}` });
+      }
     }
 
     const parsedTarget =
@@ -2749,7 +2805,8 @@ app.post("/api/composite-kpis", authenticate, requireManager, async (req, res) =
         unit: trimmedUnit,
         target_value: parsedTarget,
         target_direction: target_direction === "maximum" ? "maximum" : "minimum",
-        operator,
+        operator: effectiveOperator,
+        formula: trimmedFormula,
         sort_order: !isNaN(Number(sort_order)) ? Number(sort_order) : 0,
         items: {
           create: item_kpi_ids.map((kpiId: number, idx: number) => ({
@@ -2804,6 +2861,7 @@ app.patch("/api/composite-kpis/:id", authenticate, requireManager, async (req, r
       target_value,
       target_direction,
       operator,
+      formula,
       item_kpi_ids,
       sort_order,
       is_active,
@@ -2829,6 +2887,29 @@ app.patch("/api/composite-kpis/:id", authenticate, requireManager, async (req, r
         return res.status(400).json({ error: "عملگر ریاضی نامعتبر است." });
       }
       data.operator = operator;
+    }
+    if (formula !== undefined) {
+      if (typeof formula === "string" && formula.trim()) {
+        const trimmedFormula = formula.trim();
+        let targetItemIds: number[] = [];
+        if (Array.isArray(item_kpi_ids)) {
+          targetItemIds = item_kpi_ids.map(Number);
+        } else {
+          const currentItems = await prisma.compositeKpiItem.findMany({
+            where: { composite_kpi_id: id },
+            orderBy: { order_index: "asc" },
+          });
+          targetItemIds = currentItems.map((i) => i.project_kpi_id);
+        }
+        const availableVars = targetItemIds.map((_, idx) => getVariableKeyForIndex(idx));
+        const valRes = validateFormula(trimmedFormula, availableVars);
+        if (!valRes.valid) {
+          return res.status(400).json({ error: `خطا در فرمول: ${valRes.error}` });
+        }
+        data.formula = trimmedFormula;
+      } else {
+        data.formula = null;
+      }
     }
     if (target_direction !== undefined) {
       data.target_direction = target_direction === "maximum" ? "maximum" : "minimum";

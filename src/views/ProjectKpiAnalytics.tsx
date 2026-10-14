@@ -231,17 +231,30 @@ function CompositeAnalyticsBlock({
         {/* کارت ۳: عملگر و ساختار */}
         <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs">
           <span className="text-slate-600 text-xs font-semibold block">روش تلفیق ریاضی</span>
-          <div className="flex items-center gap-2 mt-1">
-            <span className="text-2xl font-black text-slate-800">
-              {OPERATOR_CONFIG[compositeDetail.operator as CompositeOperator]?.label}
-            </span>
-            <span className="w-8 h-8 rounded-xl bg-slate-100 font-black text-base text-emerald-700 flex items-center justify-center">
-              {OPERATOR_CONFIG[compositeDetail.operator as CompositeOperator]?.symbol}
-            </span>
-          </div>
-          <span className="text-[11px] text-slate-400 block mt-1">
-            {OPERATOR_CONFIG[compositeDetail.operator as CompositeOperator]?.desc}
-          </span>
+          {compositeDetail.formula ? (
+            <div className="mt-1 space-y-1">
+              <span className="text-sm font-mono font-black text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200 inline-block dir-ltr">
+                {compositeDetail.formula}
+              </span>
+              <span className="text-[11px] text-slate-500 block">
+                فرمول سفارشی آزاد
+              </span>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-2xl font-black text-slate-800">
+                  {OPERATOR_CONFIG[compositeDetail.operator as CompositeOperator]?.label}
+                </span>
+                <span className="w-8 h-8 rounded-xl bg-slate-100 font-black text-base text-emerald-700 flex items-center justify-center">
+                  {OPERATOR_CONFIG[compositeDetail.operator as CompositeOperator]?.symbol}
+                </span>
+              </div>
+              <span className="text-[11px] text-slate-400 block mt-1">
+                {OPERATOR_CONFIG[compositeDetail.operator as CompositeOperator]?.desc}
+              </span>
+            </>
+          )}
         </div>
 
         {/* کارت ۴: اجزای تشکیل‌دهنده */}

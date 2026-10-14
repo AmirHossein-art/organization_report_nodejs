@@ -251,6 +251,7 @@ export interface CompositeKpi {
   target_value?: number | null;
   target_direction: "minimum" | "maximum";
   operator: CompositeOperator;
+  formula?: string | null;
   is_active: boolean;
   sort_order: number;
   created_at?: string;
