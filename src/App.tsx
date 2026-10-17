@@ -94,7 +94,12 @@ export default function App() {
 
   // ۲. واکشی داده‌های پروژه‌ها و گزارش‌ها به محض تایید کاربر
   useEffect(() => {
-    if (user) fetchData();
+    if (user) {
+      if (user.role === "viewer") {
+        setCurrentView("manager_dashboard");
+      }
+      fetchData();
+    }
   }, [user]);
 
   const handleLogout = async () => {
@@ -106,6 +111,9 @@ export default function App() {
       setUser(null);
       setCurrentView("home");
       setShowLogin(true);
+      try {
+        localStorage.removeItem("org_report_view");
+      } catch (_) {}
     }
   };
 
