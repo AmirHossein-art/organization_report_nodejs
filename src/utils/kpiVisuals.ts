@@ -39,6 +39,13 @@ interface ComputeKpiParams {
 /**
  * Calculates cumulative physical progress, segmented bar widths
  * (prior baseline + period growth), and Persian display strings.
+ *
+ * Direction semantics (D38 addendum — 2026-10-17):
+ * - target_direction = "minimum" (هرچه بیشتر بهتر): value climbs from baseline up to target.
+ *   Progress = (current / target) * 100.
+ * - target_direction = "maximum" (هرچه کمتر بهتر): value travels from baseline DOWN to target.
+ *   Progress measures distance traveled = (baseline - current) / (baseline - target) * 100,
+ *   so reaching the target = 100%. A lower current value is positive growth.
  */
 export function computeKpiVisual(
   kpiMeta: ComputeKpiParams | null | undefined,
@@ -132,6 +139,9 @@ export function computeKpiVisual(
   const numBaseline = baselineVal !== null && baselineVal !== undefined ? Number(baselineVal) : 0;
   const numTarget = hasTarget && Number(targetVal) > 0 ? Number(targetVal) : 100;
 
+  // جهت هدف: minimum = هرچه بیشتر بهتر (صعود به سمت هدف)؛ maximum = هرچه کمتر بهتر (نزول به سمت هدف)
+  const isDecreasing = kpiMeta?.target_direction === "maximum" || kpiValue?.target_direction === "maximum";
+
   // Calculate percentage of journey (0 to 100%)
   let totalProgressPercent = 0;
   let baselinePercent = 0;
@@ -140,8 +150,17 @@ export function computeKpiVisual(
     totalProgressPercent = Math.max(0, Math.min(100, numCurrent));
     baselinePercent = Math.max(0, Math.min(100, numBaseline));
   } else if (hasTarget && numTarget > 0) {
-    totalProgressPercent = Math.max(0, Math.min(100, (numCurrent / numTarget) * 100));
-    baselinePercent = Math.max(0, Math.min(100, (numBaseline / numTarget) * 100));
+    if (isDecreasing) {
+      // هرچه کمتر بهتر: درصد پیشرفت = مسافت طی‌شده از مبنا تا هدف
+      // (مبنا خودش ۰٪ سفر است، پس baselinePercent اینجا همیشه صفر می‌ماند)
+      const span = Math.abs(numBaseline - numTarget);
+      totalProgressPercent = span > 0
+        ? Math.max(0, Math.min(100, ((numBaseline - numCurrent) / span) * 100))
+        : (numCurrent <= numTarget ? 100 : 0);
+    } else {
+      totalProgressPercent = Math.max(0, Math.min(100, (numCurrent / numTarget) * 100));
+      baselinePercent = Math.max(0, Math.min(100, (numBaseline / numTarget) * 100));
+    }
   } else {
     totalProgressPercent = 0;
     baselinePercent = 0;
@@ -151,8 +170,8 @@ export function computeKpiVisual(
   baselinePercent = Math.min(baselinePercent, totalProgressPercent);
   const growthPercent = Math.max(0, totalProgressPercent - baselinePercent);
 
-  // Growth calculation in raw units
-  const rawGrowth = numCurrent - numBaseline;
+  // Growth calculation in raw units — جهت‌آگاه: در شاخص کاهشی کاهش مقدار یعنی رشد مثبت
+  const rawGrowth = isDecreasing ? numBaseline - numCurrent : numCurrent - numBaseline;
   const growthPositive = rawGrowth > 0;
   let formattedGrowth: string | null = null;
   if (rawGrowth > 0) {

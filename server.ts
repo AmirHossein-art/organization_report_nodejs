@@ -4695,7 +4695,8 @@ function formatKpiValuesForPrompt(kpiValues: any[] | undefined): string {
 
       const measured = !kv.not_measured && kv.calculated_value !== null && kv.current_value !== null;
       const inputTypeLabel = inputType === "direct" ? "مقدار مستقیم" : "درصد تغییر";
-      const directionLabel = targetDirection === "minimum" ? "حداقل" : "حداکثر";
+      // جهت‌آگاه برای AI: مفهوم هرچه کمتر/بیشتر بهتر صراحتاً تزریق می‌شود
+      const directionLabel = targetDirection === "minimum" ? "هرچه بیشتر بهتر" : "هرچه کمتر بهتر";
 
       if (!measured) {
         return `${idx + 1}. ${name} — اندازه‌گیری نشده (${kv.missing_reason || "دلیل مشخص نشده"})`;
@@ -4779,7 +4780,7 @@ async function buildProjectGraphPromptContext(projectId: number): Promise<string
     kpiSection = projectKpis
       .map((k, idx) => {
         const targetStr = k.target_value !== null && k.target_value !== undefined
-          ? ` [هدف: ${k.target_direction === "minimum" ? "حداقل" : "حداکثر"} ${k.target_value}]`
+          ? ` [هدف: ${k.target_direction === "minimum" ? "هرچه بیشتر بهتر" : "هرچه کمتر بهتر"} ${k.target_value}]`
           : "";
         const baseStr = k.baseline_value !== null && k.baseline_value !== undefined ? ` [مبنا: ${k.baseline_value}]` : "";
         return `  ${idx + 1}. ${k.name} (واحد: ${k.unit})${baseStr}${targetStr}`;
@@ -5400,7 +5401,7 @@ app.post(["/api/reports/analyze-deputy", "/api/ai/deputy-analysis"], authenticat
           projectKpis
             .map((pk, kIdx) => {
               const targetStr = pk.target_value !== null && pk.target_value !== undefined
-                ? ` [هدف: ${pk.target_direction === "minimum" ? "حداقل" : "حداکثر"} ${pk.target_value}]`
+                ? ` [هدف: ${pk.target_direction === "minimum" ? "هرچه بیشتر بهتر" : "هرچه کمتر بهتر"} ${pk.target_value}]`
                 : "";
               return `  ${kIdx + 1}. ${pk.name} (واحد: ${pk.unit})${targetStr}`;
             })

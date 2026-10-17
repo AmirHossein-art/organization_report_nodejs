@@ -1347,13 +1347,13 @@ export default function CompositeKpiManagement() {
                   placeholder="اختیاری (مثال: ۱۰۰)"
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-right dir-rtl font-sans text-xs focus:outline-none focus:border-emerald-600"
                 />
-                <div className="w-28 shrink-0">
+                <div className="w-36 shrink-0">
                   <CustomSelect
                     value={targetDirection}
                     onChange={(val) => setTargetDirection(val as "minimum" | "maximum")}
                     options={[
-                      { value: "minimum", label: "حداقل" },
-                      { value: "maximum", label: "حداکثر" },
+                      { value: "minimum", label: "هرچه بیشتر بهتر" },
+                      { value: "maximum", label: "هرچه کمتر بهتر" },
                     ]}
                     searchable={false}
                   />

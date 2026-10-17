@@ -1,6 +1,6 @@
 import React from "react";
 import { toPersianDigits } from "../dateUtils";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, TrendingDown, TrendingUp } from "lucide-react";
 
 export interface KpiInteractiveInputProps {
   kpi: {
@@ -45,11 +45,14 @@ export const KpiInteractiveInput: React.FC<KpiInteractiveInputProps> = ({
   const isFirstBaselineEntry = rawBaseline === null && currentNum !== null;
 
   // بررسی کاهش غیرمجاز نسبت به پیشرفت قبلی (فقط وقتی مبنای قبلی وجود دارد)
+  // جهت‌آگاه: در شاخص «هرچه کمتر بهتر» حرکت به سمت هدف یعنی کاهش مقدار؛
+  // پس ریگرسیون به معنای افزایش مقدار بالاتر از مبناست (برعکس شاخص صعودی).
+  const directionIsDecreasing = kpi.target_direction === "maximum";
   const isRegressed =
     !disabled &&
     rawBaseline !== null &&
     currentNum !== null &&
-    currentNum < rawBaseline;
+    (directionIsDecreasing ? currentNum > rawBaseline : currentNum < rawBaseline);
 
   // محاسبه پیش‌نمایش درصد تغییر (برای درصد تغییر)
   let percentageChangePreview: string | null = null;
@@ -71,6 +74,7 @@ export const KpiInteractiveInput: React.FC<KpiInteractiveInputProps> = ({
   let totalPercent = 0;
   let basePercent = 0;
 
+  // پیشرفت جهت‌آگاه: در شاخص «هرچه کمتر بهتر» درصد پیشرفت = مسافت طی‌شده از مبنا به سمت هدف
   if (currentNum !== null) {
     if (isPercentageUnit) {
       totalPercent = Math.max(0, Math.min(100, currentNum));
@@ -79,6 +83,12 @@ export const KpiInteractiveInput: React.FC<KpiInteractiveInputProps> = ({
         : rawBaseline !== null
         ? Math.max(0, Math.min(100, rawBaseline))
         : 0;
+    } else if (hasTarget && directionIsDecreasing) {
+      const span = Math.abs((rawBaseline ?? currentNum) - targetNum);
+      totalPercent = span > 0
+        ? Math.max(0, Math.min(100, (((rawBaseline ?? currentNum) - currentNum) / span) * 100))
+        : (currentNum <= targetNum ? 100 : 0);
+      basePercent = 0; // مبنا نقطه شروع سفر است
     } else {
       totalPercent = Math.max(0, Math.min(100, (currentNum / targetNum) * 100));
       basePercent = isFirstBaselineEntry
@@ -90,12 +100,18 @@ export const KpiInteractiveInput: React.FC<KpiInteractiveInputProps> = ({
   } else if (rawBaseline !== null) {
     basePercent = isPercentageUnit
       ? Math.max(0, Math.min(100, rawBaseline))
-      : Math.max(0, Math.min(100, (rawBaseline / targetNum) * 100));
+      : !directionIsDecreasing && hasTarget
+      ? Math.max(0, Math.min(100, (rawBaseline / targetNum) * 100))
+      : 0;
   }
 
   basePercent = Math.min(basePercent, totalPercent > 0 ? totalPercent : basePercent);
   const growthPercent = Math.max(0, totalPercent - basePercent);
-  const growthRaw = currentNum !== null && rawBaseline !== null ? currentNum - rawBaseline : null;
+  // جهت‌آگاه: در شاخص «هرچه کمتر بهتر» رشد = مبنا - مقدار (کاهش مقدار یعنی پیشرفت مثبت)
+  const growthRaw =
+    currentNum !== null && rawBaseline !== null
+      ? (directionIsDecreasing ? rawBaseline - currentNum : currentNum - rawBaseline)
+      : null;
 
   return (
     <div className="bg-white p-4 rounded-2xl border border-slate-200/70 space-y-3 shadow-2xs font-sans">
@@ -104,6 +120,18 @@ export const KpiInteractiveInput: React.FC<KpiInteractiveInputProps> = ({
         <div>
           <div className="flex items-center gap-2 flex-wrap">
             <h5 className="text-sm font-bold text-slate-850">{kpi.name}</h5>
+            {/* تگ مفهوم جهت هدف: هرچه کمتر بهتر / هرچه بیشتر بهتر */}
+            {directionIsDecreasing ? (
+              <span className="flex items-center gap-1 font-bold text-indigo-800 bg-indigo-50 px-2 py-0.5 rounded-lg border border-indigo-200 text-[10px]">
+                <TrendingDown className="w-3.5 h-3.5" />
+                <span>هرچه کمتر بهتر</span>
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200 text-[10px]">
+                <TrendingUp className="w-3.5 h-3.5" />
+                <span>هرچه بیشتر بهتر</span>
+              </span>
+            )}
             {rawBaseline !== null ? (
               <span className="font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200 text-[10px]">
                 پیشرفت قبلی: {toPersianDigits(rawBaseline)} {kpi.unit}
@@ -178,7 +206,8 @@ export const KpiInteractiveInput: React.FC<KpiInteractiveInputProps> = ({
               <input
                 type="number"
                 step="any"
-                min={baselineNum ?? 0}
+                min={baselineNum !== null && !directionIsDecreasing ? baselineNum : undefined}
+                max={baselineNum !== null && directionIsDecreasing ? baselineNum : undefined}
                 value={value.current_value ?? ""}
                 onChange={(e) => onChange({ current_value: e.target.value })}
                 className={`w-full border rounded-xl px-3 py-1.5 text-xs focus:outline-none transition-all ${
@@ -191,13 +220,22 @@ export const KpiInteractiveInput: React.FC<KpiInteractiveInputProps> = ({
             </div>
           </div>
 
-          {/* هشدار جلوگیری از کاهش درصد تجمیعی */}
+          {/* هشدار جلوگیری از حرکت برخلاف جهت هدف (جهت‌آگاه: صعودی = کاهش ممنوع؛ کاهشی = افزایش ممنوع) */}
           {isRegressed && (
             <div className="text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded-xl p-2.5 flex items-center gap-2 animate-fade-in">
               <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
               <span>
-                <strong>توجه:</strong> درصد پیشرفت تجمیعی نمی‌تواند کمتر از پیشرفت قبلی ثبت‌شده (
-                {toPersianDigits(baselineNum!)} {kpi.unit}) باشد.
+                {directionIsDecreasing ? (
+                  <>
+                    <strong>توجه:</strong> در شاخص «هرچه کمتر بهتر» مقدار جدید نمی‌تواند بیشتر از پیشرفت قبلی ثبت‌شده (
+                    {toPersianDigits(baselineNum!)} {kpi.unit}) باشد؛ کاهش مقدار در این شاخص پیشرفت است.
+                  </>
+                ) : (
+                  <>
+                    <strong>توجه:</strong> درصد پیشرفت تجمیعی نمی‌تواند کمتر از پیشرفت قبلی ثبت‌شده (
+                    {toPersianDigits(baselineNum!)} {kpi.unit}) باشد.
+                  </>
+                )}
               </span>
             </div>
           )}
@@ -226,7 +264,8 @@ export const KpiInteractiveInput: React.FC<KpiInteractiveInputProps> = ({
                 <span className="text-[11px]">
                   {growthRaw > 0 ? (
                     <span className="text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200">
-                      رشد این دوره: +{toPersianDigits(growthRaw.toFixed(2))} {kpi.unit}
+                      {directionIsDecreasing ? "کاهش مثبت (نزدیک‌شدن به هدف): " : "رشد این دوره: "}
+                      +{toPersianDigits(growthRaw.toFixed(2))} {kpi.unit}
                     </span>
                   ) : (
                     <span className="text-slate-400 font-medium">
@@ -273,9 +312,13 @@ export const KpiInteractiveInput: React.FC<KpiInteractiveInputProps> = ({
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
-                <span>رشد جدید دوره</span>
+                <span>{directionIsDecreasing ? "کاهش مثبت این دوره" : "رشد جدید دوره"}</span>
               </span>
-              {hasTarget && <span>هدف: {toPersianDigits(kpi.target_value!)} {kpi.unit}</span>}
+              {hasTarget && (
+                <span>
+                  هدف ({directionIsDecreasing ? "هرچه کمتر بهتر" : "هرچه بیشتر بهتر"}): {toPersianDigits(kpi.target_value!)} {kpi.unit}
+                </span>
+              )}
             </div>
           </div>
         </div>

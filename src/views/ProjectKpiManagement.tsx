@@ -567,10 +567,15 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
                   value={targetDirection}
                   onChange={(val) => setTargetDirection(val as "minimum" | "maximum")}
                   options={[
-                    { value: "minimum", label: "حداقل" },
-                    { value: "maximum", label: "حداکثر" },
+                    { value: "minimum", label: "هرچه بیشتر بهتر" },
+                    { value: "maximum", label: "هرچه کمتر بهتر" },
                   ]}
                 />
+                <span className="text-[10px] text-slate-400 block mt-0.5">
+                  {targetDirection === "maximum"
+                    ? "با شروع از مبنا، رسیدن به مقدار کمتر یعنی پیشرفت (مثل کلیک تا درگاه پرداخت)"
+                    : "با شروع از مبنا، رسیدن به مقدار بیشتر یعنی پیشرفت (مثل درصد پیشرفت)"}
+                </span>
               </div>
               <div>
                 <label className="block text-slate-600 font-bold mb-1">مقدار هدف (اختیاری)</label>
