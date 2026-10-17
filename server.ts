@@ -409,6 +409,46 @@ async function ensureDatabaseSchema() {
       WHERE "file_name" LIKE '%Ø%' OR "file_name" LIKE '%Ù%' OR "file_name" LIKE '%§%';
     `);
 
+    // ۱. اطمینان از افزودن نقش viewer به نوع شمارشی Role در پایگاه داده
+    try {
+      await prisma.$executeRawUnsafe(`ALTER TYPE "Role" ADD VALUE IF NOT EXISTS 'viewer';`);
+    } catch (e: any) {
+      console.log("Note on Role enum update:", e?.message || e);
+    }
+
+    // ۲. ایجاد یا اطمینان از فعال بودن حساب کاربری بیننده (Viewer)
+    try {
+      const existingViewer = await prisma.user.findUnique({ where: { username: "viewer" } });
+      if (!existingViewer) {
+        const hashedPassword = await bcrypt.hash("viewer14051405", SALT_ROUNDS);
+        await prisma.user.create({
+          data: {
+            username: "viewer",
+            full_name: "بیننده",
+            role: "viewer" as any,
+            job_title: "ناظر سیستم",
+            password: hashedPassword,
+            is_active: true,
+            must_change_password: false,
+          },
+        });
+        console.log("✅ Initial viewer user created successfully.");
+      } else {
+        if (existingViewer.role !== ("viewer" as any) || !existingViewer.is_active) {
+          await prisma.user.update({
+            where: { id: existingViewer.id },
+            data: {
+              role: "viewer" as any,
+              is_active: true,
+            },
+          });
+          console.log("✅ Existing viewer user role/active status synchronized.");
+        }
+      }
+    } catch (e: any) {
+      console.error("Warning initializing viewer user:", e?.message || e);
+    }
+
     console.log("Database schema checked and verified successfully.");
     return true;
   } catch (error) {
@@ -465,6 +505,13 @@ async function authenticate(req: any, res: any, next: any) {
 function requireManager(req: any, res: any, next: any) {
   if (req.user?.role !== "manager") {
     return res.status(403).json({ error: "دسترسی فقط برای مدیران مجاز است." });
+  }
+  next();
+}
+
+function requireManagerOrViewer(req: any, res: any, next: any) {
+  if (req.user?.role !== "manager" && req.user?.role !== "viewer") {
+    return res.status(403).json({ error: "دسترسی فقط برای مدیران و ناظران مجاز است." });
   }
   next();
 }
@@ -963,7 +1010,7 @@ app.post("/api/users", authenticate, requireManager, async (req, res) => {
       data: {
         username: trimmedUsername,
         full_name: trimmedFullName,
-        role: role === "manager" ? "manager" : "user",
+        role: role === "manager" ? "manager" : role === "viewer" ? "viewer" : "user",
         job_title: job_title ? String(job_title).trim() : null,
         password: hashedPassword,
         is_active: true,
@@ -1005,7 +1052,7 @@ app.put("/api/users/:id", authenticate, requireManager, async (req, res) => {
       data: {
         full_name: full_name !== undefined ? String(full_name).trim() : undefined,
         username: username !== undefined ? String(username).trim() : undefined,
-        role: role !== undefined ? (role === "manager" ? "manager" : "user") : undefined,
+        role: role !== undefined ? (role === "manager" ? "manager" : role === "viewer" ? "viewer" : "user") : undefined,
         job_title: job_title !== undefined ? (job_title ? String(job_title).trim() : null) : undefined,
         is_active: is_active !== undefined ? Boolean(is_active) : undefined,
       }
@@ -1084,7 +1131,7 @@ app.delete("/api/users/:id", authenticate, requireManager, async (req: any, res)
 app.get("/api/projects", authenticate, async (req: any, res) => {
   try {
     const includeInactive = req.query.include_inactive === "true" || req.query.all === "true";
-    const where = includeInactive && req.user.role === "manager" ? {} : { is_active: true };
+    const where = includeInactive && (req.user.role === "manager" || req.user.role === "viewer") ? {} : { is_active: true };
     const projects = await prisma.project.findMany({
       where,
       orderBy: [{ order_index: "asc" }, { id: "asc" }],
@@ -1346,7 +1393,7 @@ app.get("/api/projects/:id/wbs-file", authenticate, async (req: any, res) => {
     }
 
     // پرسنل عادی تنها مجاز به دانلود فایل WBS پروژه‌های فعال تخصیص‌یافته به خود هستند
-    if (req.user.role !== "manager") {
+    if (req.user.role !== "manager" && req.user.role !== "viewer") {
       if (!project.is_active) {
         return res.status(403).json({ error: "این پروژه غیرفعال است." });
       }
@@ -1583,7 +1630,7 @@ app.get("/api/wbs-submissions/:id/download", authenticate, async (req: any, res)
       return res.status(404).json({ error: "ساختار شکست یافت نشد." });
     }
 
-    if (req.user.role !== "manager") {
+    if (req.user.role !== "manager" && req.user.role !== "viewer") {
       const assignment = await prisma.userProject.findFirst({
         where: { user_id: req.user.id, project_id: submission.project_id },
       });
@@ -1622,7 +1669,7 @@ app.get("/api/projects/:projectId/wbs-nodes", authenticate, async (req: any, res
       return res.status(404).json({ error: "پروژه یافت نشد." });
     }
 
-    if (req.user.role !== "manager") {
+    if (req.user.role !== "manager" && req.user.role !== "viewer") {
       const assignment = await prisma.userProject.findFirst({
         where: { user_id: req.user.id, project_id: projectId },
       });
@@ -1955,7 +2002,7 @@ app.delete("/api/report-periods/:id", authenticate, requireManager, async (req, 
 // -----------------------------
 // 6. Project KPI Management
 // -----------------------------
-app.get("/api/project-kpis", authenticate, requireManager, async (_req, res) => {
+app.get("/api/project-kpis", authenticate, requireManagerOrViewer, async (_req, res) => {
   try {
     const kpis = await prisma.projectKpi.findMany({
       include: {
@@ -1984,7 +2031,7 @@ app.get("/api/projects/:projectId/kpis", authenticate, async (req: any, res) => 
       return res.status(404).json({ error: "پروژه یافت نشد." });
     }
 
-    if (req.user.role !== "manager") {
+    if (req.user.role !== "manager" && req.user.role !== "viewer") {
       if (!project.is_active) {
         return res.status(403).json({ error: "این پروژه غیرفعال است." });
       }
@@ -2626,7 +2673,7 @@ app.get("/api/composite-kpis/deputies-tree", authenticate, requireManager, async
 });
 
 // دریافت لیست تمام شاخص‌های ترکیبی با آخرین وضعیت و مقدار (با پشتیبانی از فیلتر پروژه)
-app.get("/api/composite-kpis", authenticate, requireManager, async (req: any, res) => {
+app.get("/api/composite-kpis", authenticate, requireManagerOrViewer, async (req: any, res) => {
   try {
     const { project_id } = req.query;
     const where: any = {};
@@ -3212,7 +3259,8 @@ app.put("/api/deadline-settings/:id", authenticate, requireManager, async (req, 
 app.get("/api/reports", authenticate, async (req: any, res) => {
   try {
     // پرسنل عادی تنها گزارش‌های ارسالی خود را دریافت می‌کنند (جلوگیری از BOLA / IDOR)
-    const where = req.user.role === "manager" ? {} : { user_id: req.user.id };
+    // مدیران و ناظران (بیننده) به کلیه گزارش‌ها جهت ارزیابی استراتژیک دسترسی دارند
+    const where = (req.user.role === "manager" || req.user.role === "viewer") ? {} : { user_id: req.user.id };
 
     const reports = await prisma.report.findMany({
       where,
@@ -3238,6 +3286,13 @@ app.get("/api/reports", authenticate, async (req: any, res) => {
 app.post("/api/reports", authenticate, upload.array("files", 10), async (req: any, res) => {
   const uploadedFiles = req.files && Array.isArray(req.files) ? req.files : [];
   try {
+    if (req.user.role === "viewer") {
+      if (uploadedFiles.length > 0) {
+        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
+      }
+      return res.status(403).json({ error: "حساب کاربری بیننده منحصراً نظارتی است و مجاز به ثبت گزارش نیست." });
+    }
+
     const {
       project_id,
       report_type,
@@ -3475,6 +3530,13 @@ app.post("/api/reports", authenticate, upload.array("files", 10), async (req: an
 app.put("/api/reports/:id", authenticate, upload.array("files", 10), async (req: any, res) => {
   const uploadedFiles = req.files && Array.isArray(req.files) ? req.files : [];
   try {
+    if (req.user.role === "viewer") {
+      if (uploadedFiles.length > 0) {
+        uploadedFiles.forEach((f: any) => { if (fs.existsSync(f.path)) try { fs.unlinkSync(f.path); } catch (_) { } });
+      }
+      return res.status(403).json({ error: "حساب کاربری بیننده منحصراً نظارتی است و مجاز به ویرایش گزارش نیست." });
+    }
+
     const id = parseInt(req.params.id);
     const { activities_done, results_achieved, achieved_action_ids, next_actions, kpi_text, kpi_values } = req.body;
 
@@ -3690,7 +3752,7 @@ app.get("/api/report-files/:id/download", authenticate, async (req: any, res) =>
     }
 
     // اعتبارسنجی مالکیت گزارش: پرسنل عادی فقط ضمیمه‌های گزارش‌های خود را دانلود کنند
-    if (req.user.role !== "manager" && file.report.user_id !== req.user.id) {
+    if (req.user.role !== "manager" && req.user.role !== "viewer" && file.report.user_id !== req.user.id) {
       return res.status(403).json({ error: "شما مجاز به دانلود فایل‌های این گزارش نیستید." });
     }
 
@@ -3708,6 +3770,10 @@ app.get("/api/report-files/:id/download", authenticate, async (req: any, res) =>
 
 app.delete("/api/report-files/:id", authenticate, async (req: any, res) => {
   try {
+    if (req.user.role === "viewer") {
+      return res.status(403).json({ error: "حساب کاربری بیننده منحصراً نظارتی است و مجاز به حذف فایل نیست." });
+    }
+
     const id = parseInt(req.params.id);
     const file = await prisma.reportFile.findUnique({
       where: { id },
@@ -3786,7 +3852,7 @@ app.get("/api/reports/:id/pdf-data", authenticate, async (req: any, res) => {
     }
 
     // کنترل BOLA: کاربر عادی فقط می‌تواند گزارش خودش را دریافت کند
-    if (req.user.role !== "manager" && report.user_id !== req.user.id) {
+    if (req.user.role !== "manager" && req.user.role !== "viewer" && report.user_id !== req.user.id) {
       return res.status(403).json({ error: "شما مجاز به دریافت خروجی PDF این گزارش نیستید." });
     }
 
@@ -3800,9 +3866,9 @@ app.get("/api/reports/:id/pdf-data", authenticate, async (req: any, res) => {
 // دریافت تمامی گزارش‌های مجاز کاربر (یا بر اساس معاونت) جهت خروجی PDF تجمیعی
 app.get("/api/reports/pdf-data/all", authenticate, async (req: any, res) => {
   try {
-    // برای مدیران: همه گزارش‌ها؛ برای کاربران عادی: فقط گزارش‌های خود کاربر
+    // برای مدیران و ناظران (بیننده): همه گزارش‌ها؛ برای کاربران عادی: فقط گزارش‌های خود کاربر
     // هویت و محدوده سازمانی به طور کامل از نشست احرازهویت‌شده استخراج می‌شود
-    const where: any = req.user.role === "manager" ? {} : { user_id: req.user.id };
+    const where: any = (req.user.role === "manager" || req.user.role === "viewer") ? {} : { user_id: req.user.id };
 
     // فیلترهای اختیاری بر اساس دوره یا پروژه
     if (req.query.period_id) {
@@ -3848,7 +3914,7 @@ app.get("/api/reports/pdf-data/all", authenticate, async (req: any, res) => {
 // -----------------------------
 // 10. Manager Dashboard Summary
 // -----------------------------
-app.get("/api/dashboard/summary", authenticate, requireManager, async (req, res) => {
+app.get("/api/dashboard/summary", authenticate, requireManagerOrViewer, async (req, res) => {
   try {
     const periodId = parseInt(req.query.period_id as string);
     const projectId = req.query.project_id ? parseInt(req.query.project_id as string) : null;
@@ -4106,6 +4172,10 @@ app.get("/api/next-actions", authenticate, async (req: any, res) => {
 
 app.post("/api/next-actions", authenticate, async (req: any, res) => {
   try {
+    if (req.user.role === "viewer") {
+      return res.status(403).json({ error: "حساب کاربری بیننده منحصراً نظارتی است و مجاز به ثبت اقدام نیست." });
+    }
+
     const { project_id, user_id, action_text, target_date, wbs_node_id } = req.body;
     const trimmedText = typeof action_text === "string" ? action_text.trim() : "";
 
@@ -4250,6 +4320,10 @@ app.patch("/api/next-actions/:id/toggle", authenticate, requireManager, async (r
 // لغو یا حذف اقدام آتی توسط کاربر یا مدیر با ثبت دلیل اجباری (جهت مستندسازی در گزارش رسمی PDF)
 app.patch("/api/next-actions/:id/cancel", authenticate, async (req: any, res) => {
   try {
+    if (req.user.role === "viewer") {
+      return res.status(403).json({ error: "حساب کاربری بیننده منحصراً نظارتی است و مجاز به لغو اقدام نیست." });
+    }
+
     const actionId = Number(req.params.id);
     const { reason } = req.body || {};
 
@@ -4309,6 +4383,10 @@ app.patch("/api/next-actions/:id/cancel", authenticate, async (req: any, res) =>
 // اندپوینت حذف: برای پرسنل لغو نرم با دلیل، برای مدیران لغو با دلیل یا هارد دلیت در صورت force
 app.delete("/api/next-actions/:id", authenticate, async (req: any, res) => {
   try {
+    if (req.user.role === "viewer") {
+      return res.status(403).json({ error: "حساب کاربری بیننده منحصراً نظارتی است و مجاز به حذف اقدام نیست." });
+    }
+
     const actionId = Number(req.params.id);
     const { reason, force } = req.body || {};
 
@@ -4756,8 +4834,8 @@ ${actionsSection}
 ${memorySection}`;
 }
 
-// اندپوینت تحلیل استراتژیک کلان دوره (مدیریتی)
-app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, requireManager, aiLimiter, async (req, res) => {
+// اندپوینت تحلیل استراتژیک کلان دوره (مدیریتی و نظارتی)
+app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, requireManagerOrViewer, aiLimiter, async (req, res) => {
   try {
     const { period_id, period_title, period_end, reports, force_refresh, manager_comment, previous_analysis } = req.body;
     const submittedReports = Array.isArray(reports)
@@ -5183,7 +5261,7 @@ ${currentKpiSection}
 });
 
 // اندپوینت ارزیابی و تحلیل استراتژیک معاونت (پروژه به پروژه + ممیزی WBS و استخراج KPI)
-app.post(["/api/reports/analyze-deputy", "/api/ai/deputy-analysis"], authenticate, requireManager, aiLimiter, async (req: any, res) => {
+app.post(["/api/reports/analyze-deputy", "/api/ai/deputy-analysis"], authenticate, requireManagerOrViewer, aiLimiter, async (req: any, res) => {
   try {
     const { period_id, deputy_name, user_id, manager_comment, previous_analysis, force_refresh } = req.body;
 

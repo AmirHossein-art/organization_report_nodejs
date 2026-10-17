@@ -80,6 +80,9 @@ export default function App() {
       })
       .then((data) => {
         setUser(data.user);
+        if (data.user?.role === "viewer") {
+          setCurrentView("manager_dashboard");
+        }
       })
       .catch(() => {
         setUser(null);
@@ -106,6 +109,14 @@ export default function App() {
     }
   };
 
+  const handleSetCurrentView = (view: string) => {
+    if (user?.role === "viewer") {
+      setCurrentView("manager_dashboard");
+      return;
+    }
+    setCurrentView(view);
+  };
+
   // لودینگ در زمان بررسی نشست کاربری
   if (authLoading) {
     return (
@@ -128,7 +139,7 @@ export default function App() {
       <Login
         onLoginSuccess={(loggedInUser) => {
           setUser(loggedInUser);
-          setCurrentView("home");
+          setCurrentView(loggedInUser.role === "viewer" ? "manager_dashboard" : "home");
         }}
       />
     );
@@ -150,88 +161,94 @@ export default function App() {
       )}
 
       {/* سایدبار ناوبری سیستم */}
-      <Sidebar user={user} currentView={currentView} setCurrentView={setCurrentView} onLogout={handleLogout} />
+      <Sidebar user={user} currentView={currentView} setCurrentView={handleSetCurrentView} onLogout={handleLogout} />
 
       {/* بخش نمایش داینامیک ویوها براساس ابعاد مانیتور (تمام‌عرض با پدینگ واکنش‌گرا) */}
       <main className="flex-1 p-4 sm:p-6 lg:p-8 w-full max-w-full overflow-x-hidden min-w-0">
-        {currentView === "home" && (
-          <HomeDashboard
-            user={user}
-            users={users}
-            projects={activeProjects}
-            periods={periods}
-            allReports={allReports}
-          />
-        )}
-
-        {currentView === "submit_report" && (
-          <SubmitReport
-            projects={activeProjects}
-            periods={periods}
-            user={user}
-            allReports={allReports}
-            onRefresh={handleReportUpsert}
-            onNavigate={(view) => setCurrentView(view)}
-          />
-        )}
-
-        {currentView === "my_reports" && (
-          <MyReports
-            currentUser={user}
-            reports={allReports}
-            projects={activeProjects}
-            periods={periods}
-            onRefresh={handleReportUpsert}
-          />
-        )}
-
-        {/* روت‌های مدیریتی */}
-        {user.role === "manager" && (
+        {user.role === "viewer" ? (
+          <ManagerDashboard periods={periods} projects={activeProjects} users={users} />
+        ) : (
           <>
-            {currentView === "manager_dashboard" && (
-              <ManagerDashboard periods={periods} projects={activeProjects} users={users} />
-            )}
-            {(currentView === "manage_projects" || currentView === "project_allocations" || currentView === "wbs") && (
-              <ManageProjectsHub
-                projects={projects}
+            {currentView === "home" && (
+              <HomeDashboard
+                user={user}
                 users={users}
-                onRefresh={fetchData}
-                initialTab={
-                  currentView === "project_allocations"
-                    ? "allocations"
-                    : currentView === "wbs"
-                    ? "wbs"
-                    : "projects"
-                }
-              />
-            )}
-            {(currentView === "report_periods" || currentView === "deadline_settings") && (
-              <ReportPeriods
-                periods={periods}
-                deadlineSettings={deadlineSettings}
-                onRefresh={fetchData}
-                initialTab={currentView === "deadline_settings" ? "settings" : "periods"}
-              />
-            )}
-            {(currentView === "project_kpis" ||
-              currentView === "project_kpi_management" ||
-              currentView === "project_kpi_analytics" ||
-              currentView === "composite_kpis") && (
-              <ProjectKpiHub
                 projects={activeProjects}
-                onRefresh={fetchData}
-                currentUser={user}
-                initialTab={
-                  currentView === "project_kpi_management"
-                    ? "management"
-                    : currentView === "composite_kpis"
-                    ? "composite"
-                    : "analytics"
-                }
+                periods={periods}
+                allReports={allReports}
               />
             )}
-            {currentView === "manage_users" && (
-              <ManageUsers users={users} onRefresh={fetchData} />
+
+            {currentView === "submit_report" && (
+              <SubmitReport
+                projects={activeProjects}
+                periods={periods}
+                user={user}
+                allReports={allReports}
+                onRefresh={handleReportUpsert}
+                onNavigate={(view) => setCurrentView(view)}
+              />
+            )}
+
+            {currentView === "my_reports" && (
+              <MyReports
+                currentUser={user}
+                reports={allReports}
+                projects={activeProjects}
+                periods={periods}
+                onRefresh={handleReportUpsert}
+              />
+            )}
+
+            {/* روت‌های مدیریتی */}
+            {user.role === "manager" && (
+              <>
+                {currentView === "manager_dashboard" && (
+                  <ManagerDashboard periods={periods} projects={activeProjects} users={users} />
+                )}
+                {(currentView === "manage_projects" || currentView === "project_allocations" || currentView === "wbs") && (
+                  <ManageProjectsHub
+                    projects={projects}
+                    users={users}
+                    onRefresh={fetchData}
+                    initialTab={
+                      currentView === "project_allocations"
+                        ? "allocations"
+                        : currentView === "wbs"
+                        ? "wbs"
+                        : "projects"
+                    }
+                  />
+                )}
+                {(currentView === "report_periods" || currentView === "deadline_settings") && (
+                  <ReportPeriods
+                    periods={periods}
+                    deadlineSettings={deadlineSettings}
+                    onRefresh={fetchData}
+                    initialTab={currentView === "deadline_settings" ? "settings" : "periods"}
+                  />
+                )}
+                {(currentView === "project_kpis" ||
+                  currentView === "project_kpi_management" ||
+                  currentView === "project_kpi_analytics" ||
+                  currentView === "composite_kpis") && (
+                  <ProjectKpiHub
+                    projects={activeProjects}
+                    onRefresh={fetchData}
+                    currentUser={user}
+                    initialTab={
+                      currentView === "project_kpi_management"
+                        ? "management"
+                        : currentView === "composite_kpis"
+                        ? "composite"
+                        : "analytics"
+                    }
+                  />
+                )}
+                {currentView === "manage_users" && (
+                  <ManageUsers users={users} onRefresh={fetchData} />
+                )}
+              </>
             )}
           </>
         )}

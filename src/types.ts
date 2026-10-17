@@ -2,7 +2,7 @@ export interface User {
   id: number;
   username: string;
   full_name: string;
-  role: "user" | "manager";
+  role: "user" | "manager" | "viewer";
   job_title?: string | null;
   is_active: boolean;
   must_change_password: boolean;

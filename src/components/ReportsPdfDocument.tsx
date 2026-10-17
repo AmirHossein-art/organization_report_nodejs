@@ -478,7 +478,7 @@ export default function ReportsPdfDocument({
   const printAreaRef = useRef<HTMLDivElement>(null);
   const isFetchingRef = useRef<boolean>(false);
 
-  const isManager = !currentUser || currentUser.role === "manager";
+  const isManager = !currentUser || currentUser.role === "manager" || currentUser.role === "viewer";
 
   // استخراج لیست یکتای نام معاونت‌ها (برای پرسنل عادی فقط معاونت خودش)
   const deputyOptions = useMemo(() => {

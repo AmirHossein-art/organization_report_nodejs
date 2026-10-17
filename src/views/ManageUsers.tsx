@@ -12,7 +12,7 @@ interface ManageUsersProps {
 export default function ManageUsers({ users = [], onRefresh }: ManageUsersProps) {
   const [newUsername, setNewUsername] = useState("");
   const [newFullName, setNewFullName] = useState("");
-  const [newUserRole, setNewUserRole] = useState<"user" | "manager">("user");
+  const [newUserRole, setNewUserRole] = useState<"user" | "manager" | "viewer">("user");
   const [newJobTitle, setNewJobTitle] = useState("");
   const [newTemporaryPassword, setNewTemporaryPassword] = useState("");
   const [newMustChangePassword, setNewMustChangePassword] = useState(true);
@@ -22,7 +22,7 @@ export default function ManageUsers({ users = [], onRefresh }: ManageUsersProps)
   const [editUserFullName, setEditUserFullName] = useState("");
   const [editUserUsername, setEditUserUsername] = useState("");
   const [editUserJobTitle, setEditUserJobTitle] = useState("");
-  const [editUserRole, setEditUserRole] = useState<"user" | "manager">("user");
+  const [editUserRole, setEditUserRole] = useState<"user" | "manager" | "viewer">("user");
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -183,10 +183,11 @@ export default function ManageUsers({ users = [], onRefresh }: ManageUsersProps)
 
             <CustomSelect 
               value={newUserRole} 
-              onChange={(v) => setNewUserRole(v as "user" | "manager")} 
+              onChange={(v) => setNewUserRole(v as "user" | "manager" | "viewer")} 
               options={[
                 { value: "user", label: "کاربر" }, 
-                { value: "manager", label: "مدیر سیستم" }
+                { value: "manager", label: "مدیر سیستم" },
+                { value: "viewer", label: "بیننده (فقط داشبورد نظارتی)" }
               ]} 
             />
 
@@ -247,7 +248,7 @@ export default function ManageUsers({ users = [], onRefresh }: ManageUsersProps)
                   </div>
                   <div className="flex items-center gap-3 text-slate-400 text-[11px] mt-1">
                     <span>شناسه: @{usr.username}</span>
-                    <span>نقش: {usr.role === "manager" ? "مدیر سیستم" : "کاربر"}</span>
+                    <span>نقش: {usr.role === "manager" ? "مدیر سیستم" : usr.role === "viewer" ? "بیننده" : "کاربر"}</span>
                   </div>
                 </div>
 
@@ -274,7 +275,7 @@ export default function ManageUsers({ users = [], onRefresh }: ManageUsersProps)
                       setEditUserFullName(usr.full_name); 
                       setEditUserUsername(usr.username); 
                       setEditUserJobTitle((usr as any).job_title || "");
-                      setEditUserRole(usr.role as "user" | "manager"); 
+                      setEditUserRole(usr.role as "user" | "manager" | "viewer"); 
                     }} 
                     className="text-blue-600 bg-blue-50 p-1.5 rounded-xl hover:bg-blue-100 cursor-pointer"
                     title="ویرایش کاربر"
@@ -327,10 +328,11 @@ export default function ManageUsers({ users = [], onRefresh }: ManageUsersProps)
               />
               <CustomSelect 
                 value={editUserRole} 
-                onChange={(v) => setEditUserRole(v as "user" | "manager")} 
+                onChange={(v) => setEditUserRole(v as "user" | "manager" | "viewer")} 
                 options={[
                   { value: "user", label: "کاربر" }, 
-                  { value: "manager", label: "مدیر سیستم" }
+                  { value: "manager", label: "مدیر سیستم" },
+                  { value: "viewer", label: "بیننده (فقط داشبورد نظارتی)" }
                 ]} 
               />
               <div className="flex gap-2 pt-2 text-xs">
