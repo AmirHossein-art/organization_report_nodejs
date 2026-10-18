@@ -34,6 +34,13 @@ import {
   evolveProjectMemory,
 } from "./src/services/projectMemory";
 import {
+  decomposeActivities,
+  buildDualPassLinkingPrompt,
+  auditAndFinalizeProposals,
+  persistReportActivities,
+  getProjectStrategicGraph,
+} from "./src/services/activityGraphService";
+import {
   evaluateFormula,
   validateFormula,
   getVariableKeyForIndex,
@@ -399,6 +406,27 @@ async function ensureDatabaseSchema() {
 
       CREATE INDEX IF NOT EXISTS "NextAction_project_status_idx" ON "NextAction"("project_id", "is_completed", "is_cancelled");
       CREATE INDEX IF NOT EXISTS "Report_period_project_idx" ON "Report"("period_id", "project_id");
+
+      CREATE TABLE IF NOT EXISTS "ReportActivity" (
+        "id" SERIAL PRIMARY KEY,
+        "report_id" INTEGER NOT NULL REFERENCES "Report"("id") ON DELETE CASCADE,
+        "project_id" INTEGER NOT NULL REFERENCES "Project"("id") ON DELETE CASCADE,
+        "line_number" INTEGER NOT NULL,
+        "activity_text" TEXT NOT NULL,
+        "wbs_node_id" INTEGER REFERENCES "WbsNode"("id") ON DELETE SET NULL,
+        "confidence" DOUBLE PRECISION,
+        "status" TEXT NOT NULL DEFAULT 'auto_confirmed',
+        "ai_reasoning" TEXT,
+        "audit_feedback" TEXT,
+        "confirmed_by" INTEGER,
+        "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT "ReportActivity_report_id_line_number_key" UNIQUE ("report_id", "line_number")
+      );
+      CREATE INDEX IF NOT EXISTS "ReportActivity_project_id_idx" ON "ReportActivity"("project_id");
+      CREATE INDEX IF NOT EXISTS "ReportActivity_report_id_idx" ON "ReportActivity"("report_id");
+      CREATE INDEX IF NOT EXISTS "ReportActivity_wbs_node_id_idx" ON "ReportActivity"("wbs_node_id");
+      CREATE INDEX IF NOT EXISTS "ReportActivity_status_idx" ON "ReportActivity"("status");
 
       UPDATE "Project"
       SET "wbs_file_name" = convert_from(convert_to("wbs_file_name", 'LATIN1'), 'UTF8')
@@ -1791,6 +1819,154 @@ app.post("/api/projects/:projectId/memory/evolve", authenticate, requireManager,
   } catch (error) {
     console.error("Error evolving project memory:", error);
     res.status(500).json({ error: "خطا در به‌روزرسانی حافظه پروژه" });
+  }
+});
+
+// همگام‌سازی داخلی فعالیت‌های گزارش با حلقه خود-پالایشی
+async function syncReportActivitiesInternal(reportId: number): Promise<any[]> {
+  const report = await prisma.report.findUnique({
+    where: { id: reportId },
+    include: { project: true },
+  });
+  if (!report || !report.activities_done) return [];
+
+  const decomposed = decomposeActivities(report.activities_done);
+  if (decomposed.length === 0) return [];
+
+  const wbsRaw = await prisma.wbsNode.findMany({
+    where: { project_id: report.project_id },
+    orderBy: [{ sort_order: "asc" }, { code: "asc" }],
+  });
+  const activeWbs = wbsRaw.filter((n) => {
+    const attrs = (n.attributes as any) || {};
+    return attrs.active !== false;
+  });
+
+  let aiProposals: any[] = [];
+  if (activeWbs.length > 0) {
+    try {
+      const { systemPrompt, userPrompt } = buildDualPassLinkingPrompt(
+        report.project.title,
+        decomposed,
+        activeWbs
+      );
+      const aiResponse: any = await callAiWithFallback(systemPrompt, userPrompt, {
+        cacheKey: `activity_graph_${report.project_id}_${report.id}_${generateAiCacheKey(systemPrompt, userPrompt)}`,
+      });
+      aiProposals = aiResponse?.analysis?.proposals || [];
+    } catch (err: any) {
+      console.warn(`⚠️ خطا در تحلیل خودکار اتصالات فعالیت‌های گزارش ${reportId}:`, err?.message || err);
+    }
+  }
+
+  const finalized = auditAndFinalizeProposals(decomposed, aiProposals, activeWbs);
+  return await persistReportActivities(prisma, report.id, report.project_id, finalized);
+}
+
+// ۴.۱ دریافت گراف استراتژیک یکپارچه پروژه (WBS + Activities + KPIs + NextActions)
+app.get("/api/projects/:projectId/strategic-graph", authenticate, async (req: any, res) => {
+  try {
+    const projectId = parseInt(req.params.projectId);
+    if (!Number.isSafeInteger(projectId) || projectId <= 0) {
+      return res.status(400).json({ error: "شناسه پروژه نامعتبر است." });
+    }
+
+    const graph = await getProjectStrategicGraph(prisma, projectId);
+    if (!graph) {
+      return res.status(404).json({ error: "پروژه یافت نشد." });
+    }
+
+    res.json(graph);
+  } catch (error) {
+    console.error("Error fetching project strategic graph:", error);
+    res.status(500).json({ error: "خطا در دریافت شبکه معنایی استراتژیک پروژه" });
+  }
+});
+
+// ۴.۲ اصلاح یا تایید دستی پیوند فعالیت به بسته کاری توسط مدیر
+app.patch("/api/report-activities/:id", authenticate, requireManager, async (req: any, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      return res.status(400).json({ error: "شناسه فعالیت نامعتبر است." });
+    }
+
+    const { wbs_node_id, status } = req.body;
+
+    const activity = await prisma.reportActivity.findUnique({ where: { id } });
+    if (!activity) {
+      return res.status(404).json({ error: "فعالیت مورد نظر یافت نشد." });
+    }
+
+    if (wbs_node_id !== undefined && wbs_node_id !== null) {
+      const node = await prisma.wbsNode.findUnique({ where: { id: wbs_node_id } });
+      if (!node || node.project_id !== activity.project_id) {
+        return res.status(400).json({ error: "گره WBS متعلق به این پروژه نیست یا وجود ندارد." });
+      }
+    }
+
+    const updated = await prisma.reportActivity.update({
+      where: { id },
+      data: {
+        wbs_node_id: wbs_node_id !== undefined ? wbs_node_id : activity.wbs_node_id,
+        status: status || (wbs_node_id !== undefined ? "overridden" : "confirmed"),
+        confirmed_by: req.user.id,
+        updated_at: new Date(),
+      },
+    });
+
+    res.json(updated);
+  } catch (error) {
+    console.error("Error updating report activity link:", error);
+    res.status(500).json({ error: "خطا در اصلاح پیوند فعالیت به بسته کاری" });
+  }
+});
+
+// ۴.۳ همگام‌سازی و اجرای مجدد حلقه ممیزی فعالیت‌های یک گزارش
+app.post("/api/reports/:id/sync-activities", authenticate, async (req: any, res) => {
+  try {
+    const reportId = parseInt(req.params.id);
+    if (!Number.isSafeInteger(reportId) || reportId <= 0) {
+      return res.status(400).json({ error: "شناسه گزارش نامعتبر است." });
+    }
+
+    const report = await prisma.report.findUnique({ where: { id: reportId } });
+    if (!report) {
+      return res.status(404).json({ error: "گزارش یافت نشد." });
+    }
+
+    if (req.user.role !== "manager" && req.user.id !== report.user_id) {
+      return res.status(403).json({ error: "شما مجاز به همگام‌سازی فعالیت‌های این گزارش نیستید." });
+    }
+
+    const synced = await syncReportActivitiesInternal(reportId);
+    res.json({ success: true, count: synced.length, activities: synced });
+  } catch (error) {
+    console.error("Error syncing report activities:", error);
+    res.status(500).json({ error: "خطا در تجزیه و اتصال فعالیت‌های گزارش" });
+  }
+});
+
+// ۴.۴ استخراج و همگام‌سازی گروهی فعالیت‌های تمام گزارش‌های یک پروژه
+app.post("/api/projects/:projectId/sync-activities", authenticate, requireManager, async (req: any, res) => {
+  try {
+    const projectId = parseInt(req.params.projectId);
+    const reports = await prisma.report.findMany({
+      where: { project_id: projectId },
+      select: { id: true },
+      orderBy: { id: "asc" },
+    });
+
+    let totalSynced = 0;
+    for (const r of reports) {
+      const items = await syncReportActivitiesInternal(r.id);
+      totalSynced += items.length;
+    }
+
+    res.json({ success: true, reports_processed: reports.length, activities_created: totalSynced });
+  } catch (error) {
+    console.error("Error batch syncing project activities:", error);
+    res.status(500).json({ error: "خطا در استخراج گروهی فعالیت‌های پروژه" });
   }
 });
 // -----------------------------
@@ -3508,6 +3684,11 @@ app.post("/api/reports", authenticate, upload.array("files", 10), async (req: an
       console.error("Error syncing composite KPIs after report creation:", err)
     );
 
+    // تفکیک و پیوند خودکار فعالیت‌ها با حلقه خود-پالایشی در پس‌زمینه
+    syncReportActivitiesInternal(newReport.id).catch((err) =>
+      console.error("Error decomposing and linking activities after report creation:", err)
+    );
+
     res.status(201).json(serializeReport(newReport));
   } catch (error: any) {
     if (uploadedFiles.length > 0) {
@@ -3725,6 +3906,13 @@ app.put("/api/reports/:id", authenticate, upload.array("files", 10), async (req:
     syncAllCompositeKpisForPeriod(existingReport.period_id).catch((err) =>
       console.error("Error syncing composite KPIs after report update:", err)
     );
+
+    // به‌روزرسانی تفکیک و پیوند خودکار فعالیت‌ها در پس‌زمینه
+    if (activities_done !== undefined) {
+      syncReportActivitiesInternal(id).catch((err) =>
+        console.error("Error updating activities after report update:", err)
+      );
+    }
 
     res.json(serializeReport(updated));
   } catch (error) {

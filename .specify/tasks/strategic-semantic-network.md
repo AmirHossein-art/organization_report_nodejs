@@ -44,7 +44,7 @@
 ### Sub-Agent 4: Presentation & Interactive Visualizer Layer (US3)
 - [x] `T4.1` Add WBS node picker to `NextAction` creation drawers in `ProjectNextActionsDrawer.tsx` and `SubmitReport.tsx` with dedicated `GET /api/projects/:projectId/wbs-nodes` API.
 - [x] `T4.2` Render linked KPI badges and active commitments inside `WbsTreeTableRow` in `WbsViewer.tsx`; add zoom controls and Persian digit normalization in `WbsTree.tsx`.
-- [ ] `T4.3` Build interactive Strategic Network Explorer tab in `ManageProjectsHub.tsx`.
+- [x] `T4.3` Build interactive Strategic Network Explorer tab in `ManageProjectsHub.tsx` (`StrategicNetworkExplorer.tsx`) with DAG layer flow, AI audit drawer, batch reflection sync, and live re-linking.
 
 ### Sub-Agent 5: Performance & Security Engineering
 - [x] `T5.1` [P] Add `AiAnalysisCache` table in PostgreSQL and two-tier cache service (`src/services/aiCache.ts`) replacing volatile in-memory cache.

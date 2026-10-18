@@ -268,3 +268,14 @@
   5. **Minimalist Navigation:** Tailored `sidebar.tsx` so `viewer` sees only the supervisory dashboard link ("داشبورد نظارتی") and logout, hiding all other user and manager menus.
   6. **User Administration Integration:** Added `viewer` ("بیننده (فقط داشبورد نظارتی)") to `ManageUsers.tsx` dropdowns for seamless management visibility.
 - **Verification:** `npx tsc --noEmit` clean, `npm run build` production build completed in 35s. Database migration and account seeding tested idempotent.
+
+### D40 — Dual-Pass Reflection & Self-Refinement Semantic Activity Linking with Ground-Truth WBS & Interactive Visualizer
+- **Context:** Text reports previously stored unparsed text blocks (`activities_done`) with detached WBS spreadsheets. Linking activities to WBS nodes statelessly in a single pass risked hallucinations, inaccurate mappings, and unverified assumptions. WBS must serve as the absolute anchor (Ground Truth), while atomic activities and KPIs connect around it.
+- **Decision:** Architected an atomic semantic network and autonomous reflection loop:
+  1. **Atomic Decomposition & Database Schema:** Added `ReportActivity` table in PostgreSQL with additive migration in `ensureDatabaseSchema()`, persisting line-by-line activities with `line_number`, `activity_text`, `wbs_node_id`, `confidence`, `status` (`auto_confirmed`, `needs_review`, `confirmed`, `overridden`, `unmapped`), `ai_reasoning`, and `audit_feedback`.
+  2. **Dual-Pass Agentic Reflection Service (`src/services/activityGraphService.ts`):**
+     - **Pass 1 (Candidate Proposer):** AI extracts candidate WBS codes and initial confidence scores based on activity context.
+     - **Pass 2 (Consistency Auditor & Self-Refinement):** Verifies proposals against Ground-Truth WBS nodes, enforces zero-hallucination (auto-correcting or rejecting fabricated codes), checks prerequisite/phase consistency, and resolves status (`auto_confirmed` for confidence ≥ 0.85 with proven match, `needs_review` for ambiguous items, and `unmapped` for scope creep).
+  3. **Real-Time Integration & Background Execution:** Integrated automatic decomposition and linking into report creation (`POST /api/reports`) and editing (`PUT /api/reports/:id`) as non-blocking background tasks, supplemented by manual per-report and batch project sync endpoints (`POST /api/projects/:id/sync-activities`).
+  4. **Interactive Enterprise Strategic Network Explorer:** Created `StrategicNetworkExplorer.tsx` mounted as the fourth tab in `ManageProjectsHub.tsx`, featuring a 3-column hierarchical DAG flow (WBS Ground Truth ➔ Atomic Activities ➔ AI Audit & Next Actions), live status chips, pan/zoom canvas controls, filterable audit tables, and a 1-click re-linking drawer for managerial governance.
+- **Verification:** `npx prisma generate` updated, `npx tsc --noEmit` verified with 0 errors, and full production build `npm run build` succeeded cleanly in 28s. Database migration tested additive and self-healing.
