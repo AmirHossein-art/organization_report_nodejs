@@ -26,12 +26,25 @@ function findPgTool(toolName: string): string {
   throw new Error(`ابزار PostgreSQL یافت نشد: ${toolName}. لطفاً PostgreSQL را نصب کرده یا مسیر آن را به PATH اضافه کنید.`);
 }
 
+function cleanPostgresUrl(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    // پارامترهای اختصاصی پریزما مثل schema را که ابزارهای بومی postgres نمی‌شناسند حذف می‌کنیم
+    parsed.searchParams.delete("schema");
+    return parsed.toString();
+  } catch {
+    return rawUrl.replace(/[?&]schema=[^&]+/, "");
+  }
+}
+
 async function runBackup() {
-  const dbUrl = process.argv[2] || process.env.RAILWAY_DATABASE_URL || process.env.DATABASE_URL;
-  if (!dbUrl) {
+  const rawDbUrl = process.argv[2] || process.env.RAILWAY_DATABASE_URL || process.env.DATABASE_URL;
+  if (!rawDbUrl) {
     console.error("❌ آدرس دیتابیس مشخص نشده است. می‌توانید آن را به عنوان آرگومان، یا در متغیر RAILWAY_DATABASE_URL یا DATABASE_URL در فایل .env قرار دهید.");
     process.exit(1);
   }
+
+  const dbUrl = cleanPostgresUrl(rawDbUrl);
 
   const pgDumpPath = findPgTool("pg_dump");
   console.log(`🔍 استفاده از ابزار pg_dump: ${pgDumpPath}`);

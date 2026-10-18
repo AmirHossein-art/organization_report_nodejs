@@ -112,6 +112,7 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
   const [graphData, setGraphData] = useState<StrategicGraphResponse | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [syncProgress, setSyncProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // وضعیت فیلترها و نمایش
@@ -154,7 +155,7 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
     }
   }, [selectedProjectId]);
 
-  // اجرای همگام‌سازی خودکار و بازخوانی تمام فعالیت‌های پروژه
+  // اجرای همگام‌سازی خودکار و بازخوانی تمام فعالیت‌های پروژه (ناهمگام بدون ارور ۵۲۴)
   const handleBatchSync = async () => {
     if (!selectedProjectId || isSyncing) return;
     if (!window.confirm("آیا مایلید تمام فعالیت‌های ثبت‌شده در گزارش‌های این پروژه مجدداً در حلقه خود-پالایشی هوش مصنوعی تحلیل و به WBS متصل شوند؟")) {
@@ -162,10 +163,12 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
     }
 
     setIsSyncing(true);
+    setSyncProgress("در حال راه‌اندازی فرآیند ممیزی هوشمند...");
     try {
       const res = await fetch(`/api/projects/${selectedProjectId}/sync-activities`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force_refresh: true }),
       });
       const result = await res.json();
       if (!res.ok) {
@@ -173,17 +176,47 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
       }
 
       setToastMessage({
-        text: `همگام‌سازی با موفقیت انجام شد: ${toPersianDigits(result.activities_created)} فعالیت پردازش و بازبینی شد.`,
+        text: "ممیزی هوشمند در پس‌زمینه آغاز شد. گراف به‌صورت خودکار به‌روزرسانی می‌شود...",
         type: "success",
       });
-      await fetchGraphData(selectedProjectId);
+
+      // پلینگ وضعیت زنده تا زمان اتمام
+      const interval = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`/api/projects/${selectedProjectId}/sync-status`);
+          const job = await statusRes.json();
+          if (job.status === "running") {
+            setSyncProgress(`در حال پردازش گزارش ${toPersianDigits(job.processedReports)} از ${toPersianDigits(job.totalReports)}...`);
+            await fetchGraphData(selectedProjectId);
+          } else if (job.status === "completed") {
+            clearInterval(interval);
+            setIsSyncing(false);
+            setSyncProgress(null);
+            setToastMessage({
+              text: `ممیزی هوشمند با موفقیت تکمیل شد: ${toPersianDigits(job.activitiesCreated)} فعالیت پردازش و متصل گردید.`,
+              type: "success",
+            });
+            await fetchGraphData(selectedProjectId);
+          } else if (job.status === "failed") {
+            clearInterval(interval);
+            setIsSyncing(false);
+            setSyncProgress(null);
+            setToastMessage({
+              text: job.error || "پردازش ممیزی با خطا مواجه شد.",
+              type: "error",
+            });
+          }
+        } catch {
+          // خطای موقت شبکه در پولینگ
+        }
+      }, 3000);
     } catch (err: any) {
+      setIsSyncing(false);
+      setSyncProgress(null);
       setToastMessage({
         text: err?.message || "خطا در اجرای همگام‌سازی هوش مصنوعی.",
         type: "error",
       });
-    } finally {
-      setIsSyncing(false);
       setTimeout(() => setToastMessage(null), 5000);
     }
   };
@@ -322,7 +355,7 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
               className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white rounded-2xl text-xs font-black shadow-md hover:shadow-lg transition-all disabled:opacity-50 cursor-pointer"
             >
               <Sparkles className={`w-4 h-4 ${isSyncing ? "animate-spin text-amber-300" : ""}`} />
-              <span>{isSyncing ? "در حال اجرای ممیزی و پالایش هوشمند..." : "بازخوانی و ممیزی هوشمند فعالیت‌ها"}</span>
+              <span>{isSyncing ? (syncProgress || "در حال اجرای ممیزی و پالایش هوشمند...") : "بازخوانی و ممیزی هوشمند فعالیت‌ها"}</span>
             </button>
           </div>
         </div>

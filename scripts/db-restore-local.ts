@@ -24,6 +24,16 @@ function findPgTool(toolName: string): string {
   throw new Error(`ابزار PostgreSQL یافت نشد: ${toolName}.`);
 }
 
+function cleanPostgresUrl(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    parsed.searchParams.delete("schema");
+    return parsed.toString();
+  } catch {
+    return rawUrl.replace(/[?&]schema=[^&]+/, "");
+  }
+}
+
 async function runRestore() {
   const backupsDir = path.join(process.cwd(), "backups");
   const latestFile = path.join(backupsDir, "latest.sql");
@@ -40,14 +50,21 @@ async function runRestore() {
     process.exit(1);
   }
 
-  // گرفتن آدرس دیتابیس محلی از آرگومان یا متغیر LOCAL_DATABASE_URL
+  // گرفتن آدرس دیتابیس محلی از آرگومان، متغیر LOCAL_DATABASE_URL یا DATABASE_URL محلی موجود در .env
   let targetUrl = process.argv[2] || process.env.LOCAL_DATABASE_URL;
+
+  if (!targetUrl && process.env.DATABASE_URL && (process.env.DATABASE_URL.includes("localhost") || process.env.DATABASE_URL.includes("127.0.0.1"))) {
+    targetUrl = process.env.DATABASE_URL;
+    console.log("ℹ️ استفاده از DATABASE_URL محلی موجود در .env");
+  }
 
   if (!targetUrl) {
     console.log("ℹ️ متغیر LOCAL_DATABASE_URL در .env یا ورودی خط فرمان یافت نشد.");
     console.log("استفاده از تنظیمات پیش‌فرض: postgresql://postgres:postgres@localhost:5432/organization_report_nodejs\n");
     targetUrl = "postgresql://postgres:postgres@localhost:5432/organization_report_nodejs";
   }
+
+  targetUrl = cleanPostgresUrl(targetUrl);
 
   const psqlPath = findPgTool("psql");
   console.log(`🔍 استفاده از ابزار psql: ${psqlPath}`);

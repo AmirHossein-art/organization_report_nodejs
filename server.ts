@@ -1823,7 +1823,10 @@ app.post("/api/projects/:projectId/memory/evolve", authenticate, requireManager,
 });
 
 // همگام‌سازی داخلی فعالیت‌های گزارش با حلقه خود-پالایشی
-async function syncReportActivitiesInternal(reportId: number): Promise<any[]> {
+async function syncReportActivitiesInternal(
+  reportId: number,
+  options: { forceRefresh?: boolean } = {}
+): Promise<any[]> {
   const report = await prisma.report.findUnique({
     where: { id: reportId },
     include: { project: true },
@@ -1852,6 +1855,7 @@ async function syncReportActivitiesInternal(reportId: number): Promise<any[]> {
       );
       const aiResponse: any = await callAiWithFallback(systemPrompt, userPrompt, {
         cacheKey: `activity_graph_${report.project_id}_${report.id}_${generateAiCacheKey(systemPrompt, userPrompt)}`,
+        forceRefresh: options.forceRefresh,
       });
       aiProposals = aiResponse?.analysis?.proposals || [];
     } catch (err: any) {
@@ -1939,7 +1943,8 @@ app.post("/api/reports/:id/sync-activities", authenticate, async (req: any, res)
       return res.status(403).json({ error: "شما مجاز به همگام‌سازی فعالیت‌های این گزارش نیستید." });
     }
 
-    const synced = await syncReportActivitiesInternal(reportId);
+    const forceRefresh = req.body?.force_refresh !== false;
+    const synced = await syncReportActivitiesInternal(reportId, { forceRefresh });
     res.json({ success: true, count: synced.length, activities: synced });
   } catch (error) {
     console.error("Error syncing report activities:", error);
@@ -1947,27 +1952,88 @@ app.post("/api/reports/:id/sync-activities", authenticate, async (req: any, res)
   }
 });
 
-// ۴.۴ استخراج و همگام‌سازی گروهی فعالیت‌های تمام گزارش‌های یک پروژه
+interface ProjectSyncJob {
+  status: "idle" | "running" | "completed" | "failed";
+  totalReports: number;
+  processedReports: number;
+  activitiesCreated: number;
+  error?: string;
+  startedAt?: number;
+}
+
+const activeProjectSyncs = new Map<number, ProjectSyncJob>();
+
+// ۴.۴ استخراج و همگام‌سازی گروهی فعالیت‌های تمام گزارش‌های یک پروژه (اجرای ناهمگام در پس‌زمینه بدون تایم‌اوت ۵۲۴)
 app.post("/api/projects/:projectId/sync-activities", authenticate, requireManager, async (req: any, res) => {
   try {
     const projectId = parseInt(req.params.projectId);
+    if (!Number.isSafeInteger(projectId) || projectId <= 0) {
+      return res.status(400).json({ error: "شناسه پروژه نامعتبر است." });
+    }
+
+    const currentJob = activeProjectSyncs.get(projectId);
+    if (currentJob && currentJob.status === "running") {
+      return res.json({
+        success: true,
+        message: "فرآیند ممیزی در پس‌زمینه در حال اجراست.",
+        job: currentJob,
+      });
+    }
+
+    const forceRefresh = req.body?.force_refresh !== false;
     const reports = await prisma.report.findMany({
       where: { project_id: projectId },
       select: { id: true },
       orderBy: { id: "asc" },
     });
 
-    let totalSynced = 0;
-    for (const r of reports) {
-      const items = await syncReportActivitiesInternal(r.id);
-      totalSynced += items.length;
-    }
+    const job: ProjectSyncJob = {
+      status: "running",
+      totalReports: reports.length,
+      processedReports: 0,
+      activitiesCreated: 0,
+      startedAt: Date.now(),
+    };
+    activeProjectSyncs.set(projectId, job);
 
-    res.json({ success: true, reports_processed: reports.length, activities_created: totalSynced });
+    // پاسخ فوری به کلاینت (زیر ۵۰ میلی‌ثانیه) جهت جلوگیری قطعی از ارور ۵۲۴ کلودفلیر
+    res.json({
+      success: true,
+      message: "فرآیند ممیزی هوشمند در پس‌زمینه آغاز شد.",
+      total_reports: reports.length,
+      status: "running",
+    });
+
+    // اجرای ناهمگام در پس‌زمینه
+    (async () => {
+      try {
+        for (const r of reports) {
+          try {
+            const items = await syncReportActivitiesInternal(r.id, { forceRefresh });
+            job.activitiesCreated += items.length;
+          } catch (itemErr: any) {
+            console.warn(`Warning in background sync for report ${r.id}:`, itemErr?.message || itemErr);
+          }
+          job.processedReports++;
+        }
+        job.status = "completed";
+      } catch (err: any) {
+        console.error("Error in background project sync:", err);
+        job.status = "failed";
+        job.error = err?.message || "خطا در پردازش پس‌زمینه";
+      }
+    })();
   } catch (error) {
     console.error("Error batch syncing project activities:", error);
     res.status(500).json({ error: "خطا در استخراج گروهی فعالیت‌های پروژه" });
   }
+});
+
+// ۴.۵ بررسی وضعیت زنده پیشرفت ممیزی گروهی پروژه
+app.get("/api/projects/:projectId/sync-status", authenticate, async (req: any, res) => {
+  const projectId = parseInt(req.params.projectId);
+  const job = activeProjectSyncs.get(projectId) || { status: "idle", totalReports: 0, processedReports: 0, activitiesCreated: 0 };
+  res.json(job);
 });
 // -----------------------------
 // 5. Report Period Management
@@ -4713,6 +4779,37 @@ async function discoverCandidateModels(provider: { id: string; label: string; ba
   }
 }
 
+function getLocalRouterConfig(): { id: string; label: string; baseURL: string; apiKey: string; model: string; fallbackModels: string[] } | null {
+  try {
+    const customBase = process.env.LOCAL_AI_BASE_URL || (process.env.AI_BASE_URL?.includes("20128") ? process.env.AI_BASE_URL : null);
+    const dbPath = path.join(process.env.APPDATA || "", "9router", "db", "data.sqlite");
+    let apiKey = process.env.LOCAL_AI_API_KEY || "";
+
+    if (!apiKey && fs.existsSync(dbPath)) {
+      try {
+        const { DatabaseSync } = require("node:sqlite");
+        const db = new DatabaseSync(dbPath, { readOnly: true });
+        const row = db.prepare("SELECT key FROM apiKeys WHERE isActive=1 LIMIT 1").get() as any;
+        db.close();
+        if (row?.key) apiKey = row.key;
+      } catch { }
+    }
+
+    if (!apiKey && !customBase) return null;
+
+    return {
+      id: "9router",
+      label: "9Router Local Proxy",
+      baseURL: customBase || "http://127.0.0.1:20128/v1",
+      apiKey: apiKey || "none",
+      model: process.env.LOCAL_AI_MODEL || "gpt-5.6-austra",
+      fallbackModels: ["gpt-5.6-austra", "ag/gemini-3.8-flash", "oc/glm-5.3-flash-free"],
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function callAiWithFallback(
   systemPrompt: string,
   userPrompt: string,
@@ -4735,7 +4832,9 @@ async function callAiWithFallback(
   }
 
   // پیکربندی تامین‌کننده‌ها — اگر نام مدل «auto» یا نامشخص باشد، از لیست خود تامین‌کننده کشف می‌شود
+  const localRouter = getLocalRouterConfig();
   const providerConfigs = [
+    ...(localRouter ? [localRouter] : []),
     {
       id: "gemini",
       label: "Google AI Studio",
@@ -4834,6 +4933,7 @@ async function callAiWithFallback(
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
         ],
+        stream: false,
         temperature: 0.0,
       });
 
