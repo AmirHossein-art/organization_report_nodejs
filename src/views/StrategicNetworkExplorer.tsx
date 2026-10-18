@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   BrainCircuit,
   CheckCircle2,
@@ -17,6 +17,7 @@ import {
   Check,
   Info,
   Calendar,
+  Globe,
   Table as TableIcon,
 } from "lucide-react";
 import { Project } from "../types";
@@ -113,7 +114,15 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [syncProgress, setSyncProgress] = useState<string | null>(null);
+  const [isGlobalSyncing, setIsGlobalSyncing] = useState<boolean>(false);
+  const [globalSyncProgress, setGlobalSyncProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const selectedProjectIdRef = useRef<number>(selectedProjectId);
+  selectedProjectIdRef.current = selectedProjectId;
+
+  const projectPollingRef = useRef<any>(null);
+  const globalPollingRef = useRef<any>(null);
 
   // وضعیت فیلترها و نمایش
   const [viewMode, setViewMode] = useState<"graph" | "table">("graph");
@@ -139,26 +148,92 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
         throw new Error("خطا در دریافت شبکه استراتژیک پروژه.");
       }
       const data: StrategicGraphResponse = await res.json();
-      setGraphData(data);
+      if (selectedProjectIdRef.current === projectId) {
+        setGraphData(data);
+      }
     } catch (err: any) {
-      setError(err?.message || "خطای ناشناخته در دریافت داده‌های گراف.");
-      setGraphData(null);
+      if (selectedProjectIdRef.current === projectId) {
+        setError(err?.message || "خطای ناشناخته در دریافت داده‌های گراف.");
+        setGraphData(null);
+      }
     } finally {
-      setIsLoading(false);
+      if (selectedProjectIdRef.current === projectId) {
+        setIsLoading(false);
+      }
     }
   };
 
+  const startProjectPolling = (pId: number) => {
+    if (projectPollingRef.current) clearInterval(projectPollingRef.current);
+    projectPollingRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/projects/${pId}/sync-status`);
+        const job = await res.json();
+        if (selectedProjectIdRef.current === pId) {
+          if (job.status === "running") {
+            setIsSyncing(true);
+            setSyncProgress(`در حال پردازش گزارش ${toPersianDigits(job.processedReports)} از ${toPersianDigits(job.totalReports)}...`);
+            fetchGraphData(pId);
+          } else if (job.status === "completed") {
+            clearInterval(projectPollingRef.current);
+            projectPollingRef.current = null;
+            setIsSyncing(false);
+            setSyncProgress(null);
+            setToastMessage({
+              text: `ممیزی هوشمند با موفقیت تکمیل شد: ${toPersianDigits(job.activitiesCreated)} فعالیت متصل گردید.`,
+              type: "success",
+            });
+            fetchGraphData(pId);
+          } else if (job.status === "failed") {
+            clearInterval(projectPollingRef.current);
+            projectPollingRef.current = null;
+            setIsSyncing(false);
+            setSyncProgress(null);
+            setToastMessage({
+              text: job.error || "پردازش ممیزی با خطا مواجه شد.",
+              type: "error",
+            });
+          } else {
+            setIsSyncing(false);
+            setSyncProgress(null);
+          }
+        }
+      } catch { }
+    }, 3000);
+  };
+
   useEffect(() => {
-    if (selectedProjectId) {
-      fetchGraphData(selectedProjectId);
-      setSelectedActivity(null);
-    }
+    if (!selectedProjectId) return;
+    fetchGraphData(selectedProjectId);
+    setSelectedActivity(null);
+
+    // بررسی وضعیت همین پروژه در پس‌زمینه
+    fetch(`/api/projects/${selectedProjectId}/sync-status`)
+      .then((r) => r.json())
+      .then((job) => {
+        if (job.status === "running") {
+          setIsSyncing(true);
+          setSyncProgress(`در حال پردازش گزارش ${toPersianDigits(job.processedReports)} از ${toPersianDigits(job.totalReports)}...`);
+          startProjectPolling(selectedProjectId);
+        } else {
+          setIsSyncing(false);
+          setSyncProgress(null);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      if (projectPollingRef.current) {
+        clearInterval(projectPollingRef.current);
+        projectPollingRef.current = null;
+      }
+    };
   }, [selectedProjectId]);
 
-  // اجرای همگام‌سازی خودکار و بازخوانی تمام فعالیت‌های پروژه (ناهمگام بدون ارور ۵۲۴)
+  // اجرای همگام‌سازی خودکار و بازخوانی فعالیت‌های همین پروژه
   const handleBatchSync = async () => {
     if (!selectedProjectId || isSyncing) return;
-    if (!window.confirm("آیا مایلید تمام فعالیت‌های ثبت‌شده در گزارش‌های این پروژه مجدداً در حلقه خود-پالایشی هوش مصنوعی تحلیل و به WBS متصل شوند؟")) {
+    if (!window.confirm("آیا مایلید فعالیت‌های ثبت‌شده در گزارش‌های این پروژه در پس‌زمینه توسط هوش مصنوعی ممیزی و به WBS متصل شوند؟")) {
       return;
     }
 
@@ -172,49 +247,90 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
       });
       const result = await res.json();
       if (!res.ok) {
-        throw new Error(result.error || "خطا در همگام‌سازی گروهی فعالیت‌ها.");
+        throw new Error(result.error || "خطا در همگام‌سازی فعالیت‌های پروژه.");
       }
 
       setToastMessage({
-        text: "ممیزی هوشمند در پس‌زمینه آغاز شد. گراف به‌صورت خودکار به‌روزرسانی می‌شود...",
+        text: "ممیزی هوشمند در پس‌زمینه آغاز شد. گراف به‌صورت زنده به‌روزرسانی می‌شود...",
         type: "success",
       });
 
-      // پلینگ وضعیت زنده تا زمان اتمام
-      const interval = setInterval(async () => {
-        try {
-          const statusRes = await fetch(`/api/projects/${selectedProjectId}/sync-status`);
-          const job = await statusRes.json();
-          if (job.status === "running") {
-            setSyncProgress(`در حال پردازش گزارش ${toPersianDigits(job.processedReports)} از ${toPersianDigits(job.totalReports)}...`);
-            await fetchGraphData(selectedProjectId);
-          } else if (job.status === "completed") {
-            clearInterval(interval);
-            setIsSyncing(false);
-            setSyncProgress(null);
-            setToastMessage({
-              text: `ممیزی هوشمند با موفقیت تکمیل شد: ${toPersianDigits(job.activitiesCreated)} فعالیت پردازش و متصل گردید.`,
-              type: "success",
-            });
-            await fetchGraphData(selectedProjectId);
-          } else if (job.status === "failed") {
-            clearInterval(interval);
-            setIsSyncing(false);
-            setSyncProgress(null);
-            setToastMessage({
-              text: job.error || "پردازش ممیزی با خطا مواجه شد.",
-              type: "error",
-            });
-          }
-        } catch {
-          // خطای موقت شبکه در پولینگ
-        }
-      }, 3000);
+      startProjectPolling(selectedProjectId);
     } catch (err: any) {
       setIsSyncing(false);
       setSyncProgress(null);
       setToastMessage({
         text: err?.message || "خطا در اجرای همگام‌سازی هوش مصنوعی.",
+        type: "error",
+      });
+      setTimeout(() => setToastMessage(null), 5000);
+    }
+  };
+
+  // اجرای همگام‌سازی سراسری برای همه پروژه‌ها
+  const handleGlobalBatchSync = async () => {
+    if (isGlobalSyncing) return;
+    if (!window.confirm("آیا مایلید تمام پروژه‌های دارای WBS به ترتیب در پس‌زمینه توسط هوش مصنوعی ممیزی و متصل شوند؟")) {
+      return;
+    }
+
+    setIsGlobalSyncing(true);
+    setGlobalSyncProgress("در حال راه‌اندازی ممیزی سراسری تمام پروژه‌ها...");
+    try {
+      const res = await fetch("/api/projects-all/sync-activities", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force_refresh: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "خطا در شروع ممیزی سراسری.");
+
+      setToastMessage({
+        text: "ممیزی سراسری تمام پروژه‌ها در پس‌زمینه آغاز شد.",
+        type: "success",
+      });
+
+      if (globalPollingRef.current) clearInterval(globalPollingRef.current);
+      globalPollingRef.current = setInterval(async () => {
+        try {
+          const sRes = await fetch("/api/projects-all/sync-status");
+          const gJob = await sRes.json();
+          if (gJob.status === "running") {
+            setGlobalSyncProgress(
+              `ممیزی سراسری: پروژه ${toPersianDigits(gJob.processedProjects)} از ${toPersianDigits(gJob.totalProjects)} (${gJob.currentProjectTitle || ""} - گزارش ${toPersianDigits(gJob.processedReports)} از ${toPersianDigits(gJob.totalReports)})`
+            );
+            if (selectedProjectIdRef.current) {
+              fetchGraphData(selectedProjectIdRef.current);
+            }
+          } else if (gJob.status === "completed") {
+            clearInterval(globalPollingRef.current);
+            globalPollingRef.current = null;
+            setIsGlobalSyncing(false);
+            setGlobalSyncProgress(null);
+            setToastMessage({
+              text: `ممیزی سراسری تمام پروژه‌ها با موفقیت تکمیل شد (${toPersianDigits(gJob.activitiesCreated)} فعالیت متصل شد).`,
+              type: "success",
+            });
+            if (selectedProjectIdRef.current) {
+              fetchGraphData(selectedProjectIdRef.current);
+            }
+          } else if (gJob.status === "failed") {
+            clearInterval(globalPollingRef.current);
+            globalPollingRef.current = null;
+            setIsGlobalSyncing(false);
+            setGlobalSyncProgress(null);
+            setToastMessage({
+              text: gJob.error || "خطا در پردازش ممیزی سراسری",
+              type: "error",
+            });
+          }
+        } catch { }
+      }, 4000);
+    } catch (err: any) {
+      setIsGlobalSyncing(false);
+      setGlobalSyncProgress(null);
+      setToastMessage({
+        text: err?.message || "خطا در شروع ممیزی سراسری",
         type: "error",
       });
       setTimeout(() => setToastMessage(null), 5000);
@@ -346,19 +462,41 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
             </div>
           </div>
 
-          {/* دکمه همگام‌سازی حلقه بازتاب */}
+          {/* دکمه‌های همگام‌سازی و ممیزی هوشمند */}
           <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
               onClick={handleBatchSync}
-              disabled={isSyncing || isLoading}
+              disabled={isSyncing || isGlobalSyncing || isLoading}
               className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white rounded-2xl text-xs font-black shadow-md hover:shadow-lg transition-all disabled:opacity-50 cursor-pointer"
+              title="ممیزی و اتصال فعالیت‌های گزارش‌های همین پروژه به WBS"
             >
               <Sparkles className={`w-4 h-4 ${isSyncing ? "animate-spin text-amber-300" : ""}`} />
-              <span>{isSyncing ? (syncProgress || "در حال اجرای ممیزی و پالایش هوشمند...") : "بازخوانی و ممیزی هوشمند فعالیت‌ها"}</span>
+              <span>{isSyncing ? (syncProgress || "در حال ممیزی این پروژه...") : "ممیزی هوشمند همین پروژه"}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleGlobalBatchSync}
+              disabled={isGlobalSyncing || isSyncing || isLoading}
+              className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-900 text-slate-100 border border-slate-700 rounded-2xl text-xs font-black shadow-md hover:shadow-lg transition-all disabled:opacity-50 cursor-pointer"
+              title="ممیزی دسته‌جمعی تمام پروژه‌های دارای WBS در پس‌زمینه"
+            >
+              <Globe className={`w-4 h-4 ${isGlobalSyncing ? "animate-spin text-cyan-300" : "text-cyan-400"}`} />
+              <span>{isGlobalSyncing ? "در حال ممیزی سراسری..." : "ممیزی سراسری همه پروژه‌ها"}</span>
             </button>
           </div>
         </div>
+
+        {/* بنر وضعیت ممیزی سراسری در صورت اجرا */}
+        {globalSyncProgress && (
+          <div className="p-3 bg-cyan-950/40 border border-cyan-800/60 rounded-2xl text-xs text-cyan-200 flex items-center justify-between animate-pulse">
+            <div className="flex items-center gap-2">
+              <RefreshCw className="w-4 h-4 text-cyan-400 animate-spin" />
+              <span>{globalSyncProgress}</span>
+            </div>
+          </div>
+        )}
 
         {/* کارت‌های آماری خلاصه شبکه */}
         {graphData?.stats && (

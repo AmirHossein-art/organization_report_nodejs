@@ -2035,6 +2035,111 @@ app.get("/api/projects/:projectId/sync-status", authenticate, async (req: any, r
   const job = activeProjectSyncs.get(projectId) || { status: "idle", totalReports: 0, processedReports: 0, activitiesCreated: 0 };
   res.json(job);
 });
+
+// ۴.۶ ممیزی سراسری و همگام‌سازی دسته‌جمعی تمام پروژه‌های دارای WBS
+let globalSyncJob: {
+  status: "idle" | "running" | "completed" | "failed";
+  totalProjects: number;
+  processedProjects: number;
+  totalReports: number;
+  processedReports: number;
+  activitiesCreated: number;
+  currentProjectTitle?: string;
+  error?: string;
+} = {
+  status: "idle",
+  totalProjects: 0,
+  processedProjects: 0,
+  totalReports: 0,
+  processedReports: 0,
+  activitiesCreated: 0,
+};
+
+app.post("/api/projects-all/sync-activities", authenticate, requireManager, async (req: any, res) => {
+  try {
+    if (globalSyncJob.status === "running") {
+      return res.json({
+        success: true,
+        message: "ممیزی سراسری در پس‌زمینه در حال اجراست.",
+        job: globalSyncJob,
+      });
+    }
+
+    const forceRefresh = req.body?.force_refresh !== false;
+    const activeProjects = await prisma.project.findMany({
+      where: {
+        is_active: true,
+        wbsNodes: { some: {} },
+      },
+      include: {
+        reports: { select: { id: true }, orderBy: { id: "asc" } },
+      },
+      orderBy: { id: "asc" },
+    });
+
+    const totalReports = activeProjects.reduce((sum, p) => sum + p.reports.length, 0);
+
+    globalSyncJob = {
+      status: "running",
+      totalProjects: activeProjects.length,
+      processedProjects: 0,
+      totalReports,
+      processedReports: 0,
+      activitiesCreated: 0,
+    };
+
+    res.json({
+      success: true,
+      message: "ممیزی سراسری تمام پروژه‌ها در پس‌زمینه آغاز شد.",
+      total_projects: activeProjects.length,
+      total_reports: totalReports,
+    });
+
+    // پردازش زنجیره‌ای پس‌زمینه
+    (async () => {
+      try {
+        for (const proj of activeProjects) {
+          globalSyncJob.currentProjectTitle = proj.title;
+          const projJob: ProjectSyncJob = {
+            status: "running",
+            totalReports: proj.reports.length,
+            processedReports: 0,
+            activitiesCreated: 0,
+            startedAt: Date.now(),
+          };
+          activeProjectSyncs.set(proj.id, projJob);
+
+          for (const rep of proj.reports) {
+            try {
+              const items = await syncReportActivitiesInternal(rep.id, { forceRefresh });
+              projJob.activitiesCreated += items.length;
+              globalSyncJob.activitiesCreated += items.length;
+            } catch (rErr: any) {
+              console.warn(`Error syncing report ${rep.id} in global sync:`, rErr?.message || rErr);
+            }
+            projJob.processedReports++;
+            globalSyncJob.processedReports++;
+          }
+          projJob.status = "completed";
+          globalSyncJob.processedProjects++;
+        }
+        globalSyncJob.status = "completed";
+        globalSyncJob.currentProjectTitle = undefined;
+      } catch (gErr: any) {
+        console.error("Error in global projects sync:", gErr);
+        globalSyncJob.status = "failed";
+        globalSyncJob.error = gErr?.message || "خطا در ممیزی سراسری";
+      }
+    })();
+  } catch (error) {
+    console.error("Error launching all-projects sync:", error);
+    res.status(500).json({ error: "خطا در اجرای ممیزی سراسری پروژه‌ها" });
+  }
+});
+
+app.get("/api/projects-all/sync-status", authenticate, async (_req, res) => {
+  res.json(globalSyncJob);
+});
 // -----------------------------
 // 5. Report Period Management
 // -----------------------------
