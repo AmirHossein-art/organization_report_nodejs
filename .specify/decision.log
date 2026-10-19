@@ -279,3 +279,9 @@
   3. **Real-Time Integration & Background Execution:** Integrated automatic decomposition and linking into report creation (`POST /api/reports`) and editing (`PUT /api/reports/:id`) as non-blocking background tasks, supplemented by manual per-report and batch project sync endpoints (`POST /api/projects/:id/sync-activities`).
   4. **Interactive Enterprise Strategic Network Explorer:** Created `StrategicNetworkExplorer.tsx` mounted as the fourth tab in `ManageProjectsHub.tsx`, featuring a 3-column hierarchical DAG flow (WBS Ground Truth ➔ Atomic Activities ➔ AI Audit & Next Actions), live status chips, pan/zoom canvas controls, filterable audit tables, and a 1-click re-linking drawer for managerial governance.
 - **Verification:** `npx prisma generate` updated, `npx tsc --noEmit` verified with 0 errors, and full production build `npm run build` succeeded cleanly in 28s. Database migration tested additive and self-healing.
+
+### D41 — Dynamic Upstream Model Attribution for 9Router Multi-Model Combos
+- **Context:** When routing AI analysis through 9Router combos (e.g. cascading OpenCode free models), the system previously recorded static placeholder names (`9Router Local Proxy (9Router)`), masking which specific upstream engine (DeepSeek, GLM, MiMo, etc.) actually fulfilled the completion.
+- **Decision:** Extract the exact fulfilling model ID directly from the returned OpenAI completion response (`completion.model`) and format `model_used` dynamically as `9Router (${actualModel})` for 9Router and preserve full provider labeling for direct providers.
+- **Rationale:** Grants administrators complete transparency into which AI engine generated each audit or insight without needing to inspect external 9Router proxy gateway logs.
+- **Verification:** Typecheck `npx tsc --noEmit` and production build `npm run build` verified cleanly with 0 errors.

@@ -5046,9 +5046,14 @@ async function callAiWithFallback(
       const parsed = parseJsonFromText(rawContent);
       const analysisData = parsed.analysis ? parsed.analysis : parsed;
 
+      const actualModel = completion?.model || provider.model;
+      const modelDisplayName = provider.id === "9router"
+        ? `9Router (${actualModel})`
+        : provider.name;
+
       const result = {
         analysis: analysisData,
-        model_used: provider.name,
+        model_used: modelDisplayName,
       };
 
       await setCachedAiResponse(prisma, cacheKey, result, AI_CACHE_TTL_MS);
