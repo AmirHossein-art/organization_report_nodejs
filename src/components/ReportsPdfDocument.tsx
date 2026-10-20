@@ -851,7 +851,7 @@ export default function ReportsPdfDocument({
 
       const compositeKpiRows = assignedComposites.map((c) => {
         const periodVal = c.values?.find((v: any) => v.period_id === report.period_id);
-        const calcVal = periodVal?.calculated_value ?? (report.period_id === selectedPeriodId ? c.latest_value : null);
+        const calcVal = periodVal?.calculated_value ?? null;
         return {
           id: `comp-${c.id}`,
           is_composite: true,

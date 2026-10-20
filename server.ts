@@ -3052,21 +3052,31 @@ app.get("/api/composite-kpis", authenticate, requireManagerOrViewer, async (req:
         },
         values: {
           include: {
-            period: { select: { id: true, title: true, period_end: true } },
+            period: {
+              select: {
+                id: true,
+                title: true,
+                period_start: true,
+                period_end: true,
+                report_type: true,
+              },
+            },
           },
-          orderBy: { period: { period_end: "desc" } },
-          take: 1,
+          orderBy: { period: { period_start: "asc" } },
         },
       },
       orderBy: [{ sort_order: "asc" }, { id: "desc" }],
     });
 
-    const formatted = composites.map((c) => ({
-      ...c,
-      latest_value: c.values[0]?.calculated_value ?? null,
-      latest_period_title: c.values[0]?.period?.title ?? null,
-      latest_status: c.values[0]?.status ?? null,
-    }));
+    const formatted = composites.map((c) => {
+      const latestVal = c.values && c.values.length > 0 ? c.values[c.values.length - 1] : null;
+      return {
+        ...c,
+        latest_value: latestVal?.calculated_value ?? null,
+        latest_period_title: latestVal?.period?.title ?? null,
+        latest_status: latestVal?.status ?? null,
+      };
+    });
 
     res.json(formatted);
   } catch (error) {

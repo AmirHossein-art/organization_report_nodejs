@@ -285,3 +285,11 @@
 - **Decision:** Extract the exact fulfilling model ID directly from the returned OpenAI completion response (`completion.model`) and format `model_used` dynamically as `9Router (${actualModel})` for 9Router and preserve full provider labeling for direct providers.
 - **Rationale:** Grants administrators complete transparency into which AI engine generated each audit or insight without needing to inspect external 9Router proxy gateway logs.
 - **Verification:** Typecheck `npx tsc --noEmit` and production build `npm run build` verified cleanly with 0 errors.
+
+### D42 — Full-History Composite KPI Hydration & Period-Isolation in Executive PDF Exports
+- **Context:** In `ReportsPdfDocument.tsx`, composite KPIs displayed the calculation status of the latest global system period (e.g. week 29 "عدم پایش / اندازه‌گیری نشده") even when generating reports for earlier periods with verified data (e.g. week 22 with 3.19%).
+- **Decision:**
+  1. **Full-History Hydration (`server.ts`):** Remove `take: 1` from `GET /api/composite-kpis` and order `values` chronologically by `period.period_start: "asc"`, mirroring `/api/projects/:projectId/composite-kpis`. Dynamically compute `latest_value` from `c.values[c.values.length - 1]` to maintain full backward compatibility for dashboard card views.
+  2. **Strict Period Isolation (`ReportsPdfDocument.tsx`):** Eliminate cross-period fallback `?? (report.period_id === selectedPeriodId ? c.latest_value : null)` and bind values strictly to `periodVal?.calculated_value ?? null`, preventing historical reports from borrowing data from other periods.
+- **Rationale:** Guarantees temporal determinism and historical audit integrity across all reporting periods in executive PDF exports without cross-period data leakage.
+- **Verification:** `npx tsc --noEmit` and production build `npm run build` verified cleanly with 0 errors.
