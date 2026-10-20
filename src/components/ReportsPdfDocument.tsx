@@ -850,8 +850,34 @@ export default function ReportsPdfDocument({
       );
 
       const compositeKpiRows = assignedComposites.map((c) => {
-        const periodVal = c.values?.find((v: any) => v.period_id === report.period_id);
+        const sortedVals = Array.isArray(c.values) ? c.values : [];
+        const periodIdx = sortedVals.findIndex((v: any) => v.period_id === report.period_id);
+        const periodVal = periodIdx !== -1 ? sortedVals[periodIdx] : null;
         const calcVal = periodVal?.calculated_value ?? null;
+
+        // تعیین هوشمند مبنا: مقدار شاخص در دوره زمانی ماقبل (پیوستگی زنجیره شاخص‌ها طبق D38)
+        let baselineVal: number | null = null;
+        if (periodIdx !== -1 && periodIdx > 0) {
+          baselineVal = sortedVals[periodIdx - 1]?.calculated_value ?? null;
+        } else if (periodIdx !== -1 && periodIdx + 1 < sortedVals.length && sortedVals[0]?.period?.period_start > sortedVals[sortedVals.length - 1]?.period?.period_start) {
+          baselineVal = sortedVals[periodIdx + 1]?.calculated_value ?? null;
+        } else if (sortedVals.length > 0) {
+          const currentPeriodObj = localPeriods.find((p) => p.id === report.period_id);
+          const currentEnd = currentPeriodObj?.period_end ? new Date(currentPeriodObj.period_end).getTime() : 0;
+          const prior = sortedVals
+            .filter((v: any) => {
+              if (v.period_id === report.period_id) return false;
+              const pEnd = v.period?.period_end ? new Date(v.period.period_end).getTime() : 0;
+              return pEnd < currentEnd && v.calculated_value !== null && v.calculated_value !== undefined;
+            })
+            .sort((a: any, b: any) => (new Date(b.period?.period_end || 0).getTime() - new Date(a.period?.period_end || 0).getTime()))[0];
+          baselineVal = prior ? prior.calculated_value : null;
+        }
+
+        // اگر هیچ دوره قبلی در تاریخچه یافت نشد (دوره اول ثبت)، طبق اصل D38 مبنا برابر مقدار همین دوره است (رشد صفر)
+        if (baselineVal === null && calcVal !== null && calcVal !== undefined) {
+          baselineVal = calcVal;
+        }
         return {
           id: `comp-${c.id}`,
           is_composite: true,
@@ -862,7 +888,7 @@ export default function ReportsPdfDocument({
           target_direction: c.target_direction,
           current_value: calcVal,
           calculated_value: calcVal,
-          baseline_value: null,
+          baseline_value: baselineVal,
           not_measured: calcVal === null || calcVal === undefined,
           missing_reason: calcVal === null ? "محاسبه‌نشده" : undefined,
           operator: c.operator,

@@ -1,6 +1,6 @@
 import { toPersianDigits } from "../dateUtils";
 
-export type KpiStatus = "completed" | "in_progress" | "stagnant" | "not_started" | "not_measured";
+export type KpiStatus = "completed" | "in_progress" | "stagnant" | "not_started" | "not_measured" | "regressed";
 
 export interface KpiVisualData {
   totalProgressPercent: number; // 0 to 100
@@ -9,6 +9,8 @@ export interface KpiVisualData {
   rawCurrentValue: number | null;
   rawBaselineValue: number | null;
   rawGrowthValue: number | null;
+  growthType: "positive" | "negative" | "zero";
+  growthLabel: string; // "رشد" | "کاهش" | "بدون تغییر"
   status: KpiStatus;
   statusLabel: string;
   badgeClass: string;
@@ -18,6 +20,7 @@ export interface KpiVisualData {
   formattedBaseline: string;
   formattedTarget: string;
   formattedGrowth: string | null;
+  formattedGrowthAbsolute: string | null;
   growthPositive: boolean | null;
   hasTarget: boolean;
   isPercentageUnit: boolean;
@@ -61,6 +64,8 @@ export function computeKpiVisual(
       rawCurrentValue: null,
       rawBaselineValue: null,
       rawGrowthValue: null,
+      growthType: "zero",
+      growthLabel: "عدم پایش",
       status: "not_measured",
       statusLabel: "عدم پایش",
       badgeClass: "bg-rose-50 text-rose-700 border-rose-200",
@@ -70,6 +75,7 @@ export function computeKpiVisual(
       formattedBaseline: "—",
       formattedTarget: "—",
       formattedGrowth: null,
+      formattedGrowthAbsolute: null,
       growthPositive: null,
       hasTarget: false,
       isPercentageUnit: false,
@@ -120,6 +126,8 @@ export function computeKpiVisual(
       rawCurrentValue: null,
       rawBaselineValue: baselineVal !== null ? Number(baselineVal) : null,
       rawGrowthValue: null,
+      growthType: "zero",
+      growthLabel: "ثبت نشده",
       status: "not_started",
       statusLabel: "ثبت نشده",
       badgeClass: "bg-slate-100 text-slate-700 border-slate-200",
@@ -129,6 +137,7 @@ export function computeKpiVisual(
       formattedBaseline,
       formattedTarget,
       formattedGrowth: null,
+      formattedGrowthAbsolute: null,
       growthPositive: null,
       hasTarget,
       isPercentageUnit,
@@ -173,13 +182,26 @@ export function computeKpiVisual(
   // Growth calculation in raw units — جهت‌آگاه: در شاخص کاهشی کاهش مقدار یعنی رشد مثبت
   const rawGrowth = isDecreasing ? numBaseline - numCurrent : numCurrent - numBaseline;
   const growthPositive = rawGrowth > 0;
+  let growthType: "positive" | "negative" | "zero" = "zero";
+  let growthLabel = "بدون تغییر";
   let formattedGrowth: string | null = null;
+  let formattedGrowthAbsolute: string | null = null;
+
   if (rawGrowth > 0) {
+    growthType = "positive";
+    growthLabel = "رشد";
     formattedGrowth = `+${toPersianDigits(rawGrowth.toFixed(2))} ${unit}`;
+    formattedGrowthAbsolute = `${toPersianDigits(rawGrowth.toFixed(2))} ${unit}`;
   } else if (rawGrowth < 0) {
-    formattedGrowth = `${toPersianDigits(rawGrowth.toFixed(2))} ${unit}`;
+    growthType = "negative";
+    growthLabel = "کاهش";
+    formattedGrowth = `-${toPersianDigits(Math.abs(rawGrowth).toFixed(2))} ${unit}`;
+    formattedGrowthAbsolute = `${toPersianDigits(Math.abs(rawGrowth).toFixed(2))} ${unit}`;
   } else {
+    growthType = "zero";
+    growthLabel = "بدون تغییر";
     formattedGrowth = `۰.۰۰ ${unit}`;
+    formattedGrowthAbsolute = `۰.۰۰ ${unit}`;
   }
 
   // Status categorization
@@ -191,11 +213,15 @@ export function computeKpiVisual(
     status = "completed";
     statusLabel = "تکمیل شده";
     badgeClass = "bg-emerald-50 text-emerald-800 border-emerald-300 font-black";
+  } else if (rawGrowth < 0) {
+    status = "regressed";
+    statusLabel = "کاهش در دوره";
+    badgeClass = "bg-rose-50 text-rose-800 border-rose-200 font-bold";
   } else if (!hasTarget && !isPercentageUnit) {
     status = "in_progress";
     statusLabel = "ثبت عملکرد";
     badgeClass = "bg-slate-100 text-slate-700 border-slate-200";
-  } else if (totalProgressPercent === 0) {
+  } else if (totalProgressPercent === 0 && numCurrent === 0) {
     status = "not_started";
     statusLabel = "شروع نشده";
     badgeClass = "bg-slate-100 text-slate-600 border-slate-200";
@@ -206,7 +232,7 @@ export function computeKpiVisual(
   } else {
     status = "in_progress";
     statusLabel = "پیشرفت در دوره";
-    badgeClass = "bg-emerald-50 text-emerald-800 border-emerald-200";
+    badgeClass = "bg-emerald-50 text-emerald-800 border-emerald-200 font-bold";
   }
 
   return {
@@ -215,7 +241,9 @@ export function computeKpiVisual(
     growthPercent: Number(growthPercent.toFixed(2)),
     rawCurrentValue: numCurrent,
     rawBaselineValue: numBaseline,
-    rawGrowthValue: rawGrowth,
+    rawGrowthValue: Number(rawGrowth.toFixed(4)),
+    growthType,
+    growthLabel,
     status,
     statusLabel,
     badgeClass,
@@ -225,6 +253,7 @@ export function computeKpiVisual(
     formattedBaseline,
     formattedTarget,
     formattedGrowth,
+    formattedGrowthAbsolute,
     growthPositive,
     hasTarget,
     isPercentageUnit,

@@ -71,6 +71,22 @@ check(
   7
 );
 
+// سناریو ۵-ب: کاهش در شاخص صعودی عادی (افت عملکرد نسبت به دوره قبل)
+const LIQUIDITY_KPI = {
+  id: 3,
+  name: "درصد نقد شوندگی",
+  unit: "درصد",
+  input_type: "direct" as const,
+  target_value: 100,
+  target_direction: "minimum" as const,
+};
+const dropCheck = computeKpiVisual(LIQUIDITY_KPI, { baseline_value: 6.19, current_value: 3.19, calculated_value: 3.19 });
+check("drop 6.19->3.19 flags growthType as negative", dropCheck.growthType, "negative");
+check("drop 6.19->3.19 sets growthLabel as کاهش", dropCheck.growthLabel, "کاهش");
+check("drop 6.19->3.19 rawGrowthValue is -3", dropCheck.rawGrowthValue, -3);
+check("drop 6.19->3.19 status is regressed", dropCheck.status, "regressed");
+check("drop 6.19->3.19 statusLabel is کاهش در دوره", dropCheck.statusLabel, "کاهش در دوره");
+
 // سناریو ۶: بافت بدون هدف (باشد بدون پیشرفت) 
 const noTarget = runVisual(50, null, DECREASING_KPI);
 check(

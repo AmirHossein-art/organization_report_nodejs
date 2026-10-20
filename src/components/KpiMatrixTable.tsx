@@ -54,7 +54,7 @@ export const KpiMatrixTable: React.FC<KpiMatrixTableProps> = ({
             <th style={{ border: "1px solid #cbd5e1", padding: "4px 6px" }} className="text-center w-40">
               <span className="block">پیشرفت کل پروژه</span>
               <span className="block text-[8px] font-medium text-slate-500 mt-0.5">
-                <span className="text-slate-600 font-bold">■</span> قبلی | <span className="text-emerald-600 font-bold">■</span> رشد دوره
+                <span className="text-slate-600 font-bold">■</span> قبلی | <span className="text-emerald-600 font-bold">■</span> رشد / <span className="text-rose-600 font-bold">■</span> کاهش
               </span>
             </th>
           </tr>
@@ -139,14 +139,20 @@ export const KpiMatrixTable: React.FC<KpiMatrixTableProps> = ({
                   {visual.formattedGrowth && !kv.not_measured && (
                     <span
                       style={{
-                        color: visual.growthPositive ? "#047857" : "#be123c",
+                        color: visual.growthType === "positive"
+                          ? "#047857"
+                          : visual.growthType === "negative"
+                          ? "#be123c"
+                          : "#64748b",
                         fontSize: "9px",
                         fontWeight: "bold",
                         display: "block",
                         marginTop: "2px",
                       }}
                     >
-                      (رشد: {visual.formattedGrowth})
+                      {visual.growthType === "positive" && `(رشد: ${visual.formattedGrowth})`}
+                      {visual.growthType === "negative" && `(کاهش: ${visual.formattedGrowthAbsolute})`}
+                      {visual.growthType === "zero" && `(بدون تغییر)`}
                     </span>
                   )}
                 </td>
@@ -197,9 +203,23 @@ export const KpiMatrixTable: React.FC<KpiMatrixTableProps> = ({
                         <span
                           className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-black border ${visual.badgeClass}`}
                           style={{
-                            backgroundColor: visual.totalProgressPercent >= 100 ? "#ecfdf5" : "#f1f5f9",
-                            color: visual.totalProgressPercent >= 100 ? "#065f46" : "#0f172a",
-                            border: `1px solid ${visual.totalProgressPercent >= 100 ? "#6ee7b7" : "#cbd5e1"}`,
+                            backgroundColor: visual.totalProgressPercent >= 100
+                              ? "#ecfdf5"
+                              : visual.growthType === "negative"
+                              ? "#fff1f2"
+                              : "#f1f5f9",
+                            color: visual.totalProgressPercent >= 100
+                              ? "#065f46"
+                              : visual.growthType === "negative"
+                              ? "#be123c"
+                              : "#0f172a",
+                            border: `1px solid ${
+                              visual.totalProgressPercent >= 100
+                                ? "#6ee7b7"
+                                : visual.growthType === "negative"
+                                ? "#fecdd3"
+                                : "#cbd5e1"
+                            }`,
                             padding: "1px 6px",
                             borderRadius: "4px",
                             fontSize: "9.5px",
@@ -228,8 +248,29 @@ export const KpiMatrixTable: React.FC<KpiMatrixTableProps> = ({
                               printColorAdjust: "exact",
                               WebkitPrintColorAdjust: "exact",
                             }}
+                            title={`رشد دوره: +${toPersianDigits(visual.rawGrowthValue.toFixed(2))}٪`}
                           >
                             +{toPersianDigits(visual.rawGrowthValue.toFixed(2))}٪
+                          </span>
+                        ) : visual.rawGrowthValue !== null && visual.rawGrowthValue < 0 ? (
+                          <span
+                            className="text-[9px] font-bold text-rose-700 bg-rose-50 px-1 py-0.2 rounded border border-rose-200"
+                            style={{
+                              backgroundColor: "#fff1f2",
+                              color: "#be123c",
+                              border: "1px solid #fecdd3",
+                              padding: "1px 4px",
+                              borderRadius: "4px",
+                              fontSize: "8.5px",
+                              fontWeight: "bold",
+                              display: "inline-block",
+                              direction: "ltr",
+                              printColorAdjust: "exact",
+                              WebkitPrintColorAdjust: "exact",
+                            }}
+                            title={`کاهش دوره: -${toPersianDigits(Math.abs(visual.rawGrowthValue).toFixed(2))}٪`}
+                          >
+                            -{toPersianDigits(Math.abs(visual.rawGrowthValue).toFixed(2))}٪
                           </span>
                         ) : visual.rawGrowthValue === 0 && visual.totalProgressPercent > 0 && visual.totalProgressPercent < 100 ? (
                           <span
@@ -242,7 +283,7 @@ export const KpiMatrixTable: React.FC<KpiMatrixTableProps> = ({
                               WebkitPrintColorAdjust: "exact",
                             }}
                           >
-                            (بدون رشد)
+                            (بدون تغییر)
                           </span>
                         ) : null}
                       </div>

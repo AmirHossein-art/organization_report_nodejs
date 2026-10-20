@@ -286,13 +286,16 @@
 - **Rationale:** Grants administrators complete transparency into which AI engine generated each audit or insight without needing to inspect external 9Router proxy gateway logs.
 - **Verification:** Typecheck `npx tsc --noEmit` and production build `npm run build` verified cleanly with 0 errors.
 
-### D42 — Full-History Composite KPI Hydration & Period-Isolation in Executive PDF Exports
-- **Context:** In `ReportsPdfDocument.tsx`, composite KPIs displayed the calculation status of the latest global system period (e.g. week 29 "عدم پایش / اندازه‌گیری نشده") even when generating reports for earlier periods with verified data (e.g. week 22 with 3.19%).
+### D42 — Continuous Progression & Direction-Aware Reduction/Negative Growth in KPI Matrix & Executive PDF
+- **Context:**
+  1. In executive PDF reports, project-assigned composite KPIs previously lacked prior-period baseline resolution, causing `computeKpiVisual` to fall back to `0.00` and report fictitious positive growth (e.g. `+3.19%` instead of actual period-over-period decrease).
+  2. `GET /api/composite-kpis` restricted period value history via `take: 1`, preventing clients from looking up the prior period's calculated value.
+  3. `KpiMatrixTable.tsx` statically hardcoded the Persian string `(رشد: ...)` and discarded negative growth in the progress column via `visual.rawGrowthValue > 0 ? (...) : null`, silently hiding performance drops and regressed indicators.
 - **Decision:**
-  1. **Full-History Hydration (`server.ts`):** Remove `take: 1` from `GET /api/composite-kpis` and order `values` chronologically by `period.period_start: "asc"`, mirroring `/api/projects/:projectId/composite-kpis`. Dynamically compute `latest_value` from `c.values[c.values.length - 1]` to maintain full backward compatibility for dashboard card views.
-  2. **Strict Period Isolation (`ReportsPdfDocument.tsx`):** Eliminate cross-period fallback `?? (report.period_id === selectedPeriodId ? c.latest_value : null)` and bind values strictly to `periodVal?.calculated_value ?? null`, preventing historical reports from borrowing data from other periods.
-- **Rationale:** Guarantees temporal determinism and historical audit integrity across all reporting periods in executive PDF exports without cross-period data leakage.
-- **Verification:** `npx tsc --noEmit` and production build `npm run build` verified cleanly with 0 errors.
+  1. **Continuous Baseline Progression for Composite KPIs:** In `ReportsPdfDocument.tsx`, dynamically resolve the immediately preceding period's calculated value from `c.values` as `baseline_value`. In `server.ts` `GET /api/composite-kpis`, removed `take: 1` and ordered by `period_start: "asc"` so full chronological history is available. For the initial inception period, baseline equals current value (0% growth).
+  2. **Direction-Aware Growth Phrasing & Visual Semantics:** In `src/utils/kpiVisuals.ts`, introduced `growthType` (`positive`, `negative`, `zero`), `growthLabel` (`رشد`, `کاهش`, `بدون تغییر`), and `formattedGrowthAbsolute`. When performance drops, classify `status = "regressed"` with Persian label «کاهش در دوره» and rose styling (`bg-rose-50 text-rose-800 border-rose-200`).
+  3. **Explicit Reduction Badge in Matrix & PDF:** In `KpiMatrixTable.tsx`, render `(کاهش: X)` in rose red (`#be123c`) when performance declines, and explicitly badge negative progress in column 7 as `-{X}٪` with rose badge and tooltip.
+- **Verification:** Unit and visual smoke tests in `tests/kpi-direction-aware.test.ts` verifying regression detection, negative growth formatting, and baseline resolution; `npx tsc --noEmit` clean, and full production build `npm run build` verified cleanly with 0 errors.
 
 ### D43 — PostgreSQL Connection Pool Hardening, Idle Error Handling & Startup Contention Elimination
 - **Context:** Rapid container redeployments or container restarts on Railway occasionally resulted in HTTP 524 / 499 edge gateway timeouts where the app container remained "Online" but ceased responding to HTTP connections. Investigation revealed three contributing factors:
