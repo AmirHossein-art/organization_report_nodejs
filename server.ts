@@ -96,7 +96,15 @@ app.use(cookieParser());
 // ۴. اتصال به دیتابیس PostgreSQL از طریق Prisma 7
 const pool = new pg.Pool({
   connectionString: config.DATABASE_URL,
+  max: 15,
+  connectionTimeoutMillis: 5000,
+  idleTimeoutMillis: 30000,
 });
+
+pool.on("error", (err) => {
+  console.error("Unexpected error on idle PostgreSQL client:", err);
+});
+
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
@@ -485,19 +493,6 @@ async function ensureDatabaseSchema() {
   }
 }
 const schemaReady = ensureDatabaseSchema();
-
-// تمیزکاری خودکار وضعیت اقداماتی که در گزارش تیک نخورده بودند
-prisma.nextAction.updateMany({
-  where: { claimed_report_id: null, claimed_completed: true },
-  data: { claimed_completed: false },
-}).catch((e) => console.error("Error auto-sanitizing unlinked actions:", e));
-
-// تبدیل خودکار اقدامات اعلام‌شده توسط پرسنل به اقدامات تکمیل‌شده
-
-prisma.nextAction.updateMany({
-  where: { claimed_completed: true, is_completed: false },
-  data: { is_completed: true, completed_at: new Date() },
-}).catch((e) => console.error("Error auto-updating claimed actions to completed:", e));
 
 // -----------------------------
 // Middlewares: احراز هویت و کنترل دسترسی
@@ -5975,6 +5970,21 @@ app.post("/api/ai/clear-cache", authenticate, requireManager, async (_req, res) 
 // -----------------------------
 async function startServer() {
   if (!await schemaReady) throw new Error("Database schema initialization failed; refusing to serve inconsistent data.");
+
+  // تمیزکاری و همگام‌سازی ترتیبی اقدامات پس از اطمینان از سلامت اسکیما و بدون تداخل با استخر کانکشن‌ها
+  try {
+    await prisma.nextAction.updateMany({
+      where: { claimed_report_id: null, claimed_completed: true },
+      data: { claimed_completed: false },
+    });
+    await prisma.nextAction.updateMany({
+      where: { claimed_completed: true, is_completed: false },
+      data: { is_completed: true, completed_at: new Date() },
+    });
+  } catch (e) {
+    console.error("Error auto-sanitizing next actions on startup:", e);
+  }
+
   if (config.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -6001,10 +6011,15 @@ async function startServer() {
 
   const server = app.listen(config.PORT, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${config.PORT} [${config.NODE_ENV}]`);
-    // Backfill every existing reference (including inactive projects), without blocking health checks.
-    backfillWbsGraphs(prisma, wbsDir).then(result => {
-      console.log("WBS graph backfill:", JSON.stringify(result));
-    }).catch(error => console.error("WBS graph backfill unavailable; retry on next restart:", error));
+    // بک‌فیل WBS فقط در صورت نیاز صریح از طریق متغیر محیطی یا اسکریپت CLI (scripts/backfill-wbs-graphs.ts) اجرا می‌شود
+    // تا از هجوم کوئری‌ها، قفل دیتابیس و مسدود شدن کانتینر در استارت‌آپ جلوگیری شود.
+    if (process.env.ENABLE_STARTUP_WBS_BACKFILL === "true") {
+      setTimeout(() => {
+        backfillWbsGraphs(prisma, wbsDir).then(result => {
+          console.log("WBS graph backfill:", JSON.stringify(result));
+        }).catch(error => console.error("WBS graph backfill unavailable; retry on next restart:", error));
+      }, 30000);
+    }
   });
 
   // خاموش شدن ایمن سرور (Graceful Shutdown)

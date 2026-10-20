@@ -293,3 +293,15 @@
   2. **Strict Period Isolation (`ReportsPdfDocument.tsx`):** Eliminate cross-period fallback `?? (report.period_id === selectedPeriodId ? c.latest_value : null)` and bind values strictly to `periodVal?.calculated_value ?? null`, preventing historical reports from borrowing data from other periods.
 - **Rationale:** Guarantees temporal determinism and historical audit integrity across all reporting periods in executive PDF exports without cross-period data leakage.
 - **Verification:** `npx tsc --noEmit` and production build `npm run build` verified cleanly with 0 errors.
+
+### D43 — PostgreSQL Connection Pool Hardening, Idle Error Handling & Startup Contention Elimination
+- **Context:** Rapid container redeployments or container restarts on Railway occasionally resulted in HTTP 524 / 499 edge gateway timeouts where the app container remained "Online" but ceased responding to HTTP connections. Investigation revealed three contributing factors:
+  1. `pg.Pool` lacked explicit connection and idle timeouts (`connectionTimeoutMillis`), causing queries to wait indefinitely if connections were exhausted.
+  2. Idle PostgreSQL client errors were unhandled on the pool emitter, which could cause socket state corruption.
+  3. Two unawaited `prisma.nextAction.updateMany` calls fired during top-level module load simultaneously with `ensureDatabaseSchema` DDLs, competing for database sockets before the schema was confirmed ready.
+  4. Heavy `backfillWbsGraphs` ran immediately upon server listen on every container boot, acquiring PostgreSQL transaction advisory locks (`pg_advisory_xact_lock`) across all projects simultaneously while the container was trying to serve initial health checks.
+- **Decision:**
+  1. **Pool Hardening (`server.ts`):** Configured `pg.Pool` with `max: 15`, `connectionTimeoutMillis: 5000` (5s connection timeout preventing indefinite socket hangs), and `idleTimeoutMillis: 30000`. Attached an explicit `pool.on("error")` handler to log and isolate idle client connection drops.
+  2. **Sequential Action Normalization (`server.ts`):** Removed top-level unawaited Prisma calls and sequenced action normalization cleanly inside `startServer()` after `await schemaReady` has fully completed.
+  3. **Startup Contention Elimination & Opt-In WBS Backfill:** Replaced the automatic synchronous startup execution of `backfillWbsGraphs` with an opt-in environment flag (`ENABLE_STARTUP_WBS_BACKFILL="true"`) debounced by 30 seconds. Historical files are already backfilled; routine uploads continue to sync transactionally via `applyWbsUploadInTx`, and manual batch sync is maintained via `scripts/backfill-wbs-graphs.ts`.
+- **Verification:** Unit tests passing cleanly (15/15), `npx tsc --noEmit` verified with 0 errors, and production build `npm run build` completed cleanly in 25s.
