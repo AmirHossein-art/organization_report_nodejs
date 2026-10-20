@@ -1004,62 +1004,152 @@ export default function WbsViewer({ projects = [], onRefresh }: WbsViewerProps) 
                   </div>
 
                   {projectMemory ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 text-xs">
-                      {/* ۱. ذات و بافتار هویتی */}
-                      <div className="bg-slate-50/70 p-4 rounded-xl border border-slate-200/80 space-y-1.5">
-                        <span className="font-bold text-slate-900 flex items-center gap-1.5">
-                          <Building2 className="w-4 h-4 text-emerald-700" />
-                          <span>شناخت ماهیت و بافتار پروژه (DNA):</span>
-                        </span>
-                        <p className="text-slate-600 leading-relaxed font-normal">
-                          {projectMemory.dna_summary}
-                        </p>
-                      </div>
-
-                      {/* ۲. الگوی تعهدپذیری */}
-                      <div className="bg-slate-50/70 p-4 rounded-xl border border-slate-200/80 space-y-1.5">
-                        <span className="font-bold text-slate-900 flex items-center gap-1.5">
-                          <Clock className="w-4 h-4 text-blue-700" />
-                          <span>الگوی وفای به عهد و سابقه ددلاین‌ها:</span>
-                        </span>
-                        <p className="text-slate-600 leading-relaxed font-normal">
-                          {projectMemory.reliability_notes || "داده‌های کافی جهت ارزیابی آماری ثبت نشده است."}
-                        </p>
-                      </div>
-
-                      {/* ۳. موانع و گره‌های مزمن */}
-                      <div className="bg-amber-50/40 p-4 rounded-xl border border-amber-200/70 space-y-2">
-                        <span className="font-bold text-amber-950 flex items-center gap-1.5">
-                          <AlertTriangle className="w-4 h-4 text-amber-600" />
-                          <span>موانع و گلوگاه‌های مزمن تکرارشونده:</span>
-                        </span>
-                        {projectMemory.chronic_bottlenecks ? (
-                          <div className="space-y-1 text-slate-700 pr-1">
-                            {projectMemory.chronic_bottlenecks.split("\n").map((b, idx) => (
-                              <p key={idx} className="leading-relaxed">{b}</p>
-                            ))}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 text-xs">
+                      {/* ۱. ذات و بافتار هویتی پروژه (DNA Summary) - کارت محوری بنتو */}
+                      <motion.div
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.3 }}
+                        className="md:col-span-2 relative overflow-hidden bg-gradient-to-br from-white via-emerald-50/20 to-teal-50/30 p-5 rounded-2xl border border-emerald-200/90 shadow-xs hover:shadow-md transition-all flex flex-col justify-between group"
+                      >
+                        <div className="absolute top-0 right-0 left-0 h-1 bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-600 opacity-90" />
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-extrabold text-emerald-950 text-sm flex items-center gap-2">
+                              <span className="w-7 h-7 rounded-lg bg-emerald-100/80 text-emerald-800 flex items-center justify-center border border-emerald-200">
+                                <Building2 className="w-4 h-4 text-emerald-700" />
+                              </span>
+                              <span>شناخت ماهیت و بافتار پروژه (DNA):</span>
+                            </span>
+                            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100/70 px-2 py-0.5 rounded-md border border-emerald-200">
+                              محیط سازمانی و مأموریت
+                            </span>
                           </div>
-                        ) : (
-                          <p className="text-slate-400 italic font-normal">مانع یا تاخیر حاد تکرارشونده‌ای گزارش نشده است.</p>
-                        )}
-                      </div>
+                          <p className="text-slate-700 leading-relaxed font-medium text-xs pr-1">
+                            {projectMemory.dna_summary}
+                          </p>
+                        </div>
+                        <div className="mt-4 pt-3 border-t border-emerald-100/80 flex items-center justify-between text-[11px] text-slate-500">
+                          <span className="flex items-center gap-1.5 text-emerald-700 font-semibold">
+                            <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                            هسته معرفتی هدایت هوش مصنوعی
+                          </span>
+                          <span className="text-slate-400 font-medium">پایگاه داده رابطه‌ای استراتژیک</span>
+                        </div>
+                      </motion.div>
 
-                      {/* ۴. درس‌آموخته‌ها */}
-                      <div className="bg-emerald-50/40 p-4 rounded-xl border border-emerald-200/70 space-y-2">
-                        <span className="font-bold text-emerald-950 flex items-center gap-1.5">
-                          <CheckCircle2 className="w-4 h-4 text-emerald-700" />
-                          <span>درس‌آموخته‌ها و تجارب راهبردی انباشته:</span>
-                        </span>
-                        {projectMemory.lessons_learned ? (
-                          <div className="space-y-1 text-slate-700 pr-1">
-                            {projectMemory.lessons_learned.split("\n").map((l, idx) => (
-                              <p key={idx} className="leading-relaxed">{l}</p>
-                            ))}
+                      {/* ۲. الگوی وفای به عهد و پایایی ددلاین‌ها - کارت عمودی بنتو */}
+                      <motion.div
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.3, delay: 0.05 }}
+                        className="md:col-span-1 relative overflow-hidden bg-gradient-to-br from-white via-slate-50 to-blue-50/30 p-5 rounded-2xl border border-blue-200/70 shadow-xs hover:shadow-md transition-all flex flex-col justify-between"
+                      >
+                        <div className="absolute top-0 right-0 left-0 h-1 bg-gradient-to-r from-blue-500 to-indigo-500 opacity-80" />
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-extrabold text-slate-900 text-xs flex items-center gap-2">
+                              <span className="w-7 h-7 rounded-lg bg-blue-100/80 text-blue-800 flex items-center justify-center border border-blue-200">
+                                <Clock className="w-4 h-4 text-blue-700" />
+                              </span>
+                              <span>پایش وفای به عهد:</span>
+                            </span>
+                            <span className="text-[10px] font-bold text-blue-800 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
+                              پایایی تعهدات
+                            </span>
                           </div>
-                        ) : (
-                          <p className="text-slate-400 italic font-normal">با ثبت و ممیزی گزارش‌های دوره‌ای، تجارب جدید انباشته خواهند شد.</p>
-                        )}
-                      </div>
+                          <p className="text-slate-700 leading-relaxed font-medium text-xs">
+                            {projectMemory.reliability_notes || "داده‌های کافی جهت ارزیابی آماری ثبت نشده است."}
+                          </p>
+                        </div>
+                        <div className="mt-4 pt-3 border-t border-blue-100/80 flex items-center justify-between text-[11px] text-slate-500">
+                          <span className="flex items-center gap-1 text-blue-700 font-bold">
+                            <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse inline-block" />
+                            پایش مداوم هفتگی
+                          </span>
+                        </div>
+                      </motion.div>
+
+                      {/* ۳. موانع و گره‌های مزمن تکرارشونده - کارت هشداری بنتو */}
+                      <motion.div
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.3, delay: 0.1 }}
+                        className="md:col-span-1 relative overflow-hidden bg-gradient-to-br from-white via-amber-50/30 to-amber-100/20 p-5 rounded-2xl border border-amber-200/80 shadow-xs hover:shadow-md transition-all flex flex-col justify-between"
+                      >
+                        <div className="absolute top-0 right-0 left-0 h-1 bg-gradient-to-r from-amber-500 to-rose-400 opacity-90" />
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-extrabold text-amber-950 text-xs flex items-center gap-2">
+                              <span className="w-7 h-7 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center border border-amber-300">
+                                <AlertTriangle className="w-4 h-4 text-amber-600" />
+                              </span>
+                              <span>گلوگاه‌های مزمن تکرارشونده:</span>
+                            </span>
+                            <span className="text-[10px] font-bold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-md border border-amber-200">
+                              ریسک‌های انباشته
+                            </span>
+                          </div>
+                          {projectMemory.chronic_bottlenecks ? (
+                            <div className="space-y-2 text-slate-800 pr-1">
+                              {projectMemory.chronic_bottlenecks.split("\n").filter(Boolean).map((b, idx) => (
+                                <div key={idx} className="flex items-start gap-2 bg-amber-50/70 p-2 rounded-xl border border-amber-200/50">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0 mt-1.5" />
+                                  <span className="leading-relaxed font-medium text-xs">{b}</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-slate-400 italic font-normal text-xs">مانع یا تاخیر حاد تکرارشونده‌ای گزارش نشده است.</p>
+                          )}
+                        </div>
+                        <div className="mt-3 pt-2.5 border-t border-amber-100 text-[10px] text-amber-800 font-semibold flex items-center gap-1">
+                          <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
+                          <span>توجه مدیریتی در تخصیص منابع هفتگی</span>
+                        </div>
+                      </motion.div>
+
+                      {/* ۴. درس‌آموخته‌ها و تجارب راهبردی - کارت عریض بنتو */}
+                      <motion.div
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.3, delay: 0.15 }}
+                        className="md:col-span-2 relative overflow-hidden bg-gradient-to-br from-white via-teal-50/20 to-emerald-50/30 p-5 rounded-2xl border border-teal-200/80 shadow-xs hover:shadow-md transition-all flex flex-col justify-between"
+                      >
+                        <div className="absolute top-0 right-0 left-0 h-1 bg-gradient-to-r from-teal-500 via-emerald-500 to-emerald-600 opacity-90" />
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-extrabold text-emerald-950 text-xs flex items-center gap-2">
+                              <span className="w-7 h-7 rounded-lg bg-teal-100/80 text-teal-800 flex items-center justify-center border border-teal-200">
+                                <CheckCircle2 className="w-4 h-4 text-teal-700" />
+                              </span>
+                              <span>درس‌آموخته‌ها و تجارب راهبردی انباشته:</span>
+                            </span>
+                            <span className="text-[10px] font-bold text-teal-800 bg-teal-50 px-2 py-0.5 rounded-md border border-teal-200">
+                              دانش تجربی
+                            </span>
+                          </div>
+                          {projectMemory.lessons_learned ? (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-slate-800">
+                              {projectMemory.lessons_learned.split("\n").filter(Boolean).map((l, idx) => (
+                                <div key={idx} className="flex items-start gap-2 bg-white/80 p-2.5 rounded-xl border border-teal-100 shadow-xs">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-teal-500 shrink-0 mt-1.5" />
+                                  <span className="leading-relaxed font-medium text-xs">{l}</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-slate-400 italic font-normal text-xs">با ثبت و ممیزی گزارش‌های دوره‌ای، تجارب جدید انباشته خواهند شد.</p>
+                          )}
+                        </div>
+                        <div className="mt-4 pt-3 border-t border-teal-100 flex items-center justify-between text-[11px] text-slate-500">
+                          <span className="flex items-center gap-1.5 text-teal-700 font-semibold">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-teal-600" />
+                            تزریق خودکار در پرامپت تحلیل‌های راهبردی
+                          </span>
+                          <span className="text-slate-400 font-medium">سرمایه دانشی سازمان</span>
+                        </div>
+                      </motion.div>
                     </div>
                   ) : (
                     <div className="py-8 text-center space-y-2 text-slate-400">

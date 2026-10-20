@@ -19,6 +19,8 @@ import {
   Calendar,
   Globe,
   Table as TableIcon,
+  Grid,
+  Workflow,
 } from "lucide-react";
 import { Project } from "../types";
 import { toPersianDigits } from "../dateUtils";
@@ -136,6 +138,7 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
   // بزرگ‌نمایی و کنترل‌های کانواس
   const [zoomLevel, setZoomLevel] = useState<number>(1);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  const [showGrid, setShowGrid] = useState<boolean>(true);
 
   // خواندن داده‌های گراف پروژه
   const fetchGraphData = async (projectId: number) => {
@@ -644,14 +647,25 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
       {!isLoading && !error && graphData && (
         <>
           {viewMode === "graph" ? (
-            /* =================== نمای شبکه لایه‌ای (Layered DAG Flow) =================== */
-            <div className="relative bg-slate-900 border border-slate-800 rounded-3xl shadow-xl overflow-hidden p-6 text-slate-100">
-              {/* ابزارهای بزرگ‌نمایی */}
-              <div className="absolute top-4 left-4 z-20 flex items-center gap-1.5 bg-slate-800/90 backdrop-blur-md p-1.5 rounded-2xl border border-slate-700 shadow-md">
+            /* =================== نمای شبکه لایه‌ای (Layered DAG Flow - Vercel Canvas Style) =================== */
+            <div className={`relative ${showGrid ? "bg-[radial-gradient(#334155_1.2px,transparent_1.2px)] [background-size:24px_24px]" : ""} bg-slate-950 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden p-6 text-slate-100 transition-colors`}>
+              {/* ابزارهای بزرگ‌نمایی و کنترل بوم (Vercel Canvas Controls) */}
+              <div className="absolute top-4 left-4 z-20 flex items-center gap-1.5 bg-slate-900/90 backdrop-blur-md p-1.5 rounded-2xl border border-slate-700/80 shadow-xl">
+                <button
+                  type="button"
+                  onClick={() => setShowGrid((g) => !g)}
+                  className={`p-1.5 rounded-xl transition-all cursor-pointer ${
+                    showGrid ? "text-emerald-400 bg-slate-800" : "text-slate-400 hover:text-white hover:bg-slate-800"
+                  }`}
+                  title={showGrid ? "مخفی‌سازی شبکه شطرنجی کانواس" : "نمایش شبکه شطرنجی کانواس"}
+                >
+                  <Grid className="w-4 h-4" />
+                </button>
+                <div className="w-[1px] h-4 bg-slate-700 mx-0.5" />
                 <button
                   type="button"
                   onClick={() => setZoomLevel((z) => Math.min(1.4, z + 0.1))}
-                  className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-700 rounded-xl cursor-pointer"
+                  className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded-xl cursor-pointer"
                   title="بزرگ‌نمایی"
                 >
                   <ZoomIn className="w-4 h-4" />
@@ -659,7 +673,7 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
                 <button
                   type="button"
                   onClick={() => setZoomLevel((z) => Math.max(0.7, z - 0.1))}
-                  className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-700 rounded-xl cursor-pointer"
+                  className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded-xl cursor-pointer"
                   title="کوچک‌نمایی"
                 >
                   <ZoomOut className="w-4 h-4" />
@@ -667,18 +681,18 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
                 <button
                   type="button"
                   onClick={() => setZoomLevel(1)}
-                  className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-700 rounded-xl cursor-pointer"
+                  className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded-xl cursor-pointer"
                   title="بازنشانی اندازه"
                 >
                   <RotateCcw className="w-4 h-4" />
                 </button>
-                <span className="text-[10px] font-black text-slate-400 px-1">
+                <span className="text-[10px] font-black text-slate-300 px-1.5">
                   %{toPersianDigits(Math.round(zoomLevel * 100))}
                 </span>
               </div>
 
               {/* راهنمای لایه‌ها */}
-              <div className="mb-4 flex flex-wrap items-center justify-between text-xs text-slate-400 border-b border-slate-800 pb-3 gap-2">
+              <div className="mb-4 flex flex-wrap items-center justify-between text-xs text-slate-400 border-b border-slate-800/80 pb-3 gap-2">
                 <div className="flex items-center gap-2">
                   <BrainCircuit className="w-4 h-4 text-emerald-400" />
                   <span className="font-bold text-slate-200">
@@ -698,7 +712,57 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
                 </div>
               </div>
 
-              {/* شبکه ۴ ستونه لایه‌ای با زوم داینامیک */}
+              {/* بنر مسیر فعال جریان معنایی (Active Route Flow) */}
+              {selectedActivity && (
+                <div className="mb-4 bg-slate-900/95 border border-emerald-500/50 rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs shadow-xl backdrop-blur-md">
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <span className="flex h-2.5 w-2.5 relative">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                    </span>
+                    <span className="font-extrabold text-white flex items-center gap-1.5">
+                      <Workflow className="w-4 h-4 text-emerald-400" />
+                      <span>مسیر فعال پیوند شبکه:</span>
+                    </span>
+                    {selectedActivity.wbs_node_id && wbsMap.has(selectedActivity.wbs_node_id) ? (
+                      <span className="bg-emerald-950 text-emerald-300 px-2.5 py-1 rounded-xl border border-emerald-700/80 font-bold flex items-center gap-1.5">
+                        <Layers className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>بسته مرجع {wbsMap.get(selectedActivity.wbs_node_id)!.code}</span>
+                      </span>
+                    ) : (
+                      <span className="bg-rose-950 text-rose-300 px-2.5 py-1 rounded-xl border border-rose-800 font-bold">
+                        فاقد WBS مرجع (انحراف یا نیازمند بازبینی)
+                      </span>
+                    )}
+                    <span className="text-slate-500 font-mono">➔</span>
+                    <span className="bg-amber-950 text-amber-200 px-2.5 py-1 rounded-xl border border-amber-700/80 font-bold max-w-sm truncate">
+                      {selectedActivity.activity_text}
+                    </span>
+                    <span className="text-slate-500 font-mono">➔</span>
+                    <span className="bg-cyan-950 text-cyan-200 px-2.5 py-1 rounded-xl border border-cyan-700/80 font-bold flex items-center gap-1">
+                      <ShieldCheck className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>
+                        {selectedActivity.status === "auto_confirmed"
+                          ? "تایید خودکار هوش مصنوعی"
+                          : selectedActivity.status === "needs_review"
+                          ? "نیاز به بازبینی"
+                          : selectedActivity.status === "unmapped"
+                          ? "خارج از محدوده"
+                          : "تایید مدیر"}
+                      </span>
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedActivity(null)}
+                    className="text-[11px] text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 px-2.5 py-1 rounded-xl border border-slate-700 transition-all cursor-pointer"
+                  >
+                    بستن مسیر
+                  </button>
+                </div>
+              )}
+
+              {/* شبکه ۳ ستونه لایه‌ای با زوم داینامیک */}
               <div
                 className="grid grid-cols-1 md:grid-cols-3 gap-6 transition-transform duration-200 origin-top-right"
                 style={{ transform: `scale(${zoomLevel})` }}
@@ -727,7 +791,7 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
                             key={wbs.id}
                             onMouseEnter={() => setHoveredNodeId(`wbs-${wbs.id}`)}
                             onMouseLeave={() => setHoveredNodeId(null)}
-                            className={`p-3 rounded-2xl border transition-all text-xs ${
+                            className={`relative p-3 rounded-2xl border transition-all text-xs group ${
                               isLinkedToSelected
                                 ? "bg-emerald-950/70 border-emerald-500 ring-2 ring-emerald-500/50 shadow-lg"
                                 : isHovered
@@ -735,6 +799,15 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
                                 : "bg-slate-900/90 border-slate-800 hover:border-slate-700"
                             }`}
                           >
+                            {/* درگاه خروجی اتصال به شبکه (Vercel Node Handle) */}
+                            <span
+                              className={`absolute -left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full border-2 border-slate-950 transition-all ${
+                                isLinkedToSelected
+                                  ? "bg-emerald-400 ring-4 ring-emerald-400/40 scale-125"
+                                  : "bg-emerald-600/70 group-hover:scale-110"
+                              }`}
+                              title="درگاه خروجی بسته مرجع WBS"
+                            />
                             <div className="flex items-center justify-between gap-2 mb-1.5">
                               <span className="font-black text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded-lg border border-emerald-800/60 text-[11px]">
                                 {wbs.code}
@@ -809,12 +882,31 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
                               setSelectedActivity(act);
                               setEditingWbsId(act.wbs_node_id || "none");
                             }}
-                            className={`p-3 rounded-2xl border transition-all text-xs cursor-pointer ${
+                            className={`relative p-3 rounded-2xl border transition-all text-xs cursor-pointer group ${
                               isSelected
                                 ? "bg-slate-800 border-amber-400 shadow-xl ring-2 ring-amber-400/50"
                                 : "bg-slate-900/90 border-slate-800 hover:border-slate-700"
                             }`}
                           >
+                            {/* درگاه ورودی از WBS (Vercel Input Node Handle) */}
+                            <span
+                              className={`absolute -right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full border-2 border-slate-950 transition-all ${
+                                isSelected
+                                  ? "bg-amber-400 ring-4 ring-amber-400/40 scale-125"
+                                  : "bg-amber-600/70 group-hover:scale-110"
+                              }`}
+                              title="درگاه ورودی از ساختار شکست WBS"
+                            />
+
+                            {/* درگاه خروجی به ممیزی و تعهدات (Vercel Output Node Handle) */}
+                            <span
+                              className={`absolute -left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full border-2 border-slate-950 transition-all ${
+                                isSelected
+                                  ? "bg-cyan-400 ring-4 ring-cyan-400/40 scale-125"
+                                  : "bg-cyan-600/70 group-hover:scale-110"
+                              }`}
+                              title="درگاه خروجی به ممیزی و اقدامات"
+                            />
                             <div className="flex items-center justify-between gap-2 mb-1.5">
                               <span className="text-[10px] text-slate-400 bg-slate-800 px-2 py-0.5 rounded-lg">
                                 {act.period_title}
@@ -858,7 +950,12 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
                   </div>
 
                   {selectedActivity ? (
-                    <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 space-y-4">
+                    <div className="relative bg-slate-950/90 border border-slate-800 rounded-2xl p-4 space-y-4 shadow-xl">
+                      {/* درگاه ورودی ممیزی و تصمیم‌گیری */}
+                      <span
+                        className="absolute -right-1.5 top-8 w-3 h-3 rounded-full border-2 border-slate-950 bg-cyan-400 ring-4 ring-cyan-400/40 scale-125"
+                        title="درگاه ورودی تصمیم‌گیری و ممیزی"
+                      />
                       <div>
                         <span className="text-[10px] text-slate-400 font-bold block mb-1">متن کامل فعالیت:</span>
                         <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800 text-xs font-bold text-white leading-5">
