@@ -860,7 +860,7 @@ export default function ProjectKpiAnalytics({
               latestStatus === "achieved" ? "border-emerald-200" : "border-indigo-100"
             }`}>
               <div className="flex items-center justify-between">
-                <span className="text-indigo-700 text-xs font-semibold">مقدار هدف ({kpiMeta?.target_direction === "minimum" ? "حداقل" : "حداکثر"})</span>
+                <span className="text-indigo-700 text-xs font-semibold">مقدار هدف ({kpiMeta?.target_direction === "minimum" ? "هرچه بیشتر بهتر" : "هرچه کمتر بهتر"})</span>
                 {latestStatus === "achieved" ? (
                   <span className="text-[11px] font-bold text-emerald-700 flex items-center gap-1 bg-emerald-50 px-1.5 py-0.5 rounded-md border border-emerald-200">
                     <CheckCircle2 className="w-3.5 h-3.5" /> محقق شده

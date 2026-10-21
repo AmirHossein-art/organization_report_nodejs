@@ -33,8 +33,8 @@ const INPUT_TYPE_LABELS: Record<string, string> = {
 };
 
 const TARGET_DIRECTION_LABELS: Record<string, string> = {
-  minimum: "حداقل",
-  maximum: "حداکثر",
+  minimum: "هرچه بیشتر بهتر",
+  maximum: "هرچه کمتر بهتر",
 };
 
 function renderScope(reportType: string | null): string {
@@ -704,7 +704,7 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
                         </>
                       )}
                       {kpi.target_value !== null && kpi.target_value !== undefined ? (
-                        <>هدف: {TARGET_DIRECTION_LABELS[kpi.target_direction]} {toPersianDigits(kpi.target_value)} {kpi.unit}</>
+                        <>هدف: {toPersianDigits(kpi.target_value)} {kpi.unit} ({TARGET_DIRECTION_LABELS[kpi.target_direction]})</>
                       ) : (
                         <span className="text-slate-400">بدون مقدار هدف</span>
                       )}
@@ -919,10 +919,15 @@ export default function ProjectKpiManagement({ projects = [], onRefresh }: Proje
                     value={editTargetDirection}
                     onChange={(val) => setEditTargetDirection(val as "minimum" | "maximum")}
                     options={[
-                      { value: "minimum", label: "حداقل" },
-                      { value: "maximum", label: "حداکثر" },
+                      { value: "minimum", label: "هرچه بیشتر بهتر" },
+                      { value: "maximum", label: "هرچه کمتر بهتر" },
                     ]}
                   />
+                  <span className="text-[10px] text-slate-400 block mt-0.5">
+                    {editTargetDirection === "maximum"
+                      ? "با شروع از مبنا، رسیدن به مقدار کمتر یعنی پیشرفت (مثل کلیک تا درگاه پرداخت)"
+                      : "با شروع از مبنا، رسیدن به مقدار بیشتر یعنی پیشرفت (مثل درصد پیشرفت)"}
+                  </span>
                 </div>
                 <div>
                   <label className="block text-slate-600 font-bold mb-1">مقدار هدف (اختیاری)</label>

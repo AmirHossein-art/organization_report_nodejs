@@ -288,6 +288,14 @@ async function ensureDatabaseSchema() {
       ALTER TABLE "ReportKpiValue" ADD COLUMN IF NOT EXISTS "missing_reason" TEXT;
     `);
 
+    // اصلاح خودترمیم: شاخص‌های فیزیکی پارکینگ‌ها و شاخص‌های رشدی که پیش‌تر با تگ اشتباه حداکثر (کاهشی) ذخیره شده بودند
+    await prisma.$executeRawUnsafe(`
+      UPDATE "ProjectKpi"
+      SET "target_direction" = 'minimum'
+      WHERE "target_direction" = 'maximum'
+        AND ("project_id" = 63 OR "id" IN (7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19));
+    `);
+
     await prisma.$executeRawUnsafe(`
       DO $$ BEGIN
         CREATE TYPE "CompositeOperator" AS ENUM ('sum', 'average', 'difference', 'multiply', 'ratio_percentage');
