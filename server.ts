@@ -45,6 +45,7 @@ import {
   validateFormula,
   getVariableKeyForIndex,
 } from "./src/utils/formulaEvaluator";
+import { userAiConcurrencyGuard } from "./src/utils/aiConcurrencyGuard";
 import { getDeadlineState } from "./src/deadline";
 import { ensureShamsiDate, isLastWeekOfShamsiMonth, shamsiToGregorian } from "./src/dateUtils";
 
@@ -208,17 +209,16 @@ const authLimiter = rateLimit({
   message: { error: "تعداد تلاش‌های ناموفق بیش از حد مجاز است. لطفاً ۱۵ دقیقه دیگر مجدداً تلاش کنید." },
 });
 
-// کنترل هم‌زمانی و سهمیه‌بندی هوش مصنوعی بر اساس User ID (اصل سوم مقیاس‌پذیری)
+// کنترل هم‌زمانی و سهمیه‌بندی هوش مصنوعی بر اساس User ID (اصل سوم مقیاس‌پذیری و پشتیبانی از کاربری چندنفره معاونت‌ها)
 // جلوگیری از جریمه شدن همکاران به دلیل IP مشترک شبکه سازمان
-const activeUserAiJobs = new Set<number>();
-
 const aiLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: (req: any) => {
-    // مدیران و ناظر سیستم سقف تحلیلی بالاتری دارند، کاربران عادی سقف استاندارد
+    // افزایش سقف نرخ درخواست جهت پشتیبانی از کاربری چندنفره معاونت‌ها (Delegated Multi-Seat Reporting)
+    // مدیران و ناظر سیستم سقف تحلیلی بالاتری دارند (۶۰)، اکانت‌های معاونت (کاربر عادی) سقف ۴۰ درخواست در دقیقه برای چند کارشناس هم‌زمان
     const role = req.user?.role;
-    if (role === "manager" || role === "viewer") return 30;
-    return 10;
+    if (role === "manager" || role === "viewer") return 60;
+    return 40;
   },
   keyGenerator: (req: any) => {
     // دسته‌بندی بر اساس شناسه کاربری جهت استقلال کامل پرسنل در سازمان
@@ -226,27 +226,10 @@ const aiLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: "سقف تعداد درخواست‌های هوش مصنوعی شما در این دقیقه تکمیل شده است. لطفاً لحظاتی دیگر تلاش فرمایید." },
+  message: {
+    error: "سقف تعداد درخواست‌های هوش مصنوعی این حساب کاربری در این دقیقه تکمیل شده است (۴۰ درخواست در دقیقه برای کاربری هم‌زمان معاونت). لطفاً لحظاتی دیگر تلاش فرمایید.",
+  },
 });
-
-// میدلور قفل هم‌زمانی تک‌کاربره (Single In-Flight AI Request per User)
-// جلوگیری از چند کلیک متوالی یا اسپم پردازشی توسط یک کاربر
-function userAiConcurrencyGuard(req: any, res: any, next: any) {
-  const userId = req.user?.id;
-  if (!userId) return next();
-
-  if (activeUserAiJobs.has(userId)) {
-    return res.status(429).json({
-      error: "شما یک پردازش هوش مصنوعی در حال اجرا دارید؛ لطفاً تا پایان آن صبور باشید.",
-    });
-  }
-
-  activeUserAiJobs.add(userId);
-  const release = () => activeUserAiJobs.delete(userId);
-  res.on("finish", release);
-  res.on("close", release);
-  next();
-}
 
 // ۷. توابع کمکی اعتبارسنجی و تبدیل
 const toEnglishDigits = (str: string): string => {

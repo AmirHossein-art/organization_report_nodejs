@@ -326,3 +326,13 @@
   5. **Polling Optimization:** Suppressed 3-second full graph re-fetches in `StrategicNetworkExplorer.tsx`, updating only progress and fetching graph data once upon completion (`status === 'completed'`).
   6. **Startup & Process Resilience:** Isolated filename encoding repairs into a non-blocking `try/catch` and added global `unhandledRejection` and `uncaughtException` process guards.
 - **Verification:** All 30 unit/integration tests verified cleanly (26 passed, 4 external snapshot skipped, 0 failed), `npx tsc --noEmit` verified with 0 errors, and production build `npm run build` succeeded cleanly in 6.08s.
+
+### D45 — Delegated Multi-Seat Reporting Concurrency & Quota Scaling
+- **Context:** In municipal organizational operations, deputy credentials are shared across 3–6 department heads, project controllers, and staff per deputy office (effectively 24–48 concurrent human users operating across 8 deputy accounts). The single-in-flight per-user concurrency lock and 10 req/min rate limiter previously blocked colleagues under the same deputy account from auditing separate projects concurrently, returning false HTTP 429 ("شما یک پردازش هوش مصنوعی در حال اجرا دارید") errors.
+- **Decision:**
+  1. **Entity-Scoped In-Flight Locking:** Extracted target entity keys (`u:${userId}:rep:${reportId}`, `u:${userId}:proj:${projectId}`, `u:${userId}:deputy:${target}:p:${periodId}`) in `src/utils/aiConcurrencyGuard.ts`. Duplicate double-clicks on the *same* report or project remain strictly guarded (429), while staff auditing distinct projects proceed in parallel without interference.
+  2. **Multi-Seat Concurrency Pooling:** Upgraded account-level concurrency ceilings to 5 concurrent in-flight jobs per deputy account (`MAX_CONCURRENT_AI_PER_DEPUTY = 5`) and 8 concurrent jobs for managers/viewers (`MAX_CONCURRENT_AI_PER_MANAGER = 8`).
+  3. **Multi-Seat Rate Limit Scaling:** Increased `aiLimiter` to 40 requests/min for regular user roles (deputy accounts serving multiple concurrent staff) and 60 requests/min for managers and viewers.
+  4. **Idempotent Socket Lifecycle Release:** Released entity locks and decremented in-flight counters deterministically on both `res.finish` and `res.close` events with double-release guards.
+- **Verification:** 35 automated tests passing cleanly in `tests/multi-seat-concurrency.test.ts` verifying entity key extraction, multi-user parallelism, duplicate-click blocking, concurrency ceilings, and socket close cleanup. `npx tsc --noEmit` clean, and full production build `npm run build` succeeded cleanly in 14.02s.
+
