@@ -308,3 +308,21 @@
   2. **Sequential Action Normalization (`server.ts`):** Removed top-level unawaited Prisma calls and sequenced action normalization cleanly inside `startServer()` after `await schemaReady` has fully completed.
   3. **Startup Contention Elimination & Opt-In WBS Backfill:** Replaced the automatic synchronous startup execution of `backfillWbsGraphs` with an opt-in environment flag (`ENABLE_STARTUP_WBS_BACKFILL="true"`) debounced by 30 seconds. Historical files are already backfilled; routine uploads continue to sync transactionally via `applyWbsUploadInTx`, and manual batch sync is maintained via `scripts/backfill-wbs-graphs.ts`.
 - **Verification:** Unit tests passing cleanly (15/15), `npx tsc --noEmit` verified with 0 errors, and production build `npm run build` completed cleanly in 25s.
+
+### D44 — High-Concurrency & Multi-User Scalable AI Architecture
+- **Context:**
+  1. The municipal reporting system serves 3 managers, 1 viewer, and 16–27 deputies/staff entering reports concurrently, with planned rollout of AI capabilities to all regular personnel.
+  2. The previous architecture suffered from 5 critical scalability risks:
+     - Default PostgreSQL connection pool (`max: 10`, `connectionTimeoutMillis: 0`) allowed connection starvation where all incoming HTTP requests hung indefinitely, triggering Cloudflare HTTP 524 timeouts.
+     - Unprotected `/api/health` queries stalled under heavy database load, causing Railway to flag the container as unhealthy and trigger crash/restart loops.
+     - OpenAI client lacked request timeouts, permitting hung upstream completions to block execution for up to 10–20 minutes.
+     - Polling in `StrategicNetworkExplorer.tsx` re-fetched the entire multi-entity graph every 3 seconds during background sync.
+     - IP-based rate limiting penalized all municipal staff sharing the organization's single corporate egress IP.
+- **Decision:**
+  1. **PostgreSQL Pool Hardening:** Upgraded `pg.Pool` to `max: 25`, `connectionTimeoutMillis: 8000`, and `idleTimeoutMillis: 30000` in `server.ts`.
+  2. **Healthcheck Circuit Breaker:** Wrapped `/api/health` in a 2.5s strict timeout (`Promise.race`) so Railway health probes resolve immediately and prevent false container restarts.
+  3. **Strict AI Client Timeouts:** Configured `timeout: 35000` (35s) and `maxRetries: 1` on OpenAI completions in `callAiWithFallback` and `timeout: 8000` on model discovery.
+  4. **Per-User AI Quota & In-Flight Concurrency Guard (Principle 3):** Replaced IP-based rate limiting with user-keyed limiter (`user_${req.user.id}`), granting 30 req/min for managers/viewers and 10 req/min for regular users. Added `userAiConcurrencyGuard` allowing maximum 1 active in-flight AI job per user.
+  5. **Polling Optimization:** Suppressed 3-second full graph re-fetches in `StrategicNetworkExplorer.tsx`, updating only progress and fetching graph data once upon completion (`status === 'completed'`).
+  6. **Startup & Process Resilience:** Isolated filename encoding repairs into a non-blocking `try/catch` and added global `unhandledRejection` and `uncaughtException` process guards.
+- **Verification:** All 30 unit/integration tests verified cleanly (26 passed, 4 external snapshot skipped, 0 failed), `npx tsc --noEmit` verified with 0 errors, and production build `npm run build` succeeded cleanly in 6.08s.

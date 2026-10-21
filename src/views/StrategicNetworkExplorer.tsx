@@ -173,7 +173,7 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
           if (job.status === "running") {
             setIsSyncing(true);
             setSyncProgress(`در حال پردازش گزارش ${toPersianDigits(job.processedReports)} از ${toPersianDigits(job.totalReports)}...`);
-            fetchGraphData(pId);
+            // بهینه‌سازی: عدم لود کل گراف در هر تیک ۳ ثانیه‌ای جهت حفظ پهنای باند و منابع دیتابیس
           } else if (job.status === "completed") {
             clearInterval(projectPollingRef.current);
             projectPollingRef.current = null;
@@ -299,9 +299,6 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
             setGlobalSyncProgress(
               `ممیزی سراسری: پروژه ${toPersianDigits(gJob.processedProjects)} از ${toPersianDigits(gJob.totalProjects)} (${gJob.currentProjectTitle || ""} - گزارش ${toPersianDigits(gJob.processedReports)} از ${toPersianDigits(gJob.totalReports)})`
             );
-            if (selectedProjectIdRef.current) {
-              fetchGraphData(selectedProjectIdRef.current);
-            }
           } else if (gJob.status === "completed") {
             clearInterval(globalPollingRef.current);
             globalPollingRef.current = null;

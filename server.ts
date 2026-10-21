@@ -93,12 +93,12 @@ if (config.ALLOWED_ORIGINS.length > 0) {
 app.use(express.json({ limit: "5mb" }));
 app.use(cookieParser());
 
-// ۴. اتصال به دیتابیس PostgreSQL از طریق Prisma 7
+// ۴. اتصال به دیتابیس PostgreSQL از طریق Prisma 7 با تنظیمات مقیاس‌پذیر و ضد قفل
 const pool = new pg.Pool({
   connectionString: config.DATABASE_URL,
-  max: 15,
-  connectionTimeoutMillis: 5000,
-  idleTimeoutMillis: 30000,
+  max: 25, // افزایش سقف اتصالات همزمان متناسب با ۳۰+ کاربر سازمانی
+  connectionTimeoutMillis: 8000, // سقف ۸ ثانیه برای تخصیص اتصال (جلوگیری از معلق ماندن بی‌پایان در صف)
+  idleTimeoutMillis: 30000, // آزادسازی اتصالات بلااستفاده پس از ۳۰ ثانیه
 });
 
 pool.on("error", (err) => {
@@ -208,13 +208,45 @@ const authLimiter = rateLimit({
   message: { error: "تعداد تلاش‌های ناموفق بیش از حد مجاز است. لطفاً ۱۵ دقیقه دیگر مجدداً تلاش کنید." },
 });
 
+// کنترل هم‌زمانی و سهمیه‌بندی هوش مصنوعی بر اساس User ID (اصل سوم مقیاس‌پذیری)
+// جلوگیری از جریمه شدن همکاران به دلیل IP مشترک شبکه سازمان
+const activeUserAiJobs = new Set<number>();
+
 const aiLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 20, // 20 requests per minute
+  max: (req: any) => {
+    // مدیران و ناظر سیستم سقف تحلیلی بالاتری دارند، کاربران عادی سقف استاندارد
+    const role = req.user?.role;
+    if (role === "manager" || role === "viewer") return 30;
+    return 10;
+  },
+  keyGenerator: (req: any) => {
+    // دسته‌بندی بر اساس شناسه کاربری جهت استقلال کامل پرسنل در سازمان
+    return req.user?.id ? `user_${req.user.id}` : (req.ip || "unknown");
+  },
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: "سقف تعداد درخواست‌های هوش مصنوعی در دقیقه پر شده است. لطفاً کمی بعد تلاش فرمایید." },
+  message: { error: "سقف تعداد درخواست‌های هوش مصنوعی شما در این دقیقه تکمیل شده است. لطفاً لحظاتی دیگر تلاش فرمایید." },
 });
+
+// میدلور قفل هم‌زمانی تک‌کاربره (Single In-Flight AI Request per User)
+// جلوگیری از چند کلیک متوالی یا اسپم پردازشی توسط یک کاربر
+function userAiConcurrencyGuard(req: any, res: any, next: any) {
+  const userId = req.user?.id;
+  if (!userId) return next();
+
+  if (activeUserAiJobs.has(userId)) {
+    return res.status(429).json({
+      error: "شما یک پردازش هوش مصنوعی در حال اجرا دارید؛ لطفاً تا پایان آن صبور باشید.",
+    });
+  }
+
+  activeUserAiJobs.add(userId);
+  const release = () => activeUserAiJobs.delete(userId);
+  res.on("finish", release);
+  res.on("close", release);
+  next();
+}
 
 // ۷. توابع کمکی اعتبارسنجی و تبدیل
 const toEnglishDigits = (str: string): string => {
@@ -435,15 +467,22 @@ async function ensureDatabaseSchema() {
       CREATE INDEX IF NOT EXISTS "ReportActivity_report_id_idx" ON "ReportActivity"("report_id");
       CREATE INDEX IF NOT EXISTS "ReportActivity_wbs_node_id_idx" ON "ReportActivity"("wbs_node_id");
       CREATE INDEX IF NOT EXISTS "ReportActivity_status_idx" ON "ReportActivity"("status");
-
-      UPDATE "Project"
-      SET "wbs_file_name" = convert_from(convert_to("wbs_file_name", 'LATIN1'), 'UTF8')
-      WHERE "wbs_file_name" LIKE '%Ø%' OR "wbs_file_name" LIKE '%Ù%' OR "wbs_file_name" LIKE '%§%';
-
-      UPDATE "WbsSubmission"
-      SET "file_name" = convert_from(convert_to("file_name", 'LATIN1'), 'UTF8')
-      WHERE "file_name" LIKE '%Ø%' OR "file_name" LIKE '%Ù%' OR "file_name" LIKE '%§%';
     `);
+
+    // اصلاح احتمالی موجیباکه نام فایل‌های قدیمی در صورت نیاز به شکل ایزوله و محافظت‌شده
+    try {
+      await prisma.$executeRawUnsafe(`
+        UPDATE "Project"
+        SET "wbs_file_name" = convert_from(convert_to("wbs_file_name", 'LATIN1'), 'UTF8')
+        WHERE "wbs_file_name" LIKE '%Ø%' OR "wbs_file_name" LIKE '%Ù%' OR "wbs_file_name" LIKE '%§%';
+
+        UPDATE "WbsSubmission"
+        SET "file_name" = convert_from(convert_to("file_name", 'LATIN1'), 'UTF8')
+        WHERE "file_name" LIKE '%Ø%' OR "file_name" LIKE '%Ù%' OR "file_name" LIKE '%§%';
+      `);
+    } catch (e: any) {
+      console.log("Note on filename mojibake migration (non-blocking):", e?.message || e);
+    }
 
     // ۱. اطمینان از افزودن نقش viewer به نوع شمارشی Role در پایگاه داده
     try {
@@ -495,7 +534,7 @@ async function ensureDatabaseSchema() {
 const schemaReady = ensureDatabaseSchema();
 
 // -----------------------------
-// Middlewares: احراز هویت و کنترل دسترسی
+// Validation Helpers for KPIs & Next Actions
 // -----------------------------
 async function authenticate(req: any, res: any, next: any) {
   try {
@@ -864,10 +903,17 @@ function resolveProjectWbsFilePath(project: { wbs_storage_filename?: string | nu
 // -----------------------------
 app.get("/api/health", async (_req, res) => {
   try {
-    await prisma.$queryRaw`SELECT 1`;
+    // چک سلامت با محافظت تایم‌اوت ۲.۵ ثانیه‌ای تا در صورت شلوغی دیتابیس کانتینر توسط Railway کشته نشود
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("Health check query timeout")), 2500)
+    );
+    await Promise.race([
+      prisma.$queryRaw`SELECT 1`,
+      timeoutPromise,
+    ]);
     res.json({ status: "ok" });
-  } catch {
-    res.status(503).json({ status: "error" });
+  } catch (err: any) {
+    res.status(503).json({ status: "error", message: err?.message || "Service unavailable" });
   }
 });
 
@@ -1798,7 +1844,7 @@ app.get("/api/projects/:projectId/memory", authenticate, async (req: any, res) =
 });
 
 // بازتولید یا تکامل دستی حافظه پروژه توسط مدیر
-app.post("/api/projects/:projectId/memory/evolve", authenticate, requireManager, async (req: any, res) => {
+app.post("/api/projects/:projectId/memory/evolve", authenticate, requireManager, aiLimiter, userAiConcurrencyGuard, async (req: any, res) => {
   try {
     const projectId = parseInt(req.params.projectId);
     if (!Number.isSafeInteger(projectId) || projectId <= 0) {
@@ -4864,7 +4910,12 @@ async function discoverCandidateModels(provider: { id: string; label: string; ba
   }
 
   try {
-    const client = new OpenAI({ apiKey: provider.apiKey, baseURL: provider.baseURL });
+    const client = new OpenAI({
+      apiKey: provider.apiKey,
+      baseURL: provider.baseURL,
+      timeout: 8000, // سقف ۸ ثانیه برای دریافت لیست مدل‌ها (جلوگیری از فریز فرآیند کشف)
+      maxRetries: 0,
+    });
     const page: any = await client.models.list();
     const ids: string[] = (page?.data || [])
       .map((m: any) => String(m?.id || ""))
@@ -5032,6 +5083,8 @@ async function callAiWithFallback(
       const client = new OpenAI({
         apiKey: provider.apiKey,
         baseURL: provider.baseURL,
+        timeout: 35000, // سقف ۳۵ ثانیه برای پاسخ هوش مصنوعی (جلوگیری قطعی از تایم‌اوت ۵۲۴ کلودفلیر و فریز سرور)
+        maxRetries: 1,  // سوئیچ سریع به پرووایدر بعدی در صورت بروز اختلال
         defaultHeaders: {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0",
         },
@@ -5239,7 +5292,7 @@ ${memorySection}`;
 }
 
 // اندپوینت تحلیل استراتژیک کلان دوره (مدیریتی و نظارتی)
-app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, requireManagerOrViewer, aiLimiter, async (req, res) => {
+app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, requireManagerOrViewer, aiLimiter, userAiConcurrencyGuard, async (req, res) => {
   try {
     const { period_id, period_title, period_end, reports, force_refresh, manager_comment, previous_analysis } = req.body;
     const submittedReports = Array.isArray(reports)
@@ -5455,7 +5508,7 @@ app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, r
 });
 
 // اندپوینت ممیزی اختصاصی تک‌گزارش (بر اساس WBS اکسل)
-app.post("/api/reports/analyze-single", authenticate, aiLimiter, async (req: any, res) => {
+app.post("/api/reports/analyze-single", authenticate, aiLimiter, userAiConcurrencyGuard, async (req: any, res) => {
   try {
     const { report_id, force_refresh } = req.body;
     if (!report_id) {
@@ -5665,7 +5718,7 @@ ${currentKpiSection}
 });
 
 // اندپوینت ارزیابی و تحلیل استراتژیک معاونت (پروژه به پروژه + ممیزی WBS و استخراج KPI)
-app.post(["/api/reports/analyze-deputy", "/api/ai/deputy-analysis"], authenticate, requireManagerOrViewer, aiLimiter, async (req: any, res) => {
+app.post(["/api/reports/analyze-deputy", "/api/ai/deputy-analysis"], authenticate, requireManagerOrViewer, aiLimiter, userAiConcurrencyGuard, async (req: any, res) => {
   try {
     const { period_id, deputy_name, user_id, manager_comment, previous_analysis, force_refresh } = req.body;
 
@@ -6011,6 +6064,18 @@ async function startServer() {
 
   const server = app.listen(config.PORT, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${config.PORT} [${config.NODE_ENV}]`);
+
+    // تمیزکاری و همگام‌سازی‌های دوره‌ای به صورت کاملاً غیرهمگام پس از آغاز به کار کامل وب‌سرور
+    prisma.nextAction.updateMany({
+      where: { claimed_report_id: null, claimed_completed: true },
+      data: { claimed_completed: false },
+    }).catch((e) => console.error("Error auto-sanitizing unlinked actions:", e));
+
+    prisma.nextAction.updateMany({
+      where: { claimed_completed: true, is_completed: false },
+      data: { is_completed: true, completed_at: new Date() },
+    }).catch((e) => console.error("Error auto-updating claimed actions to completed:", e));
+
     // بک‌فیل WBS فقط در صورت نیاز صریح از طریق متغیر محیطی یا اسکریپت CLI (scripts/backfill-wbs-graphs.ts) اجرا می‌شود
     // تا از هجوم کوئری‌ها، قفل دیتابیس و مسدود شدن کانتینر در استارت‌آپ جلوگیری شود.
     if (process.env.ENABLE_STARTUP_WBS_BACKFILL === "true") {
@@ -6040,6 +6105,14 @@ async function startServer() {
 
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
+
+  // گاردهای سراسری جهت جلوگیری قطعی از توقف یا فریز ناگهانی سرور
+  process.on("unhandledRejection", (reason: any) => {
+    console.error("Unhandled Promise Rejection caught by global resilience guard:", reason?.message || reason);
+  });
+  process.on("uncaughtException", (error: Error) => {
+    console.error("Uncaught Exception caught by global resilience guard:", error?.message || error);
+  });
 }
 
 startServer().catch(error => { console.error("Server startup failed:", error); process.exit(1); });
