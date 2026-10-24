@@ -394,3 +394,17 @@
   - All 54 regression tests passing cleanly with 0 failures.
   - Full TypeScript validation (`./node_modules/.bin/tsc --noEmit`) passes with 0 errors.
   - Production build (`npm run build`) completed successfully in 6.47s.
+
+### D50 — Adaptive AI Request Timeout & Prompt Diet for Heavy Deputies (18+ Projects)
+- **Context:**
+  When analyzing large deputy offices like "معاونت مطالعات و برنامه‌ریزی" with 17-18 projects, or generating macro organizational reports, Railway logs showed:
+  `⚠️ تامین‌کننده «9Router Gateway (9Router)»: Request timed out. -> در حال سوئیچ به تامین‌کننده بعدی...`
+  This was caused by a hardcoded 35-second client timeout (`timeout: 35000`) in `callAiWithFallback`. Generating ~4,000 output tokens of structured Persian JSON for 18 projects takes ~45 to 65 seconds. 9Router was actively working and healthy, but the Node.js client cut the connection prematurely at second 35.
+- **Decision:**
+  1. **Dynamic Timeout Window (80s - 85s):** Increased AI client timeout for deputy analysis and organizational audits to 85 seconds (`timeoutMs: 85000`), giving the model ample time to complete large multi-project generations while remaining safely below Cloudflare's 100-second 524 HTTP threshold.
+  2. **Safe Retries Enforcement (`maxRetries: 0` on heavy requests):** For requests with timeout >= 60s, disabled automatic client-side retries to prevent chaining two 85s attempts that would breach Cloudflare's 100s ceiling.
+  3. **Unsubmitted Project WBS Prompt Diet:** For projects with no submitted report, capped detailed WBS node dumps to the top 12 active packages with an indicator `(و N بسته کاری دیگر در سامانه)`. This saves thousands of redundant input tokens and accelerates generation time by 20-30%.
+- **Verification:**
+  - `npx tsc --noEmit` clean.
+  - All 54 automated test suites passing cleanly with 0 failures.
+  - Production build `npm run build` succeeds in 7.06s.

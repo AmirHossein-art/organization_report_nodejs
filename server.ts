@@ -5026,7 +5026,7 @@ function getRouterConfig(): { id: string; label: string; baseURL: string; apiKey
 async function callAiWithFallback(
   systemPrompt: string,
   userPrompt: string,
-  options: { forceRefresh?: boolean; cacheKey?: string } = {}
+  options: { forceRefresh?: boolean; cacheKey?: string; timeoutMs?: number } = {}
 ) {
   const cacheKey = options.cacheKey || generateAiCacheKey(systemPrompt, userPrompt);
   
@@ -5135,8 +5135,8 @@ async function callAiWithFallback(
       const client = new OpenAI({
         apiKey: provider.apiKey,
         baseURL: provider.baseURL,
-        timeout: 35000, // سقف ۳۵ ثانیه برای پاسخ هوش مصنوعی (جلوگیری قطعی از تایم‌اوت ۵۲۴ کلودفلیر و فریز سرور)
-        maxRetries: 1,  // سوئیچ سریع به پرووایدر بعدی در صورت بروز اختلال
+        timeout: options.timeoutMs || 80000, // سقف ۸۰ ثانیه (فرصت کامل برای پردازش پروژه‌های متعدد در عین قرارگیری زیر سقف ۱۰۰ ثانیه‌ای کلودفلیر)
+        maxRetries: (options.timeoutMs || 80000) >= 60000 ? 0 : 1, // جلوگیری از ریترای مضاعف و رد شدن از سقف کلودفلیر
         defaultHeaders: {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0",
         },
@@ -5533,6 +5533,7 @@ ${memoryContext}          ${actsText}
     const result: any = await callAiWithFallback(systemPrompt, userPrompt, {
       forceRefresh: shouldForceRefresh,
       cacheKey: strategicCacheKey,
+      timeoutMs: 85000,
     });
 
     // ایمن‌سازی: در صورتی که هوش مصنوعی لیست اقدامات انجام‌نشده را خالی برگرداند اما در دیتابیس موجود باشد، لیست دیتابیس را به عنوان پشتیبان درج کن
@@ -5981,10 +5982,13 @@ app.post(["/api/reports/analyze-deputy", "/api/ai/deputy-analysis"], authenticat
       );
 
       if (projectWbsNodes.length > 0) {
+        // برای پروژه‌های فاقد گزارش، فقط سرفصل‌ها و بسته‌های کاری کلیدی (حداکثر ۱۲ مورد) درج می‌شود تا طول پرامپت کنترل شده و از تایم‌اوت شبکه جلوگیری گردد
+        const displayNodes = report ? projectWbsNodes : projectWbsNodes.slice(0, 12);
+        const overflowNote = !report && projectWbsNodes.length > 12 ? `\n(و ${projectWbsNodes.length - 12} بسته کاری فعال دیگر در سامانه)` : "";
         wbsContext = `سند ساختار شکست کار WBS در سامانه (${projectWbsNodes.length} بسته کاری فعال):\n` +
-          projectWbsNodes
+          displayNodes
             .map((n) => `• کد [${n.code}]: ${n.title} (سطح ${n.level}${n.deliverable_text ? ` - تحویل‌دادنی: ${n.deliverable_text}` : ""})`)
-            .join("\n");
+            .join("\n") + overflowNote;
       } else {
         // اولویت دوم: استخراج از فایل اکسل فیزیکی در صورت وجود
         const sub = allSubmissions.find((s) => s.project_id === project.id);
@@ -6150,6 +6154,7 @@ ${projectsDataForPrompt}`;
     const result: any = await callAiWithFallback(systemPrompt, userPrompt, {
       forceRefresh: shouldForceRefresh,
       cacheKey: deputyCacheKey,
+      timeoutMs: 85000,
     });
 
     if (result && result.analysis && Array.isArray(result.analysis.next_period_commitments)) {
