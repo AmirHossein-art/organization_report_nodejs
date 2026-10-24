@@ -345,27 +345,38 @@ export async function getProjectStrategicGraph(
     };
   });
 
-  // ۲. فعالیت‌های اتمیک ثبت‌شده (بدون ترانکیشن مخفی؛ پشتیبانی از سقف صریح)
-  const activityQuery: any = {
-    where: { project_id: projectId },
-    include: {
-      report: {
-        select: {
-          id: true,
-          period_title: true,
-          period_id: true,
-          submitted_at: true,
-          user_full_name: true,
+  // ۲. فعالیت‌های اتمیک ثبت‌شده (سقف مقید صریح؛ پیش‌فرض ۵۰۰ برای پیشگیری از سربار و افشای ترانکیشن)
+  const defaultMaxActivities = 500;
+  const defaultMaxNextActions = 250;
+
+  const maxActivities = options?.maxActivities !== undefined
+    ? Math.max(0, Math.trunc(options.maxActivities))
+    : defaultMaxActivities;
+
+  const maxNextActions = options?.maxNextActions !== undefined
+    ? Math.max(0, Math.trunc(options.maxNextActions))
+    : defaultMaxNextActions;
+
+  let activitiesRaw: any[] = [];
+  if (maxActivities > 0) {
+    const activityQuery: any = {
+      where: { project_id: projectId },
+      include: {
+        report: {
+          select: {
+            id: true,
+            period_title: true,
+            period_id: true,
+            submitted_at: true,
+            user_full_name: true,
+          },
         },
       },
-    },
-    orderBy: [{ report_id: "desc" }, { line_number: "asc" }],
-  };
-  if (options?.maxActivities && Number.isSafeInteger(options.maxActivities) && options.maxActivities > 0) {
-    activityQuery.take = options.maxActivities;
+      orderBy: [{ report_id: "desc" }, { line_number: "asc" }],
+      take: maxActivities,
+    };
+    activitiesRaw = await prisma.reportActivity.findMany(activityQuery);
   }
-
-  const activitiesRaw: any[] = await prisma.reportActivity.findMany(activityQuery);
 
   const activities = activitiesRaw.map((a: any) => ({
     id: a.id,
@@ -382,19 +393,19 @@ export async function getProjectStrategicGraph(
     created_at: a.created_at ? (a.created_at instanceof Date ? a.created_at.toISOString() : String(a.created_at)) : new Date().toISOString(),
   }));
 
-  // ۳. اقدامات آتی باز و تکمیل‌شده (بدون ترانکیشن مخفی)
-  const nextActionQuery: any = {
-    where: { project_id: projectId },
-    include: {
-      user: { select: { full_name: true } },
-    },
-    orderBy: [{ is_completed: "asc" }, { target_date: "asc" }],
-  };
-  if (options?.maxNextActions && Number.isSafeInteger(options.maxNextActions) && options.maxNextActions > 0) {
-    nextActionQuery.take = options.maxNextActions;
+  // ۳. اقدامات آتی باز و تکمیل‌شده (سقف مقید صریح؛ پیش‌فرض ۲۵۰)
+  let nextActionsRaw: any[] = [];
+  if (maxNextActions > 0) {
+    const nextActionQuery: any = {
+      where: { project_id: projectId },
+      include: {
+        user: { select: { full_name: true } },
+      },
+      orderBy: [{ is_completed: "asc" }, { target_date: "asc" }],
+      take: maxNextActions,
+    };
+    nextActionsRaw = await prisma.nextAction.findMany(nextActionQuery);
   }
-
-  const nextActionsRaw: any[] = await prisma.nextAction.findMany(nextActionQuery);
 
   const nextActions = nextActionsRaw.map((na: any) => ({
     id: na.id,
@@ -407,13 +418,15 @@ export async function getProjectStrategicGraph(
     user_name: na.user?.full_name || null,
   }));
 
-  // ۴. شاخص‌های مصوب پروژه
+  // ۴. شاخص‌های پروژه (استخراج کلیه شاخص‌ها برای احتساب دقیق تعداد کل، و فیلتر فعال‌ها برای نمایش)
   const kpisRaw = await prisma.projectKpi.findMany({
-    where: { project_id: projectId, is_active: true },
+    where: { project_id: projectId },
     orderBy: { sort_order: "asc" },
   });
 
-  const kpis = kpisRaw.map((k) => ({
+  const activeKpisRaw = kpisRaw.filter((k) => k.is_active !== false);
+
+  const kpis = activeKpisRaw.map((k) => ({
     id: k.id,
     name: k.name,
     unit: k.unit,
@@ -422,7 +435,7 @@ export async function getProjectStrategicGraph(
     target_direction: k.target_direction,
   }));
 
-  // گزارش‌ها و دوره‌های مرتبط با پروژه برای نگاشت کامل معنایی
+  // گزارش‌ها و دوره‌های مرتبط با پروژه برای نگاشت کامل معنایی (بدون بلعیدن خطاهای دیتابیس)
   const projectReports = await prisma.report.findMany({
     where: { project_id: projectId },
     select: {
@@ -436,10 +449,10 @@ export async function getProjectStrategicGraph(
       submitted_at: true,
     },
     orderBy: { period_id: "desc" },
-  }).catch(() => []);
+  });
 
   const periodIds = Array.from(new Set(projectReports.map((r: any) => r.period_id).filter(Boolean)));
-  const projectPeriods = periodIds.length > 0 && prisma.reportPeriod?.findMany
+  const projectPeriods = periodIds.length > 0 && typeof prisma.reportPeriod?.findMany === "function"
     ? await prisma.reportPeriod.findMany({
         where: { id: { in: periodIds } },
         select: {
@@ -449,102 +462,22 @@ export async function getProjectStrategicGraph(
           period_end: true,
           is_open: true,
         },
-      }).catch(() => [])
+      })
     : [];
 
   const totalActivitiesCount = typeof prisma.reportActivity?.count === "function"
-    ? await prisma.reportActivity.count({ where: { project_id: projectId } }).catch(() => activitiesRaw.length)
+    ? await prisma.reportActivity.count({ where: { project_id: projectId } })
     : activitiesRaw.length;
 
   const totalNextActionsCount = typeof prisma.nextAction?.count === "function"
-    ? await prisma.nextAction.count({ where: { project_id: projectId } }).catch(() => nextActionsRaw.length)
+    ? await prisma.nextAction.count({ where: { project_id: projectId } })
     : nextActionsRaw.length;
 
-  // ۵. ساخت یال‌های لگاسی (Edges) با اولویت parent_id معتبر و عدم فرض انحصاری dot-notation
-  const edges: StrategicGraphData["edges"] = [];
-  const wbsById = new Map(wbsNodes.map((n) => [n.id, n]));
-  const wbsByCode = new Map(wbsNodes.map((n) => [n.code, n]));
+  const totalKpisCount = typeof prisma.projectKpi?.count === "function"
+    ? await prisma.projectKpi.count({ where: { project_id: projectId } })
+    : kpisRaw.length;
 
-  for (const node of wbsNodes) {
-    if (!node.active) continue;
-
-    // ۱. اولویت نخست: والد مشخص با parent_id دیتابیس
-    if (node.parent_id !== null && node.parent_id !== undefined) {
-      const parentNode = wbsById.get(node.parent_id);
-      if (parentNode && parentNode.active) {
-        edges.push({
-          id: `wbs-h-${parentNode.id}-${node.id}`,
-          source: `wbs-${parentNode.id}`,
-          target: `wbs-${node.id}`,
-          type: "WBS_HIERARCHY",
-        });
-      }
-    } else if (node.code.includes(".")) {
-      // ۲. اولویت دوم: استنتاج از کد درختی در صورت عدم ثبت parent_id
-      const parts = node.code.split(".");
-      const parentCode = parts.slice(0, -1).join(".");
-      const parentNode = wbsByCode.get(parentCode);
-      if (parentNode && parentNode.active) {
-        edges.push({
-          id: `wbs-h-${parentNode.id}-${node.id}`,
-          source: `wbs-${parentNode.id}`,
-          target: `wbs-${node.id}`,
-          type: "WBS_HIERARCHY",
-        });
-      }
-    }
-
-    // یال پیش‌نیاز
-    if (node.prerequisite) {
-      const prereqNode = wbsByCode.get(node.prerequisite.trim());
-      if (prereqNode && prereqNode.active) {
-        edges.push({
-          id: `wbs-pre-${prereqNode.id}-${node.id}`,
-          source: `wbs-${prereqNode.id}`,
-          target: `wbs-${node.id}`,
-          type: "PREREQUISITE",
-          label: "پیش‌نیاز",
-        });
-      }
-    }
-
-    // یال اتصال شاخص به WBS
-    for (const k of node.kpis) {
-      edges.push({
-        id: `kpi-wbs-${k.id}-${node.id}`,
-        source: `kpi-${k.id}`,
-        target: `wbs-${node.id}`,
-        type: "MEASURES",
-      });
-    }
-  }
-
-  // یال‌های فعالیت به WBS (تنها به گره‌های فعال WBS)
-  for (const act of activities) {
-    if (act.wbs_node_id && wbsById.get(act.wbs_node_id)?.active) {
-      edges.push({
-        id: `act-wbs-${act.id}-${act.wbs_node_id}`,
-        source: `act-${act.id}`,
-        target: `wbs-${act.wbs_node_id}`,
-        type: "EXECUTES",
-        status: act.status,
-      });
-    }
-  }
-
-  // یال‌های اقدامات آتی به WBS (تنها به گره‌های فعال WBS)
-  for (const action of nextActions) {
-    if (action.wbs_node_id && wbsById.get(action.wbs_node_id)?.active) {
-      edges.push({
-        id: `action-wbs-${action.id}-${action.wbs_node_id}`,
-        source: `action-${action.id}`,
-        target: `wbs-${action.wbs_node_id}`,
-        type: "TARGETS",
-      });
-    }
-  }
-
-  // ۶. ساخت گراف معنایی مدرن و غنی (Semantic Knowledge Graph)
+  // ۵. ساخت گراف معنایی مدرن و غنی (Semantic Knowledge Graph)
   const semantic = buildSemanticGraph({
     project: {
       id: project.id,
@@ -559,16 +492,64 @@ export async function getProjectStrategicGraph(
     kpis: kpisRaw as any,
     reports: projectReports as any,
     periods: projectPeriods as any,
-    limits: options,
+    limits: {
+      maxActivities,
+      maxNextActions,
+    },
     totalDbCounts: {
       wbsCount: wbsRaw.length,
       activitiesCount: totalActivitiesCount,
       nextActionsCount: totalNextActionsCount,
-      kpisCount: kpisRaw.length,
+      kpisCount: totalKpisCount,
       reportsCount: projectReports.length,
       periodsCount: projectPeriods.length,
     },
   });
+
+  // ۶. ساخت یال‌های لگاسی (Edges) با استفاده از همان قرارداد مقتدر معنایی (بدون استنتاج ناامن dot و بدون شاخص‌های بیگانه)
+  const edges: StrategicGraphData["edges"] = [];
+  for (const edge of semantic.edges) {
+    if (edge.type === "PARENT_OF") {
+      const sourceId = edge.source.replace("wbs-", "");
+      const targetId = edge.target.replace("wbs-", "");
+      edges.push({
+        id: `wbs-h-${sourceId}-${targetId}`,
+        source: edge.source,
+        target: edge.target,
+        type: "WBS_HIERARCHY",
+      });
+    } else if (edge.type === "PREREQUISITE") {
+      edges.push({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        type: "PREREQUISITE",
+        label: edge.label || "پیش‌نیاز",
+      });
+    } else if (edge.type === "MEASURES") {
+      edges.push({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        type: "MEASURES",
+      });
+    } else if (edge.type === "EXECUTES") {
+      edges.push({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        type: "EXECUTES",
+        status: edge.status,
+      });
+    } else if (edge.type === "TARGETS") {
+      edges.push({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        type: "TARGETS",
+      });
+    }
+  }
 
   // آمار خلاصه وضعیت
   const autoConfirmedActivities = activities.filter((a) => a.status === "auto_confirmed").length;
