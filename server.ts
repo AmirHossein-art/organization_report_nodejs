@@ -874,11 +874,20 @@ function serializeReport(report: any) {
   };
 }
 
-// استراتژی بازیابی فایل WBS با پشتیبانی از داده‌های قدیمی (Legacy Safe Lookup)
-function resolveProjectWbsFilePath(project: { wbs_storage_filename?: string | null; wbs_file_name?: string | null }): string | null {
+// استراتژی بازیابی فایل WBS با پشتیبانی از داده‌های قدیمی و سابمیشن‌ها (Legacy Safe Lookup)
+function resolveProjectWbsFilePath(project: { wbs_storage_filename?: string | null; wbs_file_name?: string | null; wbsSubmissions?: any[] }): string | null {
   if (project.wbs_storage_filename) {
     const primaryPath = safeResolvePath(wbsDir, project.wbs_storage_filename);
     if (primaryPath && fs.existsSync(primaryPath)) return primaryPath;
+  }
+
+  if (Array.isArray(project.wbsSubmissions) && project.wbsSubmissions.length > 0) {
+    for (const sub of project.wbsSubmissions) {
+      if (sub.storage_filename) {
+        const subPath = safeResolvePath(wbsDir, sub.storage_filename);
+        if (subPath && fs.existsSync(subPath)) return subPath;
+      }
+    }
   }
 
   if (project.wbs_file_name) {
@@ -5890,51 +5899,74 @@ app.post(["/api/reports/analyze-deputy", "/api/ai/deputy-analysis"], authenticat
       orderBy: { submitted_at: "desc" },
     });
 
-    // ۵. ساختاردهی اطلاعات پروژه به پروژه همراه با WBS و سابقه شاخص‌ها
+    // ۵. ساختاردهی اطلاعات پروژه به پروژه همراه با شبکه معنایی، WBS پایگاه‌داده و شاخص‌های ۳ حالته
+    // استخراج گره‌های WBS تمام این پروژه‌ها به صورت مستقیم از جدول WbsNode در PostgreSQL
+    const allWbsNodes = await prisma.wbsNode.findMany({
+      where: { project_id: { in: projectIds } },
+      orderBy: [{ sort_order: "asc" }, { code: "asc" }],
+    });
+
+    const allSubmissions = await prisma.wbsSubmission.findMany({
+      where: { project_id: { in: projectIds } },
+      orderBy: [{ created_at: "desc" }, { id: "desc" }],
+    });
+
     const projectsDataForPrompt = projectsList.map((project, idx) => {
       const report = reports.find((r) => r.project_id === project.id);
       const projectKpis = definedProjectKpis.filter((pk) => pk.project_id === project.id);
 
-      // استخراج WBS در صورت وجود
+      // ۱. استخراج ساختار شکست کار (WBS): اولویت قطعی با گره‌های فعال ذخیره‌شده در PostgreSQL
       let wbsContext = "فاقد سند مرجع WBS";
-      const wbsPath = resolveProjectWbsFilePath(project);
-      if (wbsPath) {
-        try {
-          const parsed = parseExcelWBS(wbsPath);
-          wbsContext = parsed.formattedPromptText;
-        } catch (e: any) {
-          wbsContext = `خطا در خواندن فایل WBS: ${e.message}`;
+      const projectWbsNodes = allWbsNodes.filter(
+        (n) => n.project_id === project.id && ((n.attributes as any)?.active !== false)
+      );
+
+      if (projectWbsNodes.length > 0) {
+        wbsContext = `سند ساختار شکست کار WBS در سامانه (${projectWbsNodes.length} بسته کاری فعال):\n` +
+          projectWbsNodes
+            .map((n) => `• کد [${n.code}]: ${n.title} (سطح ${n.level}${n.deliverable_text ? ` - تحویل‌دادنی: ${n.deliverable_text}` : ""})`)
+            .join("\n");
+      } else {
+        // اولویت دوم: استخراج از فایل اکسل فیزیکی در صورت وجود
+        const sub = allSubmissions.find((s) => s.project_id === project.id);
+        const storageName = project.wbs_storage_filename || sub?.storage_filename;
+        const wbsPath = storageName ? safeResolvePath(wbsDir, storageName) : resolveProjectWbsFilePath(project);
+        if (wbsPath && fs.existsSync(wbsPath)) {
+          try {
+            const parsed = parseExcelWBS(wbsPath);
+            wbsContext = parsed.formattedPromptText;
+          } catch (e: any) {
+            wbsContext = `فایل اکسل WBS موجود است ولی خطا در پردازش رخ داد: ${e.message}`;
+          }
         }
       }
 
-      const definedKpisSummary = projectKpis.length > 0
-        ? `شاخص‌های عملکردی پروژه در سامانه (${projectKpis.length} شاخص):\n` +
-          projectKpis
-            .map((pk, kIdx) => {
-              const targetStr = pk.target_value !== null && pk.target_value !== undefined
-                ? ` [هدف: ${pk.target_direction === "minimum" ? "هرچه بیشتر بهتر" : "هرچه کمتر بهتر"} ${pk.target_value}]`
-                : "";
-              return `  ${kIdx + 1}. ${pk.name} (واحد: ${pk.unit})${targetStr}`;
-            })
-            .join("\n")
-        : "فاقد شاخص عملکردی در سامانه";
+      // ۲. وضعیت سه‌گانه شاخص‌های عملکردی پروژه:
+      // حالت ۱: کلاً شاخص ندارد
+      // حالت ۲: شاخص دارد ولی در این گزارش مقداری ثبت نشده است
+      // حالت ۳: شاخص دارد و مقادیر ثبت شده است (همراه با مقادیر)
+      let kpiEvaluationStateLabel = "";
+      const activeProjectKpis = projectKpis.filter((pk) => pk.is_active !== false);
+      const hasReportedValues = report?.kpiValues && report.kpiValues.some((kv: any) => !kv.not_measured && kv.current_value !== null && kv.current_value !== undefined);
+      const hasKpiText = Boolean(report?.kpi_text && report.kpi_text.trim());
+
+      if (activeProjectKpis.length === 0 && !hasReportedValues && !hasKpiText) {
+        kpiEvaluationStateLabel = "وضعیت شاخص: ۱. کلاً شاخص عملکردی برای این پروژه در سامانه تعریف نشده است.";
+      } else if (hasReportedValues) {
+        kpiEvaluationStateLabel = `وضعیت شاخص: ۳. دارای شاخص عملکردی با مقادیر ثبت‌شده در این گزارش:\n${formatKpiValuesForPrompt(report!.kpiValues)}`;
+      } else if (activeProjectKpis.length > 0) {
+        kpiEvaluationStateLabel = `وضعیت شاخص: ۲. پروژه دارای ${activeProjectKpis.length} شاخص عملکردی در سامانه است ولی در این گزارش مقداری برای آن‌ها ثبت نشده است:\n` +
+          activeProjectKpis.map((k, i) => `  ${i + 1}. ${k.name} (واحد: ${k.unit})`).join("\n");
+      } else if (hasKpiText) {
+        kpiEvaluationStateLabel = `وضعیت شاخص: ۳. دارای شاخص عملکردی (متن آزاد):\n${report!.kpi_text.trim()}`;
+      }
 
       if (!report) {
         return `=== پروژه ${idx + 1}: ${project.title} (مسئول: ${project.responsible_user || "مشخص نشده"}) ===
 وضعیت گزارش: ❌ فاقد گزارش در این دوره (عدم ثبت توسط کارشناس)
-شاخص‌های عملکردی پروژه:
-${definedKpisSummary}
+${kpiEvaluationStateLabel}
 سند مرجع WBS:
 ${wbsContext}`;
-      }
-
-      let kpiSection = "";
-      if (report.kpiValues && report.kpiValues.length > 0) {
-        kpiSection = `شاخص‌های عملکردی ثبت‌شده توسط کارشناس:\n${formatKpiValuesForPrompt(report.kpiValues)}`;
-      } else if (projectKpis.length > 0) {
-        kpiSection = `شاخص‌های عملکردی پروژه:\n${definedKpisSummary}\n⚠️ وضعیت مقادیر در این دوره: شاخص به پروژه تخصیص یافته است ولی کارشناس در گزارش ارسالی مقداری برای آن ثبت نکرده است (نقص در تکمیل مقادیر شاخص‌ها).`;
-      } else {
-        kpiSection = `شاخص‌ها (متن آزاد): ${report.kpi_text || "ثبت نشده"} (شاخص عملکردی برای این پروژه در سامانه تعریف نشده است)`;
       }
 
       return `=== پروژه ${idx + 1}: ${project.title} (مسئول: ${report.user_full_name}) ===
@@ -5943,7 +5975,7 @@ ${wbsContext}`;
 ${report.activities_done || "توضیحی ثبت نشده"}
 نتایج ملموس حاصله:
 ${report.results_achieved || "توضیحی ثبت نشده"}
-${kpiSection}
+${kpiEvaluationStateLabel}
 اقدامات آتی تعهدشده:
 ${formatNextActionsForPrompt(report.nextActions)}
 سند مرجع WBS:
@@ -5960,15 +5992,18 @@ ${wbsContext}`;
 
 قوانین اکید و بدون استثنا:
 ۱. اصل استناد مستقیم (Strict Grounding): فقط و فقط بر اساس اطلاعات واقعی ارائه‌شده قضاوت کنید. از ذکر ادعاهای کلی، تعمیم‌های ساختگی یا حدسیات فنی خودداری نمایید.
-۲. ارزیابی دقیق شاخص‌های عملکردی پروژه (منع اکید استفاده از واژگان بوروکراتیک ساختگی مانند "مصوب"):
-   - هر شاخصی که در سامانه به پروژه تخصیص داده شده است، شاخص رسمی و معتبر پروژه است و باید همان بررسی شود. اصطلاحاتی مانند «شاخص مصوب» یا «غیر مصوب» وجود ندارد و اکیداً نباید در متن خروجی به کار برده شوند.
-   - اگر پروژه‌ای دارای شاخص تخصیص‌یافته است اما کارشناس در گزارش خود مقداری وارد نکرده، صراحتاً بنویسید: "دارای شاخص عملکردی ولی عدم ثبت مقدار توسط کارشناس در این گزارش".
-   - اگر شاخصی به پروژه تخصیص داده نشده، بنویسید: "فاقد شاخص عملکردی".
-   - اگر پروژه‌ای دارای گزارش است (وضعیت ✅)، حتماً وضعیت آن را "submitted" (یا "late") قرار دهید، فعالیت‌ها و دستاوردهای واقعی آن را تحلیل کنید و هرگز آن را فاقد گزارش ننویسید.
-   - تنها در صورتی وضعیت را "فاقد گزارش" بگذارید که در اطلاعات ورودی پروژه صراحتاً وضعیت ❌ فاقد گزارش در این دوره قید شده باشد.
-۳. استخراج هوشمند شاخص (KPI Extraction): متن فعالیت‌ها و نتایج پروژه‌ها را بررسی کنید و سنجه‌های عددی/کمی بالقوه‌ای که کارشناس در متن آورده اما به عنوان شاخص ساختاریافته تعریف نشده را استخراج کنید تا سازمان بتواند در صورت تمایل آن‌ها را به عنوان شاخص جدید به پروژه تخصیص دهد.
-۴. زبان خروجی: کاملاً فارسی، روان، اداری و بدون هرگونه تعارف یا اطناب.
-۵. خروجی باید حتماً و فقط یک شیء JSON معتبر با کلید ریشه "analysis" باشد بدون هیچ کلمه، توضیح یا کاراکتر اضافی در ابتدا یا انتها.
+۲. ارزیابی شاخص‌های عملکردی پروژه (الزام رعایت دقیق ۳ حالت و منع اکید واژه ساختگی "مصوب"):
+   - در سامانه واژگانی تحت عنوان «شاخص مصوب» یا «غیر مصوب» وجود ندارد و اکیداً نباید در متن خروجی نوشته شود. هر شاخصی که در سامانه به پروژه متصل است، شاخص رسمی و معتبر پروژه است.
+   - فیلد kpi_evaluation برای هر پروژه منحصراً باید یکی از این ۳ حالت باشد:
+     ۱. «فاقد شاخص عملکردی» (اگر در اطلاعات ورودی قید شده کلاً شاخصی برای پروژه تعریف نشده).
+     ۲. «دارای شاخص عملکردی ولی مقداری ثبت نشده است» (اگر پروژه شاخص دارد اما کارشناس در این دوره مقداری وارد نکرده).
+     ۳. «دارای شاخص عملکردی با مقادیر ثبت‌شده: [تحلیل عملکرد کارشناس نسبت به هدف یا مبنا]» (اگر مقادیر وارد شده، تحلیل دقیق ارائه دهید).
+۳. ارزیابی ساختار شکست کار (WBS):
+   - اگر در اطلاعات ورودی پروژه، بسته‌های کاری WBS درج شده است، در فیلد wbs_alignment صراحتاً وضعیت انطباق فعالیت‌های گزارش را با آن بسته‌های WBS بنویسید و هرگز پروژه را فاقد WBS ننویسید.
+   - تنها در صورتی عبارت "فاقد WBS مرجع" را درج کنید که در اطلاعات ورودی پروژه صراحتاً نوشته شده باشد "فاقد سند مرجع WBS".
+۴. استخراج هوشمند شاخص (KPI Extraction): متن فعالیت‌ها و نتایج پروژه‌ها را بررسی کنید و سنجه‌های عددی/کمی بالقوه‌ای که کارشناس در متن آورده اما به عنوان شاخص ساختاریافته تعریف نشده را استخراج کنید تا سازمان بتواند در صورت تمایل آن‌ها را به عنوان شاخص جدید به پروژه تخصیص دهد.
+۵. زبان خروجی: کاملاً فارسی، روان، اداری و بدون هرگونه تعارف یا اطناب.
+۶. خروجی باید حتماً و فقط یک شیء JSON معتبر با کلید ریشه "analysis" باشد بدون هیچ کلمه، توضیح یا کاراکتر اضافی در ابتدا یا انتها.
 
 نمونه ساختار مورد انتظار JSON:
 {
@@ -5985,8 +6020,8 @@ ${wbsContext}`;
         "project_summary": "خلاصه ۳-۴ خطی از عملکرد واقعی پروژه در این دوره بر اساس گزارش",
         "key_achievements": ["دستاورد ملموس ۱"],
         "risks_or_delays": ["موانع، تأخیرها یا ریسک‌ها"],
-        "wbs_alignment": "وضعیت انطباق با سند WBS یا ذکر 'فاقد WBS مرجع'",
-        "kpi_evaluation": "بررسی مقادیر شاخص‌های ثبت‌شده یا ذکر 'دارای شاخص عملکردی ولی عدم ثبت مقدار' یا ذکر 'فاقد شاخص عملکردی'"
+        "wbs_alignment": "وضعیت انطباق با بسته‌های کاری WBS پروژه یا ذکر 'فاقد WBS مرجع'",
+        "kpi_evaluation": "منحصراً یکی از ۳ حالت: 'فاقد شاخص عملکردی' | 'دارای شاخص عملکردی ولی مقداری ثبت نشده است' | 'دارای شاخص عملکردی با مقادیر ثبت‌شده: [تحلیل عملکرد]'"
       }
     ],
     "suggested_kpis_from_text": [
