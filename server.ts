@@ -40,6 +40,7 @@ import {
   persistReportActivities,
   getProjectStrategicGraph,
 } from "./src/services/activityGraphService";
+import { formatSemanticGraphForPrompt } from "./src/semantic/strategicGraph";
 import {
   evaluateFormula,
   validateFormula,
@@ -5168,55 +5169,48 @@ function formatKpiValuesForPrompt(kpiValues: any[] | undefined): string {
  * ساخت کانتکست ساختاریافته و جامع گراف پروژه جهت تزریق به پرامپت‌های استنتاج هوش مصنوعی
  * شامل: شناسنامه و ذات پروژه + گره‌های WBS و تحویل‌دادنی‌ها + شاخص‌های مصوب + اقدامات باز
  */
+/**
+ * تولید پرامپت متنی غنی از گراف استراتژیک معنایی پروژه برای ممیزی هوشمند تک‌گزارش (/api/reports/analyze-single)
+ * نکته معماری: این پرامپت مختص ممیزی متمرکز تک‌پروژه است؛ اندپوینت‌های کلان سازمانی و معاونتی
+ * جهت جلوگیری از انفجار طول پرامپت و تایم‌اوت‌های شبکه از خلاصه سرفصل‌های دوره‌ای استفاده می‌کنند.
+ */
 async function buildProjectGraphPromptContext(projectId: number): Promise<string> {
   const project = await prisma.project.findUnique({
     where: { id: projectId },
   });
   if (!project) return "پروژه در دیتابیس یافت نشد.";
 
-  // ۱. گره‌های فعال ساختار شکست کار (WBS) از جدول PostgreSQL
-  const wbsNodes = await prisma.wbsNode.findMany({
-    where: { project_id: projectId },
-    include: {
-      kpiLinks: { include: { kpi: true } },
-    },
-    orderBy: [{ sort_order: "asc" }, { code: "asc" }],
-  });
+  // ۱. ارزیابی وجود شبکه معنایی یکپارچه و غنی
+  const strategicGraph = await getProjectStrategicGraph(prisma, projectId);
+  const memory = await getProjectMemory(prisma, projectId);
+  const memorySection = formatProjectMemoryForPrompt(memory);
 
-  const activeNodes = wbsNodes.filter((n) => {
-    const attrs = n.attributes as any;
-    return !attrs || attrs.active !== false;
-  });
-
-  let wbsSection = "";
-  if (activeNodes.length > 0) {
-    wbsSection = activeNodes
-      .map((n) => {
-        const deliv = n.deliverable_text ? ` [خروجی/تحویل‌دادنی: ${n.deliverable_text}]` : "";
-        const resp = n.responsible ? ` [مسئول: ${n.responsible}]` : "";
-        const dur = n.duration ? ` [مدت: ${n.duration}]` : "";
-        const prereq = n.prerequisite ? ` [پیش‌نیاز: ${n.prerequisite}]` : "";
-        const linkedKpis = n.kpiLinks.length > 0
-          ? ` [شاخص‌های متصل: ${n.kpiLinks.map((l: any) => l.kpi.name).join(", ")}]`
-          : " [بدون شاخص متصل]";
-        return `  - کد ${n.code} (سطح ${n.level}): ${n.title}${deliv}${resp}${dur}${prereq}${linkedKpis}`;
-      })
-      .join("\n");
-  } else {
-    const wbsPath = resolveProjectWbsFilePath(project);
-    if (wbsPath) {
-      try {
-        const parsed = parseExcelWBS(wbsPath);
-        wbsSection = parsed.formattedPromptText;
-      } catch (e: any) {
-        wbsSection = "خطا در خواندن فایل اکسل WBS.";
-      }
-    } else {
-      wbsSection = "سند مرجع WBS برای این پروژه در سامانه ثبت نشده است.";
-    }
+  if (
+    strategicGraph?.semantic &&
+    strategicGraph.semantic.nodes.some((n) => n.kind === "wbs")
+  ) {
+    const semanticPrompt = formatSemanticGraphForPrompt(strategicGraph.semantic, {
+      maxActivities: 35,
+      maxNextActions: 25,
+    });
+    return `${semanticPrompt}\n\n${memorySection}`;
   }
 
-  // ۲. شاخص‌های مصوب و فعال پروژه
+  // ۲. مسیر Fallback در صورت نبود گره فعال در PostgreSQL (رجوع به فایل اکسل خام)
+  let wbsSection = "";
+  const wbsPath = resolveProjectWbsFilePath(project);
+  if (wbsPath) {
+    try {
+      const parsed = parseExcelWBS(wbsPath);
+      wbsSection = parsed.formattedPromptText;
+    } catch (e: any) {
+      wbsSection = "خطا در خواندن فایل اکسل WBS.";
+    }
+  } else {
+    wbsSection = "سند مرجع WBS برای این پروژه در سامانه ثبت نشده است.";
+  }
+
+  // شاخص‌های مصوب و فعال پروژه
   const projectKpis = await prisma.projectKpi.findMany({
     where: { project_id: projectId, is_active: true },
     orderBy: { sort_order: "asc" },
@@ -5237,7 +5231,7 @@ async function buildProjectGraphPromptContext(projectId: number): Promise<string
     kpiSection = "هیچ شاخص مصوبی برای این پروژه در سامانه تعریف نشده است.";
   }
 
-  // ۳. اقدامات و تعهدات باز و فعال پروژه
+  // اقدامات و تعهدات باز و فعال پروژه
   const openActions = await prisma.nextAction.findMany({
     where: { project_id: projectId, is_completed: false, is_cancelled: false },
     include: {
@@ -5260,10 +5254,6 @@ async function buildProjectGraphPromptContext(projectId: number): Promise<string
   } else {
     actionsSection = "اقدام آتی بازی در حال حاضر برای این پروژه ثبت نشده است.";
   }
-
-  // ۴. حافظه تکاملی و شناخت انباشته تاریخی هوش مصنوعی از این پروژه
-  const memory = await getProjectMemory(prisma, projectId);
-  const memorySection = formatProjectMemoryForPrompt(memory);
 
   return `🏢 **شناسنامه، اهداف کلان و ذات راهبردی پروژه:**
 - عنوان مصوب پروژه: ${project.title}

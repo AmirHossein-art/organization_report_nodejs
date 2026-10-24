@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import { buildSemanticGraph, type SemanticGraph } from "../semantic/strategicGraph";
 
 export interface DecomposedActivity {
   line_number: number;
@@ -85,6 +86,7 @@ export interface StrategicGraphData {
     totalNextActions: number;
     totalKpis: number;
   };
+  semantic?: SemanticGraph;
 }
 
 /**
@@ -291,16 +293,22 @@ export async function persistReportActivities(
   });
 }
 
+export interface GetProjectStrategicGraphOptions {
+  maxActivities?: number;
+  maxNextActions?: number;
+}
+
 /**
- * ۵. تولید داده‌های کامل گراف استراتژیک برای کامپوننت بصری فرانت‌اند
+ * ۵. تولید داده‌های کامل گراف استراتژیک برای کامپوننت بصری فرانت‌اند و ساختار غنی معنایی هوش مصنوعی
  */
 export async function getProjectStrategicGraph(
   prisma: PrismaClient,
-  projectId: number
+  projectId: number,
+  options?: GetProjectStrategicGraphOptions
 ): Promise<StrategicGraphData | null> {
   const project = await prisma.project.findUnique({
     where: { id: projectId },
-    select: { id: true, title: true, code: true },
+    select: { id: true, title: true, code: true, description: true, project_type: true },
   });
   if (!project) return null;
 
@@ -311,7 +319,7 @@ export async function getProjectStrategicGraph(
       kpiLinks: {
         include: {
           kpi: {
-            select: { id: true, name: true, unit: true, target_value: true },
+            select: { id: true, project_id: true, name: true, unit: true, target_value: true, baseline_value: true, is_active: true },
           },
         },
       },
@@ -323,6 +331,7 @@ export async function getProjectStrategicGraph(
     const attrs = (n.attributes as any) || {};
     return {
       id: n.id,
+      parent_id: n.parent_id,
       code: n.code,
       title: n.title,
       level: n.level,
@@ -336,27 +345,33 @@ export async function getProjectStrategicGraph(
     };
   });
 
-  // ۲. فعالیت‌های اتمیک ثبت‌شده
-  const activitiesRaw = await prisma.reportActivity.findMany({
+  // ۲. فعالیت‌های اتمیک ثبت‌شده (بدون ترانکیشن مخفی؛ پشتیبانی از سقف صریح)
+  const activityQuery: any = {
     where: { project_id: projectId },
     include: {
       report: {
         select: {
+          id: true,
           period_title: true,
           period_id: true,
           submitted_at: true,
+          user_full_name: true,
         },
       },
     },
     orderBy: [{ report_id: "desc" }, { line_number: "asc" }],
-    take: 100, // حداکثر ۱۰۰ فعالیت اخیر جهت حفظ سبکی و پرفورمنس بالا
-  });
+  };
+  if (options?.maxActivities && Number.isSafeInteger(options.maxActivities) && options.maxActivities > 0) {
+    activityQuery.take = options.maxActivities;
+  }
 
-  const activities = activitiesRaw.map((a) => ({
+  const activitiesRaw: any[] = await prisma.reportActivity.findMany(activityQuery);
+
+  const activities = activitiesRaw.map((a: any) => ({
     id: a.id,
     report_id: a.report_id,
-    period_title: a.report.period_title,
-    period_id: a.report.period_id,
+    period_title: a.report?.period_title || "",
+    period_id: a.report?.period_id || 0,
     line_number: a.line_number,
     activity_text: a.activity_text,
     wbs_node_id: a.wbs_node_id,
@@ -364,26 +379,31 @@ export async function getProjectStrategicGraph(
     status: a.status,
     ai_reasoning: a.ai_reasoning,
     audit_feedback: a.audit_feedback,
-    created_at: a.created_at.toISOString(),
+    created_at: a.created_at ? (a.created_at instanceof Date ? a.created_at.toISOString() : String(a.created_at)) : new Date().toISOString(),
   }));
 
-  // ۳. اقدامات آتی باز و تکمیل‌شده
-  const nextActionsRaw = await prisma.nextAction.findMany({
+  // ۳. اقدامات آتی باز و تکمیل‌شده (بدون ترانکیشن مخفی)
+  const nextActionQuery: any = {
     where: { project_id: projectId },
     include: {
       user: { select: { full_name: true } },
     },
     orderBy: [{ is_completed: "asc" }, { target_date: "asc" }],
-    take: 50,
-  });
+  };
+  if (options?.maxNextActions && Number.isSafeInteger(options.maxNextActions) && options.maxNextActions > 0) {
+    nextActionQuery.take = options.maxNextActions;
+  }
 
-  const nextActions = nextActionsRaw.map((na) => ({
+  const nextActionsRaw: any[] = await prisma.nextAction.findMany(nextActionQuery);
+
+  const nextActions = nextActionsRaw.map((na: any) => ({
     id: na.id,
     action_text: na.action_text,
     wbs_node_id: na.wbs_node_id,
-    target_date: na.target_date ? na.target_date.toISOString() : null,
+    target_date: na.target_date ? (na.target_date instanceof Date ? na.target_date.toISOString() : String(na.target_date)) : null,
     is_completed: na.is_completed,
     is_cancelled: na.is_cancelled,
+    cancellation_reason: na.cancellation_reason,
     user_name: na.user?.full_name || null,
   }));
 
@@ -402,19 +422,69 @@ export async function getProjectStrategicGraph(
     target_direction: k.target_direction,
   }));
 
-  // ۵. ساخت یال‌ها (Edges)
-  const edges: StrategicGraphData["edges"] = [];
+  // گزارش‌ها و دوره‌های مرتبط با پروژه برای نگاشت کامل معنایی
+  const projectReports = await prisma.report.findMany({
+    where: { project_id: projectId },
+    select: {
+      id: true,
+      project_id: true,
+      period_id: true,
+      period_title: true,
+      user_id: true,
+      user_full_name: true,
+      status: true,
+      submitted_at: true,
+    },
+    orderBy: { period_id: "desc" },
+  }).catch(() => []);
 
-  // یال‌های سلسله‌مراتب درختی WBS
+  const periodIds = Array.from(new Set(projectReports.map((r: any) => r.period_id).filter(Boolean)));
+  const projectPeriods = periodIds.length > 0 && prisma.reportPeriod?.findMany
+    ? await prisma.reportPeriod.findMany({
+        where: { id: { in: periodIds } },
+        select: {
+          id: true,
+          title: true,
+          period_start: true,
+          period_end: true,
+          is_open: true,
+        },
+      }).catch(() => [])
+    : [];
+
+  const totalActivitiesCount = typeof prisma.reportActivity?.count === "function"
+    ? await prisma.reportActivity.count({ where: { project_id: projectId } }).catch(() => activitiesRaw.length)
+    : activitiesRaw.length;
+
+  const totalNextActionsCount = typeof prisma.nextAction?.count === "function"
+    ? await prisma.nextAction.count({ where: { project_id: projectId } }).catch(() => nextActionsRaw.length)
+    : nextActionsRaw.length;
+
+  // ۵. ساخت یال‌های لگاسی (Edges) با اولویت parent_id معتبر و عدم فرض انحصاری dot-notation
+  const edges: StrategicGraphData["edges"] = [];
+  const wbsById = new Map(wbsNodes.map((n) => [n.id, n]));
   const wbsByCode = new Map(wbsNodes.map((n) => [n.code, n]));
+
   for (const node of wbsNodes) {
     if (!node.active) continue;
-    // یافتن والد منطقی
-    if (node.code.includes(".")) {
+
+    // ۱. اولویت نخست: والد مشخص با parent_id دیتابیس
+    if (node.parent_id !== null && node.parent_id !== undefined) {
+      const parentNode = wbsById.get(node.parent_id);
+      if (parentNode && parentNode.active) {
+        edges.push({
+          id: `wbs-h-${parentNode.id}-${node.id}`,
+          source: `wbs-${parentNode.id}`,
+          target: `wbs-${node.id}`,
+          type: "WBS_HIERARCHY",
+        });
+      }
+    } else if (node.code.includes(".")) {
+      // ۲. اولویت دوم: استنتاج از کد درختی در صورت عدم ثبت parent_id
       const parts = node.code.split(".");
       const parentCode = parts.slice(0, -1).join(".");
       const parentNode = wbsByCode.get(parentCode);
-      if (parentNode) {
+      if (parentNode && parentNode.active) {
         edges.push({
           id: `wbs-h-${parentNode.id}-${node.id}`,
           source: `wbs-${parentNode.id}`,
@@ -427,7 +497,7 @@ export async function getProjectStrategicGraph(
     // یال پیش‌نیاز
     if (node.prerequisite) {
       const prereqNode = wbsByCode.get(node.prerequisite.trim());
-      if (prereqNode) {
+      if (prereqNode && prereqNode.active) {
         edges.push({
           id: `wbs-pre-${prereqNode.id}-${node.id}`,
           source: `wbs-${prereqNode.id}`,
@@ -449,9 +519,9 @@ export async function getProjectStrategicGraph(
     }
   }
 
-  // یال‌های فعالیت به WBS
+  // یال‌های فعالیت به WBS (تنها به گره‌های فعال WBS)
   for (const act of activities) {
-    if (act.wbs_node_id) {
+    if (act.wbs_node_id && wbsById.get(act.wbs_node_id)?.active) {
       edges.push({
         id: `act-wbs-${act.id}-${act.wbs_node_id}`,
         source: `act-${act.id}`,
@@ -462,9 +532,9 @@ export async function getProjectStrategicGraph(
     }
   }
 
-  // یال‌های اقدامات آتی به WBS
+  // یال‌های اقدامات آتی به WBS (تنها به گره‌های فعال WBS)
   for (const action of nextActions) {
-    if (action.wbs_node_id) {
+    if (action.wbs_node_id && wbsById.get(action.wbs_node_id)?.active) {
       edges.push({
         id: `action-wbs-${action.id}-${action.wbs_node_id}`,
         source: `action-${action.id}`,
@@ -474,13 +544,43 @@ export async function getProjectStrategicGraph(
     }
   }
 
+  // ۶. ساخت گراف معنایی مدرن و غنی (Semantic Knowledge Graph)
+  const semantic = buildSemanticGraph({
+    project: {
+      id: project.id,
+      title: project.title,
+      code: project.code,
+      description: project.description,
+      project_type: project.project_type,
+    },
+    wbsNodes: wbsRaw as any,
+    activities: activitiesRaw as any,
+    nextActions: nextActionsRaw as any,
+    kpis: kpisRaw as any,
+    reports: projectReports as any,
+    periods: projectPeriods as any,
+    limits: options,
+    totalDbCounts: {
+      wbsCount: wbsRaw.length,
+      activitiesCount: totalActivitiesCount,
+      nextActionsCount: totalNextActionsCount,
+      kpisCount: kpisRaw.length,
+      reportsCount: projectReports.length,
+      periodsCount: projectPeriods.length,
+    },
+  });
+
   // آمار خلاصه وضعیت
   const autoConfirmedActivities = activities.filter((a) => a.status === "auto_confirmed").length;
   const needsReviewActivities = activities.filter((a) => a.status === "needs_review").length;
   const unmappedActivities = activities.filter((a) => a.status === "unmapped").length;
 
   return {
-    project,
+    project: {
+      id: project.id,
+      title: project.title,
+      code: project.code,
+    },
     nodes: {
       wbsNodes,
       activities,
@@ -497,5 +597,6 @@ export async function getProjectStrategicGraph(
       totalNextActions: nextActions.length,
       totalKpis: kpis.length,
     },
+    semantic,
   };
 }
