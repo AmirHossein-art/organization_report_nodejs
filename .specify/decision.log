@@ -408,3 +408,17 @@
   - `npx tsc --noEmit` clean.
   - All 54 automated test suites passing cleanly with 0 failures.
   - Production build `npm run build` succeeds in 7.06s.
+
+### D51 — Live Progressive Streaming AI Audit (SSE + Partial JSON) & Minimalist Executive Cards
+- **Context:**
+  Large deputy audits (e.g. 18 projects) require ~45 to 65 seconds of model generation time. Previously, clients waited in complete darkness for a single monolithic JSON payload. Furthermore, the dashboard previously used saturated green (`emerald`) and amber badges that gave an overly artificial "AI-like" aesthetic contrary to executive municipal standards.
+- **Decision:**
+  1. **Server-Sent Events (SSE) Streaming:** Extended `/api/reports/analyze-deputy` and `callAiWithFallback` to support streaming tokens (`stream: true`) via SSE (`type: meta`, `type: delta`, `type: done`, `type: error`). The connection starts delivering data in the first 3 seconds, eliminating idle connection dropouts.
+  2. **Streaming Partial JSON Parser (`partialJsonParser.ts`):** Implemented a lightweight, zero-dependency streaming auto-repairing JSON parser that dynamically closes unterminated strings, arrays, and objects. The UI can safely render partially received JSON state without syntax errors.
+  3. **Progressive Project Card Typing:** Rendered project cards sequentially as the model produces them. The active project being written displays a subtle typing cursor (`w-1.5 h-3.5 bg-slate-400 animate-pulse`), followed by achievements, obstacles, and WBS tags.
+  4. **Minimalist Executive Aesthetic:** Purged saturated neon greens and glowing ambers. Replaced with quiet, institutional styling: clean slate/white cards (`border-slate-200`, `bg-white`, `text-slate-900`), subtle neutral badges (`bg-slate-100 text-slate-700`), and a refined hairline loading indicator (`در حال بررسی پروژه X از Y...`).
+- **Verification:**
+  - Dedicated unit tests in `tests/partial-json-parser.test.ts` (5/5 passing).
+  - Clean TypeScript diagnostics (`./node_modules/.bin/tsc --noEmit`).
+  - Total 59 automated unit/integration tests passing (0 failures).
+  - Production build completed cleanly in 5.85s.

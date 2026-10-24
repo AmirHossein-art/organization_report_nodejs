@@ -5026,7 +5026,12 @@ function getRouterConfig(): { id: string; label: string; baseURL: string; apiKey
 async function callAiWithFallback(
   systemPrompt: string,
   userPrompt: string,
-  options: { forceRefresh?: boolean; cacheKey?: string; timeoutMs?: number } = {}
+  options: {
+    forceRefresh?: boolean;
+    cacheKey?: string;
+    timeoutMs?: number;
+    onChunk?: (delta: string) => void;
+  } = {}
 ) {
   const cacheKey = options.cacheKey || generateAiCacheKey(systemPrompt, userPrompt);
   
@@ -5141,6 +5146,37 @@ async function callAiWithFallback(
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0",
         },
       });
+
+      if (typeof options.onChunk === "function") {
+        const stream = await client.chat.completions.create({
+          model: provider.model,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          stream: true,
+          temperature: 0.0,
+        });
+
+        let streamedContent = "";
+        for await (const chunk of stream) {
+          const delta = chunk.choices[0]?.delta?.content || "";
+          if (delta) {
+            streamedContent += delta;
+            options.onChunk(delta);
+          }
+        }
+
+        const parsed = parseJsonFromText(streamedContent);
+        const analysisData = parsed.analysis ? parsed.analysis : parsed;
+        const actualModel = provider.id === "9router" ? `9Router (${provider.model})` : provider.name;
+        const result = {
+          analysis: analysisData,
+          model_used: actualModel,
+        };
+        await setCachedAiResponse(prisma, cacheKey, result, AI_CACHE_TTL_MS);
+        return result;
+      }
 
       const completion = await client.chat.completions.create({
         model: provider.model,
@@ -6151,6 +6187,73 @@ ${projectsDataForPrompt}`;
     const shouldForceRefresh = Boolean(force_refresh || (manager_comment && manager_comment.trim()));
     const promptFingerprint = generateAiCacheKey(systemPrompt, userPrompt).slice(0, 16);
     const deputyCacheKey = `deputy-analysis:p:${period_id}:dep:${resolvedDeputyName || deputy_name || user_id}:${promptFingerprint}`;
+
+    const wantsStream = Boolean(
+      req.headers.accept?.includes("text/event-stream") || req.body?.stream === true
+    );
+
+    if (wantsStream) {
+      res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
+      if (typeof (res as any).flushHeaders === "function") {
+        (res as any).flushHeaders();
+      }
+
+      res.write(`data: ${JSON.stringify({
+        type: "meta",
+        deputy_name: resolvedDeputyName,
+        total_projects: totalProjectsCount,
+      })}\n\n`);
+
+      try {
+        const result: any = await callAiWithFallback(systemPrompt, userPrompt, {
+          forceRefresh: shouldForceRefresh,
+          cacheKey: deputyCacheKey,
+          timeoutMs: 85000,
+          onChunk: (delta: string) => {
+            res.write(`data: ${JSON.stringify({ type: "delta", delta })}\n\n`);
+          },
+        });
+
+        if (result && result.analysis && Array.isArray(result.analysis.next_period_commitments)) {
+          result.analysis.next_period_commitments = result.analysis.next_period_commitments.map((act: any) => ({
+            ...act,
+            deadline: act.deadline ? ensureShamsiDate(act.deadline) : "تعیین‌نشده",
+          }));
+        }
+
+        // تکامل غیرمسدودکننده پرونده حافظه برای پروژه‌های تحلیل‌شده در پس‌زمینه
+        if (result && result.analysis && Array.isArray(result.analysis.projects_analysis)) {
+          for (const pAudit of result.analysis.projects_analysis) {
+            const matchingProj = projectsList.find(
+              (p) => p.title === pAudit.project_title || p.title.includes(pAudit.project_title)
+            );
+            if (matchingProj) {
+              evolveProjectMemory(prisma, matchingProj.id, {
+                strategic_alignment: { alignment_analysis: pAudit.project_summary },
+                recommendations: pAudit.risks_or_delays || [],
+              }).catch((e) =>
+                console.warn(`Notice: Background memory evolution failed for project ${matchingProj.id}:`, e?.message || e)
+              );
+            }
+          }
+        }
+
+        res.write(`data: ${JSON.stringify({ type: "done", data: result })}\n\n`);
+        res.end();
+        return;
+      } catch (err: any) {
+        const clientError = config.NODE_ENV === "production"
+          ? "خطایی در پردازش تحلیل معاونت توسط هوش مصنوعی رخ داد."
+          : (err.message || "خطا در پردازش هوش مصنوعی.");
+        res.write(`data: ${JSON.stringify({ type: "error", error: clientError })}\n\n`);
+        res.end();
+        return;
+      }
+    }
+
     const result: any = await callAiWithFallback(systemPrompt, userPrompt, {
       forceRefresh: shouldForceRefresh,
       cacheKey: deputyCacheKey,

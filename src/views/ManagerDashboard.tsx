@@ -30,6 +30,7 @@ import { CustomSelect } from "../components";
 import ReportsPdfDocument from "../components/ReportsPdfDocument";
 import { AiThoughtChainStepper } from "../components/AiThoughtChainStepper";
 import { ensureShamsiDate, isLastWeekOfShamsiMonth } from "../dateUtils";
+import { parsePartialJson } from "../utils/partialJsonParser";
 
 // 🌐 تبدیل اعداد به فارسی
 export const toPersianDigits = (n: string | number | undefined | null): string => {
@@ -533,6 +534,8 @@ function DeputyAiAnalysisModal({
   deputyManagerName?: string;
 }) {
   const [loading, setLoading] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamingMeta, setStreamingMeta] = useState<{ total_projects?: number; deputy_name?: string } | null>(null);
   const [analysis, setAnalysis] = useState<DeputyAiAnalysisResult | null>(null);
   const [modelUsed, setModelUsed] = useState<string>("");
   const [error, setError] = useState<string>("");
@@ -547,6 +550,7 @@ function DeputyAiAnalysisModal({
   const runAnalysis = async (forceRefresh = false) => {
     if (!periodId || (!deputyName && !userId)) return;
     setLoading(true);
+    setIsStreaming(true);
     setError("");
     setRevisionSuccessMsg("");
     setShowRevisionForm(false);
@@ -555,25 +559,78 @@ function DeputyAiAnalysisModal({
     try {
       const res = await fetch("/api/reports/analyze-deputy", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+        },
         body: JSON.stringify({
           period_id: periodId,
           deputy_name: deputyName,
           user_id: userId || undefined,
           force_refresh: forceRefresh,
+          stream: true,
         }),
       });
 
-      const data = await res.json();
-      if (res.ok) {
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        setError(errJson.error || "خطا در ارزیابی هوشمند معاونت.");
+        return;
+      }
+
+      if (!res.body) {
+        const data = await res.json();
         setAnalysis(data.analysis);
         setModelUsed(data.model_used || "AI Multi-Provider Engine");
-      } else {
-        setError(data.error || "خطا در ارزیابی هوشمند معاونت.");
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let accumulatedRaw = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data:")) continue;
+          const jsonStr = trimmed.replace(/^data:\s*/, "");
+          try {
+            const event = JSON.parse(jsonStr);
+            if (event.type === "meta") {
+              setStreamingMeta({ total_projects: event.total_projects, deputy_name: event.deputy_name });
+            } else if (event.type === "delta") {
+              accumulatedRaw += event.delta;
+              const partial = parsePartialJson<any>(accumulatedRaw);
+              if (partial && partial.analysis) {
+                setAnalysis(partial.analysis);
+              }
+            } else if (event.type === "done") {
+              if (event.data?.analysis) {
+                setAnalysis(event.data.analysis);
+              }
+              if (event.data?.model_used) {
+                setModelUsed(event.data.model_used);
+              }
+            } else if (event.type === "error") {
+              setError(event.error || "خطا در پردازش هوش مصنوعی");
+            }
+          } catch {
+            // ignore
+          }
+        }
       }
     } catch (err) {
       setError("عدم برقراری ارتباط با سرور برای تحلیل هوشمند.");
     } finally {
+      setIsStreaming(false);
       setLoading(false);
     }
   };
@@ -583,13 +640,17 @@ function DeputyAiAnalysisModal({
     if (!managerComment.trim() || !periodId) return;
 
     setRevisionLoading(true);
+    setIsStreaming(true);
     setError("");
     setRevisionSuccessMsg("");
 
     try {
       const res = await fetch("/api/reports/analyze-deputy", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+        },
         body: JSON.stringify({
           period_id: periodId,
           deputy_name: deputyName,
@@ -597,21 +658,73 @@ function DeputyAiAnalysisModal({
           manager_comment: managerComment.trim(),
           previous_analysis: analysis,
           force_refresh: true,
+          stream: true,
         }),
       });
 
-      const data = await res.json();
-      if (res.ok) {
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        setError(errJson.error || "خطا در اعمال بازنگری.");
+        return;
+      }
+
+      if (!res.body) {
+        const data = await res.json();
         setAnalysis(data.analysis);
         setModelUsed(data.model_used || "AI Multi-Provider Engine");
         setRevisionSuccessMsg("تحلیل این معاونت بر اساس بازخورد و دستورات شما بازنویسی شد.");
         setManagerComment("");
-      } else {
-        setError(data.error || "خطا در اعمال بازنگری.");
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let accumulatedRaw = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data:")) continue;
+          const jsonStr = trimmed.replace(/^data:\s*/, "");
+          try {
+            const event = JSON.parse(jsonStr);
+            if (event.type === "meta") {
+              setStreamingMeta({ total_projects: event.total_projects, deputy_name: event.deputy_name });
+            } else if (event.type === "delta") {
+              accumulatedRaw += event.delta;
+              const partial = parsePartialJson<any>(accumulatedRaw);
+              if (partial && partial.analysis) {
+                setAnalysis(partial.analysis);
+              }
+            } else if (event.type === "done") {
+              if (event.data?.analysis) {
+                setAnalysis(event.data.analysis);
+              }
+              if (event.data?.model_used) {
+                setModelUsed(event.data.model_used);
+              }
+              setRevisionSuccessMsg("تحلیل این معاونت بر اساس بازخورد و دستورات شما بازنویسی شد.");
+              setManagerComment("");
+            } else if (event.type === "error") {
+              setError(event.error || "خطا در اعمال بازنگری.");
+            }
+          } catch {
+            // ignore
+          }
+        }
       }
     } catch (err) {
       setError("ارتباط با سرور جهت بازنویسی برقرار نشد.");
     } finally {
+      setIsStreaming(false);
       setRevisionLoading(false);
     }
   };
@@ -778,11 +891,19 @@ function DeputyAiAnalysisModal({
 
         {/* بدنه مودال */}
         <div className="flex-1 overflow-y-auto p-5 md:p-8 space-y-6 bg-slate-50/70 text-right text-slate-900">
-          {(loading || revisionLoading) && (
-            <AiThoughtChainStepper
-              title={`ارزیابی استراتژیک و ممیزی پروژه‌های ${deputyName}`}
-              projectOrReportTitle={`دوره گزارش‌دهی: ${periodTitle}`}
-            />
+          {(loading || revisionLoading) && !analysis && (
+            <div className="bg-white rounded-2xl p-6 border border-slate-200/90 shadow-2xs space-y-4">
+              <div className="flex items-center justify-between text-xs text-slate-600">
+                <span className="font-bold flex items-center gap-2 text-slate-800">
+                  <span className="w-2 h-2 rounded-full bg-slate-600 animate-pulse" />
+                  در حال استخراج داده‌ها و ارزیابی پروژه‌های {deputyName}...
+                </span>
+                <span className="text-[11px] text-slate-400">تحلیل شبکه معنایی و سوابق حافظه</span>
+              </div>
+              <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
+                <div className="h-full bg-slate-600 rounded-full animate-pulse w-1/3" />
+              </div>
+            </div>
           )}
 
           {error && (
@@ -803,150 +924,163 @@ function DeputyAiAnalysisModal({
 
           {analysis && (
             <div className="space-y-6">
-              
+              {/* نوار وضعیت استریم زنده */}
+              {isStreaming && (
+                <div className="bg-white px-4 py-3 rounded-2xl border border-slate-200 text-xs flex items-center justify-between text-slate-700 shadow-2xs">
+                  <div className="flex items-center gap-2.5">
+                    <span className="w-2 h-2 rounded-full bg-slate-500 animate-ping" />
+                    <span className="font-semibold text-slate-800">
+                      در حال بررسی و نگارش تدریجی: پروژه {toPersianDigits(analysis.projects_analysis?.length || 1)} {streamingMeta?.total_projects ? `از ${toPersianDigits(streamingMeta.total_projects)}` : ""}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-slate-400">جریان زنده داده‌ها</span>
+                </div>
+              )}
+
               {/* نوار اطلاعات موتور پردازشگر */}
               {modelUsed && (
                 <div className="flex items-center justify-between bg-white p-3 rounded-2xl border border-slate-200 text-xs text-slate-600 shadow-2xs">
                   <span className="flex items-center gap-2 font-medium">
-                    <Cpu className="w-4 h-4 text-emerald-600" />
-                    موتور پردازش هوش مصنوعی: <strong>{modelUsed}</strong>
+                    <Cpu className="w-4 h-4 text-slate-500" />
+                    موتور پردازش: <strong>{modelUsed}</strong>
                   </span>
-                  <span className="text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 text-[11px] font-bold">
-                    تحلیل داده‌محور (Strict Grounding)
+                  <span className="text-slate-600 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200 text-[11px] font-medium">
+                    ارزیابی داده‌محور و مستند
                   </span>
                 </div>
               )}
 
               {/* ۱. کارت شاخص سلامت و وضعیت کلان معاونت */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className={`p-5 rounded-3xl border flex items-center gap-4 ${
-                  analysis.health_score >= 75
-                    ? "bg-emerald-50/80 border-emerald-200 text-emerald-950"
-                    : analysis.health_score >= 50
-                    ? "bg-amber-50/80 border-amber-200 text-amber-950"
-                    : "bg-rose-50/80 border-rose-200 text-rose-950"
-                }`}>
-                  <div className="w-14 h-14 rounded-2xl bg-white shadow-md flex items-center justify-center font-black text-2xl shrink-0">
-                    {toPersianDigits(analysis.health_score)}
+                <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-2xs flex items-center gap-4">
+                  <div className="w-14 h-14 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center font-bold text-2xl text-slate-900 shrink-0">
+                    {toPersianDigits(analysis.health_score ?? "—")}
                   </div>
                   <div>
-                    <span className="text-xs font-bold opacity-80 block">نمره سلامت این معاونت</span>
-                    <span className="text-sm font-black mt-0.5 block">{analysis.overall_status}</span>
+                    <span className="text-xs font-medium text-slate-500 block">نمره سلامت این معاونت</span>
+                    <span className="text-sm font-bold text-slate-900 mt-0.5 block">{analysis.overall_status || "در حال محاسبه..."}</span>
                   </div>
                 </div>
 
-                <div className="md:col-span-2 bg-white p-5 rounded-3xl border border-slate-200 shadow-2xs space-y-2">
-                  <h4 className="font-extrabold text-slate-900 text-xs md:text-sm flex items-center gap-2 border-b border-slate-100 pb-2">
-                    <FileText className="w-4 h-4 text-amber-500" />
+                <div className="md:col-span-2 bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-2">
+                  <h4 className="font-bold text-slate-900 text-xs md:text-sm flex items-center gap-2 border-b border-slate-100 pb-2">
+                    <FileText className="w-4 h-4 text-slate-500" />
                     چکیده مدیریتی وضعیت پروژه‌های این معاونت
                   </h4>
-                  <p className="text-xs text-slate-600 leading-relaxed pt-1">
-                    {analysis.deputy_executive_summary}
+                  <p className="text-xs text-slate-700 leading-relaxed pt-1">
+                    {analysis.deputy_executive_summary || "در حال استخراج چکیده مدیریتی..."}
+                    {isStreaming && (!analysis.projects_analysis || analysis.projects_analysis.length === 0) && (
+                      <span className="inline-block w-1.5 h-3.5 bg-slate-400 animate-pulse mr-1 align-middle" />
+                    )}
                   </p>
                 </div>
               </div>
 
               {/* ۲. بخش ویژه و کلیدی: تحلیل تفکیکی پروژه به پروژه */}
-              <div className="bg-white p-5 md:p-6 rounded-3xl border border-slate-200 shadow-2xs space-y-4">
+              <div className="bg-white p-5 md:p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                  <h4 className="font-black text-slate-900 text-sm md:text-base flex items-center gap-2">
-                    <FolderKanban className="w-5 h-5 text-indigo-600" />
+                  <h4 className="font-bold text-slate-900 text-sm md:text-base flex items-center gap-2">
+                    <FolderKanban className="w-4 h-4 text-slate-600" />
                     ارزیابی و وضعیت به تفکیک پروژه‌ها ({toPersianDigits(analysis.projects_analysis?.length || 0)} پروژه)
                   </h4>
-                  <span className="text-[11px] text-slate-500 font-medium">
-                    بررسی انطباق WBS و پیشرفت
+                  <span className="text-[11px] text-slate-500 font-normal">
+                    انطباق با WBS و سنجه‌های عملکردی
                   </span>
                 </div>
 
                 <div className="grid grid-cols-1 gap-4">
                   {(analysis.projects_analysis || []).map((proj, pIdx) => {
-                    const isSubmitted = proj.status === "submitted";
-                    const isLate = proj.status === "late";
-                    const statusBg = isSubmitted
-                      ? "bg-emerald-50 text-emerald-800 border-emerald-200"
-                      : isLate
-                      ? "bg-amber-50 text-amber-800 border-amber-200"
-                      : "bg-rose-50 text-rose-800 border-rose-200";
-                    const statusText = isSubmitted ? "گزارش منظم" : isLate ? "گزارش تأخیری" : "فاقد گزارش";
+                    const isLastItem = pIdx === (analysis.projects_analysis?.length || 1) - 1;
+                    const isActivelyTyping = isStreaming && isLastItem;
+                    const statusText = proj.status === "submitted" ? "گزارش منظم" : proj.status === "late" ? "گزارش تأخیری" : "فاقد گزارش";
 
                     return (
-                      <div key={pIdx} className="bg-slate-50/80 rounded-2xl p-4 border border-slate-200/80 space-y-3 hover:border-slate-300 transition-colors">
-                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/60 pb-2.5">
-                          <span className="font-extrabold text-sm text-slate-900 flex items-center gap-2">
-                            <span className="w-6 h-6 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-black">
+                      <div key={pIdx} className="bg-white rounded-xl p-4 md:p-5 border border-slate-200/90 shadow-2xs space-y-3 hover:border-slate-300 transition-colors">
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                          <span className="font-bold text-sm text-slate-900 flex items-center gap-2">
+                            <span className="w-6 h-6 rounded-md bg-slate-100 text-slate-700 flex items-center justify-center text-xs font-bold border border-slate-200">
                               {toPersianDigits(pIdx + 1)}
                             </span>
                             {proj.project_title}
                           </span>
-                          <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${statusBg}`}>
+                          <span className="px-2.5 py-0.5 rounded-md text-xs font-medium border border-slate-200 bg-slate-50 text-slate-700">
                             {statusText}
                           </span>
                         </div>
 
-                        <p className="text-xs text-slate-700 leading-relaxed font-medium">
+                        <p className="text-xs text-slate-700 leading-relaxed font-normal">
                           {proj.project_summary}
+                          {isActivelyTyping && (
+                            <span className="inline-block w-1.5 h-3.5 bg-slate-400 animate-pulse mr-1 align-middle" />
+                          )}
                         </p>
 
-                        {/* دستاوردها و ریسک‌ها */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
-                          {proj.key_achievements && proj.key_achievements.length > 0 && (
-                            <div className="bg-emerald-50/50 p-3 rounded-xl border border-emerald-100 text-xs space-y-1.5">
-                              <span className="font-bold text-emerald-900 flex items-center gap-1.5 text-[11px]">
-                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                                دستاوردهای ملموس دوره:
-                              </span>
-                              <ul className="space-y-1 pr-4 list-disc text-emerald-800 text-[11px] leading-relaxed">
-                                {proj.key_achievements.map((ach, aI) => (
-                                  <li key={aI}>{ach}</li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
+                        {/* دستاوردها و موانع */}
+                        {((proj.key_achievements && proj.key_achievements.length > 0) || (proj.risks_or_delays && proj.risks_or_delays.length > 0)) && (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                            {proj.key_achievements && proj.key_achievements.length > 0 && (
+                              <div className="bg-slate-50/80 p-3 rounded-lg border border-slate-200/70 text-xs space-y-1.5">
+                                <span className="font-semibold text-slate-800 flex items-center gap-1.5 text-[11px]">
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-slate-600" />
+                                  دستاوردهای ملموس دوره:
+                                </span>
+                                <ul className="space-y-1 pr-4 list-disc text-slate-700 text-[11px] leading-relaxed">
+                                  {proj.key_achievements.map((ach, aI) => (
+                                    <li key={aI}>{ach}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
 
-                          {proj.risks_or_delays && proj.risks_or_delays.length > 0 && (
-                            <div className="bg-amber-50/50 p-3 rounded-xl border border-amber-100 text-xs space-y-1.5">
-                              <span className="font-bold text-amber-900 flex items-center gap-1.5 text-[11px]">
-                                <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-                                موانع، تأخیرها یا ریسک‌ها:
-                              </span>
-                              <ul className="space-y-1 pr-4 list-disc text-amber-800 text-[11px] leading-relaxed">
-                                {proj.risks_or_delays.map((rsk, rI) => (
-                                  <li key={rI}>{rsk}</li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-                        </div>
+                            {proj.risks_or_delays && proj.risks_or_delays.length > 0 && (
+                              <div className="bg-slate-50/80 p-3 rounded-lg border border-slate-200/70 text-xs space-y-1.5">
+                                <span className="font-semibold text-slate-800 flex items-center gap-1.5 text-[11px]">
+                                  <AlertTriangle className="w-3.5 h-3.5 text-slate-600" />
+                                  موانع، تأخیرها یا ریسک‌ها:
+                                </span>
+                                <ul className="space-y-1 pr-4 list-disc text-slate-700 text-[11px] leading-relaxed">
+                                  {proj.risks_or_delays.map((rsk, rI) => (
+                                    <li key={rI}>{rsk}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+                        )}
 
-                        {/* تطابق WBS و ارزیابی شاخص */}
-                        <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-slate-600">
-                          <span className="bg-white px-2.5 py-1 rounded-lg border border-slate-200">
-                            <strong>WBS:</strong> {proj.wbs_alignment}
-                          </span>
-                          <span className="bg-white px-2.5 py-1 rounded-lg border border-slate-200">
-                            <strong>شاخص‌ها:</strong> {proj.kpi_evaluation}
-                          </span>
-                        </div>
+                        {/* وضعیت WBS و شاخص */}
+                        {(proj.wbs_alignment || proj.kpi_evaluation) && (
+                          <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-slate-600">
+                            {proj.wbs_alignment && (
+                              <span className="bg-slate-50 px-2.5 py-1 rounded-md border border-slate-200">
+                                <strong className="font-semibold text-slate-700">WBS:</strong> {proj.wbs_alignment}
+                              </span>
+                            )}
+                            {proj.kpi_evaluation && (
+                              <span className="bg-slate-50 px-2.5 py-1 rounded-md border border-slate-200">
+                                <strong className="font-semibold text-slate-700">شاخص‌ها:</strong> {proj.kpi_evaluation}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
                 </div>
               </div>
 
-              {/* ۳. بخش طلایی: شاخص‌های پیشنهادی استخراج‌شده از متن (KPI Suggestions) */}
+              {/* ۳. بخش پیشنهادات ثبت شاخص برگرفته از متن */}
               {analysis.suggested_kpis_from_text && analysis.suggested_kpis_from_text.length > 0 && (
-                <div className="bg-gradient-to-br from-indigo-50/80 via-purple-50/80 to-pink-50/50 p-5 md:p-6 rounded-3xl border border-purple-200 shadow-2xs space-y-4">
-                  <div className="flex items-center justify-between border-b border-purple-200/80 pb-3">
+                <div className="bg-white p-5 md:p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                     <div className="flex items-center gap-2.5">
-                      <div className="w-8 h-8 rounded-xl bg-purple-600 text-white flex items-center justify-center shadow-md shadow-purple-500/20">
-                        <BookmarkPlus className="w-4 h-4" />
-                      </div>
+                      <BookmarkPlus className="w-4 h-4 text-slate-600" />
                       <div>
-                        <h4 className="font-black text-purple-950 text-sm md:text-base">
-                          شاخص‌های پیشنهادی برگرفته از متن (فرصت‌های شاخص‌سازی KPI)
+                        <h4 className="font-bold text-slate-900 text-sm md:text-base">
+                          پیشنهادات ثبت شاخص عملکردی (برگرفته از متن گزارش‌ها)
                         </h4>
-                        <p className="text-[11px] text-slate-400 mt-0.5">
-                          هوش مصنوعی این سنجه‌های عددی را از دل گزارش‌های متنی کشف کرده تا بتوانید به عنوان شاخص رسمی پروژه تعریف کنید.
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          سنجه‌های استخراج‌شده از متن کارشناسان جهت بررسی تخصیص به عنوان شاخص رسمی پروژه
                         </p>
                       </div>
                     </div>
@@ -954,13 +1088,13 @@ function DeputyAiAnalysisModal({
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {analysis.suggested_kpis_from_text.map((kpiSug, kIdx) => (
-                      <div key={kIdx} className="bg-white p-4 rounded-2xl border border-purple-100 shadow-2xs space-y-2">
+                      <div key={kIdx} className="bg-slate-50/60 p-4 rounded-xl border border-slate-200 space-y-2">
                         <div className="flex items-center justify-between">
-                          <span className="font-extrabold text-xs text-purple-950 flex items-center gap-1.5">
-                            <Target className="w-4 h-4 text-purple-600" />
+                          <span className="font-bold text-xs text-slate-900 flex items-center gap-1.5">
+                            <Target className="w-3.5 h-3.5 text-slate-600" />
                             {kpiSug.suggested_kpi_name}
                           </span>
-                          <span className="bg-purple-100 text-purple-800 text-[10px] font-bold px-2 py-0.5 rounded-md">
+                          <span className="bg-white text-slate-700 text-[10px] font-medium px-2 py-0.5 rounded border border-slate-200">
                             واحد: {kpiSug.suggested_unit}
                           </span>
                         </div>
@@ -969,12 +1103,12 @@ function DeputyAiAnalysisModal({
                           <strong>پروژه:</strong> {kpiSug.project_title}
                         </p>
 
-                        <div className="bg-purple-50/60 p-2.5 rounded-xl border border-purple-100/80 text-[11px] text-purple-900 leading-relaxed">
+                        <div className="bg-white p-2.5 rounded-lg border border-slate-200/80 text-[11px] text-slate-700 leading-relaxed font-mono">
                           «{kpiSug.extracted_context}»
                         </div>
 
                         <p className="text-[11px] text-slate-600 leading-relaxed">
-                          💡 <strong>دلیل پیشنهاد:</strong> {kpiSug.reasoning}
+                          <strong>علت پیشنهاد:</strong> {kpiSug.reasoning}
                         </p>
                       </div>
                     ))}
@@ -984,19 +1118,19 @@ function DeputyAiAnalysisModal({
 
               {/* ۴. اقدامات آتی و تعهدات دوره آینده */}
               {analysis.next_period_commitments && analysis.next_period_commitments.length > 0 && (
-                <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-2xs space-y-3">
-                  <h4 className="font-extrabold text-slate-900 text-xs md:text-sm flex items-center gap-2 border-b border-slate-100 pb-2">
-                    <Clock className="w-4 h-4 text-amber-600" />
+                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-3">
+                  <h4 className="font-bold text-slate-900 text-xs md:text-sm flex items-center gap-2 border-b border-slate-100 pb-2">
+                    <Clock className="w-4 h-4 text-slate-600" />
                     تعهدات و اقدامات آتی این معاونت در دوره آینده
                   </h4>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                     {analysis.next_period_commitments.map((cmt, cIdx) => (
-                      <div key={cIdx} className="bg-slate-50 p-3 rounded-xl border border-slate-100 flex items-center justify-between gap-2 text-xs">
+                      <div key={cIdx} className="bg-slate-50 p-3 rounded-xl border border-slate-200/80 flex items-center justify-between gap-2 text-xs">
                         <div>
                           <span className="text-[10px] text-slate-400 font-bold block">{cmt.project_title}</span>
                           <span className="font-medium text-slate-800 mt-0.5 block">{cmt.action}</span>
                         </div>
-                        <span className="bg-amber-100 text-amber-900 px-2 py-0.5 rounded-md text-[10px] font-bold shrink-0">
+                        <span className="bg-white text-slate-700 border border-slate-200 px-2 py-0.5 rounded-md text-[10px] font-medium shrink-0">
                           {toPersianDigits(cmt.deadline)}
                         </span>
                       </div>
@@ -1007,15 +1141,15 @@ function DeputyAiAnalysisModal({
 
               {/* ۵. پیشنهادات راهبردی به مدیر ارشد */}
               {analysis.actionable_recommendations && analysis.actionable_recommendations.length > 0 && (
-                <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-2xs space-y-3">
-                  <h4 className="font-extrabold text-slate-900 text-xs md:text-sm flex items-center gap-2 border-b border-slate-100 pb-2">
-                    <Lightbulb className="w-4 h-4 text-amber-500" />
-                    توصیه‌های اجرایی هوش مصنوعی جهت راهبری این معاونت
+                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-3">
+                  <h4 className="font-bold text-slate-900 text-xs md:text-sm flex items-center gap-2 border-b border-slate-100 pb-2">
+                    <Lightbulb className="w-4 h-4 text-slate-600" />
+                    توصیه‌های اجرایی جهت راهبری این معاونت
                   </h4>
                   <ul className="space-y-2">
                     {analysis.actionable_recommendations.map((rec, rIdx) => (
-                      <li key={rIdx} className="text-xs text-slate-700 flex items-start gap-2 bg-slate-50 p-3 rounded-xl border border-slate-100 leading-relaxed">
-                        <span className="w-2 h-2 bg-amber-500 rounded-full mt-1.5 shrink-0"></span>
+                      <li key={rIdx} className="text-xs text-slate-700 flex items-start gap-2.5 bg-slate-50 p-3 rounded-xl border border-slate-200/70 leading-relaxed">
+                        <span className="w-1.5 h-1.5 bg-slate-400 rounded-full mt-1.5 shrink-0"></span>
                         <span>{rec}</span>
                       </li>
                     ))}
@@ -1024,29 +1158,29 @@ function DeputyAiAnalysisModal({
               )}
 
               {/* ۶. حلقه بازخورد و بازتولید تعاملی مدیر */}
-              <div className="bg-slate-900 text-white p-5 md:p-6 rounded-3xl border border-slate-800 space-y-4">
+              <div className="bg-slate-900 text-white p-5 md:p-6 rounded-2xl border border-slate-800 space-y-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2.5">
-                    <Edit3 className="w-5 h-5 text-amber-400" />
+                    <Edit3 className="w-5 h-5 text-slate-300" />
                     <div>
-                      <h4 className="font-black text-sm">حلقه بازخورد و اصلاح هوشمند تحلیل معاونت</h4>
+                      <h4 className="font-bold text-sm">حلقه بازخورد و اصلاح تحلیلی معاونت</h4>
                       <p className="text-[11px] text-slate-400">
-                        در صورت تمایل می‌توانید نکات اصلاحی خود را بنویسید تا هوش مصنوعی تحلیل را متناسب با نظر شما بازنگری کند.
+                        در صورت تمایل می‌توانید نکات اصلاحی خود را بنویسید تا تحلیل متناسب با نظر شما بازنگری شود.
                       </p>
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => setShowRevisionForm(!showRevisionForm)}
-                    className="text-xs bg-slate-800 hover:bg-slate-700 text-amber-300 px-3 py-1.5 rounded-xl border border-slate-700 font-bold transition-colors cursor-pointer"
+                    className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-xl border border-slate-700 font-medium transition-colors cursor-pointer"
                   >
                     {showRevisionForm ? "انصراف" : "افزودن دستور اصلاحی مدیر"}
                   </button>
                 </div>
 
                 {revisionSuccessMsg && (
-                  <div className="p-3 bg-emerald-950/80 border border-emerald-800 text-emerald-300 text-xs rounded-xl flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <div className="p-3 bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-xl flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 shrink-0 text-slate-300" />
                     <span>{revisionSuccessMsg}</span>
                   </div>
                 )}
@@ -1056,33 +1190,23 @@ function DeputyAiAnalysisModal({
                     <textarea
                       value={managerComment}
                       onChange={(e) => setManagerComment(e.target.value)}
-                      placeholder="مثال: روی تأخیر پروژه خطوط BRT بیشتر تأکید شود یا شاخص‌های بخش آموزش باید وزن بیشتری داشته باشند..."
+                      placeholder="دستورات یا نکات اصلاحی مد نظر خود را بنویسید..."
                       rows={3}
-                      className="w-full bg-slate-950 border border-slate-700 rounded-2xl p-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 leading-relaxed"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-slate-500 leading-relaxed resize-none"
                     />
-                    <div className="flex justify-end">
+                    <div className="flex justify-end gap-2">
                       <button
                         type="submit"
                         disabled={revisionLoading || !managerComment.trim()}
-                        className="flex items-center gap-2 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 disabled:opacity-50 text-white font-bold text-xs px-4 py-2 rounded-xl transition-all shadow-md cursor-pointer"
+                        className="flex items-center gap-1.5 bg-slate-100 hover:bg-white text-slate-900 px-4 py-2 rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer shadow-xs"
                       >
-                        {revisionLoading ? (
-                          <>
-                            <RefreshCw className="w-4 h-4 animate-spin" />
-                            <span>در حال بازنویسی تحلیل معاونت...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Send className="w-4 h-4" />
-                            <span>ارسال نظر و بازنویسی تحلیل</span>
-                          </>
-                        )}
+                        <Send className="w-3.5 h-3.5" />
+                        <span>اعمال بازنگری و تحلیل مجدد</span>
                       </button>
                     </div>
                   </form>
                 )}
               </div>
-
             </div>
           )}
         </div>
