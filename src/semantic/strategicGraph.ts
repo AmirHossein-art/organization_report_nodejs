@@ -1020,6 +1020,19 @@ export function formatSemanticGraphForPrompt(
     coverageWarning = `\n⚠️ **تذکر پوشش داده‌ها:** این ارزیابی مبتنی بر بخشی از رکوردهای پروژه است (تعداد ${omissionText} خارج از بازه کنونی). لذا هوش مصنوعی نباید ادعای بررسی ۱۰۰٪ کامل کل تاریخچه را داشته باشد.\n`;
   }
 
+  // Serialize the same typed paths shown by the UI, not merely lists of titles/levels.
+  // Include only selected operational evidence and its actual report/period sources.
+  const includedIds = new Set([...graph.nodes.filter(n => ['project','wbs','kpi'].includes(n.kind)), ...boundedActivities, ...boundedActions].map(n => n.id));
+  for (const e of graph.edges) if (['REPORTED_IN','DEFINED_IN'].includes(e.type) && includedIds.has(e.source)) includedIds.add(e.target);
+  for (const e of graph.edges) if (e.type === 'SUBMITTED_IN' && includedIds.has(e.source)) includedIds.add(e.target);
+  const eligibleEdges = graph.edges.filter(e => includedIds.has(e.source) && includedIds.has(e.target));
+  const prioritizedEdges = [...eligibleEdges].sort((a,b) => Number(['HAS_REPORT','HAS_ACTION','HAS_KPI'].includes(a.type)) - Number(['HAS_REPORT','HAS_ACTION','HAS_KPI'].includes(b.type)));
+  const shownEdges = prioritizedEdges.slice(0,250);
+  const relationshipSection = shownEdges.map(e => `  - ${e.source} --${e.type}--> ${e.target} [اعتبار: ${e.epistemic}] [منبع: ${e.provenance.source}#${e.provenance.recordId ?? 'نامشخص'}]`).join('\n') || 'رابطهٔ قابل استناد در محدودهٔ انتخابی موجود نیست.';
+  const relationOmissions = eligibleEdges.length - shownEdges.length;
+  const sourceSection = graph.nodes.filter(n => includedIds.has(n.id) && ['report','period'].includes(n.kind)).map(n => `  - ${n.id}: ${JSON.stringify(n.label)} [منبع: ${n.provenance.source}#${n.provenance.recordId}]`).join('\n') || 'فاقد منبع گزارش در محدودهٔ انتخابی';
+  const gapSection = graph.coverage.gaps.slice(0,20).map(g=>`  - ${g.entityKind}#${g.entityId}: ${JSON.stringify(g.description)}`).join('\n') || 'شکاف ارجاعی ثبت نشده؛ این به معنی کامل بودن شواهد نیست.';
+
   // 6. Epistemic Guardrails Section
   const guardrailsSection = `⚖️ **قواعد معرفتی و اصول ارزیابی شواهد (Epistemic Guardrails):**
 1. **اصل عدم قطعیت غیاب:** عدم وجود گزارش یا فعالیت ثبت‌شده، اثبات انجام نشدن کار نیست (Absence of evidence is not proof of absence).
@@ -1046,5 +1059,13 @@ ${activitiesSection}
 📋 **اقدامات و تعهدات آتی پروژه (Next Actions & Commitments):**
 ${actionsSection}
 ${coverageWarning}
+🔗 **روابط نوع‌دار و قابل استناد (همان قرارداد شبکهٔ بصری):**
+${relationshipSection}
+${relationOmissions > 0 ? `تعداد ${relationOmissions} رابطهٔ دیگر به دلیل سقف متن درج نشد؛ مسیرهای ارائه‌شده کل شبکه نیستند.` : ''}
+🗂️ **منابع گزارش و دوره برای شواهد انتخاب‌شده:**
+${sourceSection}
+⚠️ **شکاف‌های داده (نه اثبات عدم انجام کار):**
+${gapSection}
+${graph.coverage.gaps.length > 20 ? `تعداد ${graph.coverage.gaps.length - 20} شکاف دیگر در متن درج نشد.` : ''}
 ${guardrailsSection}`;
 }

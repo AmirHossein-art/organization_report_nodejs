@@ -835,6 +835,7 @@ test('getProjectStrategicGraph: provides additive semantic property while preser
   assert.ok(result.nodes.nextActions, 'Legacy nodes.nextActions preserved');
   assert.ok(result.nodes.kpis, 'Legacy nodes.kpis preserved');
   assert.ok(result.edges, 'Legacy edges preserved');
+  assert.ok(result.edges.some(e => e.type === 'WBS_HIERARCHY' && e.source === 'wbs-901' && e.target === 'wbs-902'), 'Legacy projection must preserve actual persisted hierarchy, not an invented edge type');
   assert.ok(result.stats, 'Legacy stats preserved');
 
   // New additive semantic contract

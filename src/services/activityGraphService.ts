@@ -350,11 +350,11 @@ export async function getProjectStrategicGraph(
   const defaultMaxNextActions = 250;
 
   const maxActivities = options?.maxActivities !== undefined
-    ? Math.max(0, Math.trunc(options.maxActivities))
+    ? (Number.isFinite(options.maxActivities) ? Math.min(defaultMaxActivities, Math.max(0, Math.trunc(options.maxActivities))) : defaultMaxActivities)
     : defaultMaxActivities;
 
   const maxNextActions = options?.maxNextActions !== undefined
-    ? Math.max(0, Math.trunc(options.maxNextActions))
+    ? (Number.isFinite(options.maxNextActions) ? Math.min(defaultMaxNextActions, Math.max(0, Math.trunc(options.maxNextActions))) : defaultMaxNextActions)
     : defaultMaxNextActions;
 
   let activitiesRaw: any[] = [];
@@ -509,7 +509,7 @@ export async function getProjectStrategicGraph(
   // ۶. ساخت یال‌های لگاسی (Edges) با استفاده از همان قرارداد مقتدر معنایی (بدون استنتاج ناامن dot و بدون شاخص‌های بیگانه)
   const edges: StrategicGraphData["edges"] = [];
   for (const edge of semantic.edges) {
-    if (edge.type === "PARENT_OF") {
+    if (edge.type === "WBS_HIERARCHY") {
       const sourceId = edge.source.replace("wbs-", "");
       const targetId = edge.target.replace("wbs-", "");
       edges.push({
