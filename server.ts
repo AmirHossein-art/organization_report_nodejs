@@ -4948,31 +4948,55 @@ async function discoverCandidateModels(provider: { id: string; label: string; ba
   }
 }
 
-function getLocalRouterConfig(): { id: string; label: string; baseURL: string; apiKey: string; model: string; fallbackModels: string[] } | null {
+function getRouterConfig(): { id: string; label: string; baseURL: string; apiKey: string; model: string; fallbackModels: string[] } | null {
   try {
-    const customBase = process.env.LOCAL_AI_BASE_URL || (process.env.AI_BASE_URL?.includes("20128") ? process.env.AI_BASE_URL : null);
-    const dbPath = path.join(process.env.APPDATA || "", "9router", "db", "data.sqlite");
-    let apiKey = process.env.LOCAL_AI_API_KEY || "";
+    // ۱. آدرس گیت‌وی 9Router (پشتیبانی جامع از استقرار ابری روی ریل‌وی یا پراکسی محلی)
+    const customBase =
+      process.env.NINEROUTER_BASE_URL ||
+      process.env.ROUTER_BASE_URL ||
+      process.env.LOCAL_AI_BASE_URL ||
+      (process.env.AI_BASE_URL && (process.env.AI_BASE_URL.includes("9router") || process.env.AI_BASE_URL.includes("20128") || process.env.AI_BASE_URL.includes("railway"))
+        ? process.env.AI_BASE_URL
+        : null);
 
-    if (!apiKey && fs.existsSync(dbPath)) {
-      try {
-        const { DatabaseSync } = require("node:sqlite");
-        const db = new DatabaseSync(dbPath, { readOnly: true });
-        const row = db.prepare("SELECT key FROM apiKeys WHERE isActive=1 LIMIT 1").get() as any;
-        db.close();
-        if (row?.key) apiKey = row.key;
-      } catch { }
+    // ۲. کلید دسترسی 9Router
+    let apiKey =
+      process.env.NINEROUTER_API_KEY ||
+      process.env.ROUTER_API_KEY ||
+      process.env.LOCAL_AI_API_KEY ||
+      process.env.OPENAI_API_KEY ||
+      (process.env.AI_BASE_URL && (process.env.AI_BASE_URL.includes("9router") || process.env.AI_BASE_URL.includes("railway")) ? process.env.AI_API_KEY : "") ||
+      "";
+
+    // تلاش برای کشف خودکار در محیط توسعه محلی ویندوز در صورت نبود کلید در متغیرهای محیطی
+    if (!apiKey) {
+      const dbPath = path.join(process.env.APPDATA || "", "9router", "db", "data.sqlite");
+      if (fs.existsSync(dbPath)) {
+        try {
+          const { DatabaseSync } = require("node:sqlite");
+          const db = new DatabaseSync(dbPath, { readOnly: true });
+          const row = db.prepare("SELECT key FROM apiKeys WHERE isActive=1 LIMIT 1").get() as any;
+          db.close();
+          if (row?.key) apiKey = row.key;
+        } catch { }
+      }
     }
 
-    if (!apiKey && !customBase) return null;
+    const baseURL = customBase || (apiKey ? "http://127.0.0.1:20128/v1" : null);
+    if (!baseURL || !apiKey || apiKey.trim() === "" || apiKey === "none") return null;
+
+    // مدل یا کامبوی پیش‌فرض: اولویت با 9Router یا Antigravity
+    const primaryModel = (process.env.LOCAL_AI_MODEL || process.env.ROUTER_MODEL || process.env.AI_MODEL || "9Router").trim();
 
     return {
       id: "9router",
-      label: "9Router Local Proxy",
-      baseURL: customBase || "http://127.0.0.1:20128/v1",
-      apiKey: apiKey || "none",
-      model: process.env.LOCAL_AI_MODEL || "gpt-5.6-austra",
-      fallbackModels: ["gpt-5.6-austra", "ag/gemini-3.8-flash", "oc/glm-5.3-flash-free"],
+      label: "9Router Gateway",
+      baseURL,
+      apiKey: apiKey.trim(),
+      model: primaryModel,
+      fallbackModels: [primaryModel, "9Router", "Antigravity", "gemini-or-glm", "fast-free"].filter(
+        (m, idx, arr) => m && arr.indexOf(m) === idx
+      ),
     };
   } catch {
     return null;
@@ -5000,10 +5024,10 @@ async function callAiWithFallback(
     }
   }
 
-  // پیکربندی تامین‌کننده‌ها — اگر نام مدل «auto» یا نامشخص باشد، از لیست خود تامین‌کننده کشف می‌شود
-  const localRouter = getLocalRouterConfig();
+  // پیکربندی تامین‌کننده‌ها — اولویت اول با گیت‌وی 9Router (ابری یا محلی)
+  const routerProvider = getRouterConfig();
   const providerConfigs = [
-    ...(localRouter ? [localRouter] : []),
+    ...(routerProvider ? [routerProvider] : []),
     {
       id: "gemini",
       label: "Google AI Studio",
