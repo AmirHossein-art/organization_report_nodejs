@@ -1484,7 +1484,7 @@ function WbsTreeTableRow({
               {graphNode.linked_kpis.map((kpi: any) => (
                 <div key={kpi.id} className="flex items-center gap-1 text-emerald-950 bg-emerald-100/90 px-1.5 py-0.5 rounded-md border border-emerald-300 text-[10px] font-bold shadow-2xs">
                   <Target className="w-3 h-3 text-emerald-700 shrink-0" />
-                  <span className="truncate" title={`شاخص مصوب متصل: ${kpi.name} (${kpi.unit || ""})`}>
+                  <span className="truncate" title={`شاخص عملکردی متصل: ${kpi.name} (${kpi.unit || ""})`}>
                     {kpi.name}
                   </span>
                 </div>

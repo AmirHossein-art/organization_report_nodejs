@@ -666,7 +666,7 @@ function DeputyAiAnalysisModal({
     </div>
   `).join("")}
   ${analysis.suggested_kpis_from_text?.length ? `
-    <div class="card-title" style="margin-top: 16px;">شاخص‌های پیشنهادی استخراج‌شده از متن (جهت مصوب‌سازی KPI)</div>
+    <div class="card-title" style="margin-top: 16px;">شاخص‌های پیشنهادی استخراج‌شده از متن (جهت تعریف شاخص KPI)</div>
     ${analysis.suggested_kpis_from_text.map(k => `
       <div class="card" style="background: #faf5ff; border-color: #e9d5ff;">
         <strong style="color: #6b21a8;">${k.suggested_kpi_name} (${k.suggested_unit})</strong> - پروژه: ${k.project_title}
@@ -945,8 +945,8 @@ function DeputyAiAnalysisModal({
                         <h4 className="font-black text-purple-950 text-sm md:text-base">
                           شاخص‌های پیشنهادی برگرفته از متن (فرصت‌های شاخص‌سازی KPI)
                         </h4>
-                        <p className="text-[11px] text-purple-700 mt-0.5">
-                          هوش مصنوعی این سنجه‌های عددی را از دل گزارش‌های متنی کشف کرده تا بتوانید به عنوان شاخص رسمی معاونت مصوب کنید.
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          هوش مصنوعی این سنجه‌های عددی را از دل گزارش‌های متنی کشف کرده تا بتوانید به عنوان شاخص رسمی پروژه تعریف کنید.
                         </p>
                       </div>
                     </div>

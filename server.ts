@@ -27,6 +27,7 @@ import {
   generateAiCacheKey,
   getAiCacheStats,
   clearAllAiCache,
+  invalidatePeriodAiCache,
 } from "./src/services/aiCache";
 import {
   getProjectMemory,
@@ -3919,6 +3920,11 @@ app.post("/api/reports", authenticate, upload.array("files", 10), async (req: an
       console.error("Error decomposing and linking activities after report creation:", err)
     );
 
+    // ابطال هوشمند کش‌های تحلیلی هوش مصنوعی این دوره تا تحلیل‌ها بلافاصله با گزارش جدید همگام شوند
+    invalidatePeriodAiCache(prisma, period.id).catch((err) =>
+      console.warn("Notice: Period AI cache invalidation after report creation:", err?.message || err)
+    );
+
     res.status(201).json(serializeReport(newReport));
   } catch (error: any) {
     if (uploadedFiles.length > 0) {
@@ -4143,6 +4149,11 @@ app.put("/api/reports/:id", authenticate, upload.array("files", 10), async (req:
         console.error("Error updating activities after report update:", err)
       );
     }
+
+    // ابطال هوشمند کش‌های تحلیلی هوش مصنوعی این دوره تا تحلیل‌ها بلافاصله با ویرایش گزارش همگام شوند
+    invalidatePeriodAiCache(prisma, existingReport.period_id).catch((err) =>
+      console.warn("Notice: Period AI cache invalidation after report update:", err?.message || err)
+    );
 
     res.json(serializeReport(updated));
   } catch (error) {
@@ -5271,7 +5282,7 @@ async function buildProjectGraphPromptContext(projectId: number): Promise<string
       })
       .join("\n");
   } else {
-    kpiSection = "هیچ شاخص مصوبی برای این پروژه در سامانه تعریف نشده است.";
+    kpiSection = "هیچ شاخص عملکردی برای این پروژه در سامانه تعریف نشده است.";
   }
 
   // اقدامات و تعهدات باز و فعال پروژه
@@ -5299,7 +5310,7 @@ async function buildProjectGraphPromptContext(projectId: number): Promise<string
   }
 
   return `🏢 **شناسنامه، اهداف کلان و ذات راهبردی پروژه:**
-- عنوان مصوب پروژه: ${project.title}
+- عنوان پروژه: ${project.title}
 - کد پروژه: ${project.code}
 - نوع چرخه گزارش‌دهی: ${project.project_type === "monthly" ? "ماهانه" : "هفتگی"}
 - اهداف و شرح تفصیلی پروژه: ${project.description || "شرح تفصیلی در شناسنامه ثبت نشده است."}
@@ -5307,7 +5318,7 @@ async function buildProjectGraphPromptContext(projectId: number): Promise<string
 🌲 **ساختار شکست کار مرجع (WBS Nodes, Deliverables & Tasks):**
 ${wbsSection}
 
-🎯 **شاخص‌های کلیدی عملکرد مصوب در سامانه (Approved KPIs):**
+🎯 **شاخص‌های کلیدی عملکرد پروژه (Project KPIs):**
 ${kpiSection}
 
 📋 **اقدامات و تعهدات آتی باز ثبت‌شده در پروژه:**
@@ -5455,8 +5466,9 @@ app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, r
     }
 
     const shouldForceRefresh = Boolean(force_refresh || (manager_comment && manager_comment.trim()));
+    const promptFingerprint = generateAiCacheKey(systemPrompt, userPrompt).slice(0, 16);
     const strategicCacheKey = resolvedPeriodId
-      ? `strategic-analysis:period:${resolvedPeriodId}`
+      ? `strategic-analysis:p:${resolvedPeriodId}:${promptFingerprint}`
       : undefined;
 
     const result: any = await callAiWithFallback(systemPrompt, userPrompt, {
@@ -5763,21 +5775,36 @@ app.post(["/api/reports/analyze-deputy", "/api/ai/deputy-analysis"], authenticat
 
     // ۱. شناسایی کاربران / مدیران مرتبط با این معاونت
     let deputyUsers: any[] = [];
-    if (user_id) {
-      const u = await prisma.user.findUnique({ where: { id: Number(user_id) } });
-      if (u) deputyUsers.push(u);
-    } else if (deputy_name && typeof deputy_name === "string" && deputy_name.trim()) {
-      const trimmed = deputy_name.trim();
+    const searchDeputyName = (deputy_name && typeof deputy_name === "string" ? deputy_name.trim() : "");
+
+    if (searchDeputyName) {
       deputyUsers = await prisma.user.findMany({
         where: {
           is_active: true,
           OR: [
-            { job_title: { contains: trimmed } },
-            { full_name: { contains: trimmed } },
-            { username: trimmed },
+            { job_title: { contains: searchDeputyName } },
+            { full_name: { contains: searchDeputyName } },
+            { username: searchDeputyName },
           ],
         },
       });
+    }
+
+    if (user_id) {
+      const u = await prisma.user.findUnique({ where: { id: Number(user_id) } });
+      if (u) {
+        if (!deputyUsers.some((du) => du.id === u.id)) {
+          deputyUsers.push(u);
+        }
+        if (u.job_title && u.job_title.trim() && !searchDeputyName) {
+          const peers = await prisma.user.findMany({
+            where: { is_active: true, job_title: { contains: u.job_title.trim() } },
+          });
+          for (const p of peers) {
+            if (!deputyUsers.some((du) => du.id === p.id)) deputyUsers.push(p);
+          }
+        }
+      }
     }
 
     if (deputyUsers.length === 0) {
@@ -5881,7 +5908,7 @@ app.post(["/api/reports/analyze-deputy", "/api/ai/deputy-analysis"], authenticat
       }
 
       const definedKpisSummary = projectKpis.length > 0
-        ? `شاخص‌های مصوب پروژه در سامانه (${projectKpis.length} شاخص):\n` +
+        ? `شاخص‌های عملکردی پروژه در سامانه (${projectKpis.length} شاخص):\n` +
           projectKpis
             .map((pk, kIdx) => {
               const targetStr = pk.target_value !== null && pk.target_value !== undefined
@@ -5890,12 +5917,12 @@ app.post(["/api/reports/analyze-deputy", "/api/ai/deputy-analysis"], authenticat
               return `  ${kIdx + 1}. ${pk.name} (واحد: ${pk.unit})${targetStr}`;
             })
             .join("\n")
-        : "فاقد شاخص مصوب در سامانه";
+        : "فاقد شاخص عملکردی در سامانه";
 
       if (!report) {
         return `=== پروژه ${idx + 1}: ${project.title} (مسئول: ${project.responsible_user || "مشخص نشده"}) ===
 وضعیت گزارش: ❌ فاقد گزارش در این دوره (عدم ثبت توسط کارشناس)
-شاخص‌های عملکردی مصوب:
+شاخص‌های عملکردی پروژه:
 ${definedKpisSummary}
 سند مرجع WBS:
 ${wbsContext}`;
@@ -5905,9 +5932,9 @@ ${wbsContext}`;
       if (report.kpiValues && report.kpiValues.length > 0) {
         kpiSection = `شاخص‌های عملکردی ثبت‌شده توسط کارشناس:\n${formatKpiValuesForPrompt(report.kpiValues)}`;
       } else if (projectKpis.length > 0) {
-        kpiSection = `شاخص‌های مصوب پروژه:\n${definedKpisSummary}\n⚠️ وضعیت مقادیر در این دوره: کارشناس در گزارش ارسالی هیچ مقداری برای این شاخص‌های مصوب ثبت نکرده است (نقص در تکمیل مقادیر شاخص‌ها).`;
+        kpiSection = `شاخص‌های عملکردی پروژه:\n${definedKpisSummary}\n⚠️ وضعیت مقادیر در این دوره: شاخص به پروژه تخصیص یافته است ولی کارشناس در گزارش ارسالی مقداری برای آن ثبت نکرده است (نقص در تکمیل مقادیر شاخص‌ها).`;
       } else {
-        kpiSection = `شاخص‌ها (متن آزاد): ${report.kpi_text || "ثبت نشده"} (پروژه فاقد شاخص مصوب در سامانه است)`;
+        kpiSection = `شاخص‌ها (متن آزاد): ${report.kpi_text || "ثبت نشده"} (شاخص عملکردی برای این پروژه در سامانه تعریف نشده است)`;
       }
 
       return `=== پروژه ${idx + 1}: ${project.title} (مسئول: ${report.user_full_name}) ===
@@ -5933,11 +5960,13 @@ ${wbsContext}`;
 
 قوانین اکید و بدون استثنا:
 ۱. اصل استناد مستقیم (Strict Grounding): فقط و فقط بر اساس اطلاعات واقعی ارائه‌شده قضاوت کنید. از ذکر ادعاهای کلی، تعمیم‌های ساختگی یا حدسیات فنی خودداری نمایید.
-۲. تمایز بین «فقدان شاخص» و «عدم ثبت مقدار توسط کارشناس»:
-   - اگر برای پروژه‌ای شاخص‌های مصوب تعریف شده اما کارشناس در گزارش خود مقداری وارد نکرده است، پروژه را فاقد شاخص ندانید؛ بلکه صراحتاً بنویسید که پروژه دارای شاخص مصوب است اما کارشناس اقدام به تکمیل و ثبت مقادیر نکرده است و این موضوع را به عنوان ضعف یا ریسک پایش ثبت کنید.
-   - تنها در صورتی عبارت "فاقد شاخص مصوب" را به کار ببرید که صراحتاً در اطلاعات پروژه ذکر شده باشد فاقد شاخص مصوب است.
-   - اگر پروژه‌ای گزارش ندارد یا سند WBS ندارد، صراحتاً بنویسید "فاقد گزارش" یا "فاقد WBS مرجع".
-۳. استخراج هوشمند شاخص (KPI Extraction): متن فعالیت‌ها و نتایج پروژه‌ها را بررسی کنید و سنجه‌های عددی/کمی بالقوه‌ای که کارشناس در متن آورده اما به عنوان شاخص ساختاریافته تعریف نشده را استخراج کنید تا سازمان بتواند در آینده آن‌ها را به شاخص مصوب تبدیل کند.
+۲. ارزیابی دقیق شاخص‌های عملکردی پروژه (منع اکید استفاده از واژگان بوروکراتیک ساختگی مانند "مصوب"):
+   - هر شاخصی که در سامانه به پروژه تخصیص داده شده است، شاخص رسمی و معتبر پروژه است و باید همان بررسی شود. اصطلاحاتی مانند «شاخص مصوب» یا «غیر مصوب» وجود ندارد و اکیداً نباید در متن خروجی به کار برده شوند.
+   - اگر پروژه‌ای دارای شاخص تخصیص‌یافته است اما کارشناس در گزارش خود مقداری وارد نکرده، صراحتاً بنویسید: "دارای شاخص عملکردی ولی عدم ثبت مقدار توسط کارشناس در این گزارش".
+   - اگر شاخصی به پروژه تخصیص داده نشده، بنویسید: "فاقد شاخص عملکردی".
+   - اگر پروژه‌ای دارای گزارش است (وضعیت ✅)، حتماً وضعیت آن را "submitted" (یا "late") قرار دهید، فعالیت‌ها و دستاوردهای واقعی آن را تحلیل کنید و هرگز آن را فاقد گزارش ننویسید.
+   - تنها در صورتی وضعیت را "فاقد گزارش" بگذارید که در اطلاعات ورودی پروژه صراحتاً وضعیت ❌ فاقد گزارش در این دوره قید شده باشد.
+۳. استخراج هوشمند شاخص (KPI Extraction): متن فعالیت‌ها و نتایج پروژه‌ها را بررسی کنید و سنجه‌های عددی/کمی بالقوه‌ای که کارشناس در متن آورده اما به عنوان شاخص ساختاریافته تعریف نشده را استخراج کنید تا سازمان بتواند در صورت تمایل آن‌ها را به عنوان شاخص جدید به پروژه تخصیص دهد.
 ۴. زبان خروجی: کاملاً فارسی، روان، اداری و بدون هرگونه تعارف یا اطناب.
 ۵. خروجی باید حتماً و فقط یک شیء JSON معتبر با کلید ریشه "analysis" باشد بدون هیچ کلمه، توضیح یا کاراکتر اضافی در ابتدا یا انتها.
 
@@ -5957,7 +5986,7 @@ ${wbsContext}`;
         "key_achievements": ["دستاورد ملموس ۱"],
         "risks_or_delays": ["موانع، تأخیرها یا ریسک‌ها"],
         "wbs_alignment": "وضعیت انطباق با سند WBS یا ذکر 'فاقد WBS مرجع'",
-        "kpi_evaluation": "بررسی مقادیر شاخص‌های ثبت‌شده یا ذکر 'دارای شاخص مصوب ولی مقدار ثبت نشده' یا ذکر 'فاقد شاخص مصوب'"
+        "kpi_evaluation": "بررسی مقادیر شاخص‌های ثبت‌شده یا ذکر 'دارای شاخص عملکردی ولی عدم ثبت مقدار' یا ذکر 'فاقد شاخص عملکردی'"
       }
     ],
     "suggested_kpis_from_text": [
@@ -5966,7 +5995,7 @@ ${wbsContext}`;
         "suggested_kpi_name": "عنوان شاخص پیشنهادی استخراج‌شده از متن",
         "suggested_unit": "واحد سنجش (مثلاً: سامانه، تقاطع، درصد، روز)",
         "extracted_context": "بخشی از متن گزارش که این سنجه از آن شناسایی شد",
-        "reasoning": "چرا ثبت رسمی این شاخص برای معاونت ارزش نظارتی دارد"
+        "reasoning": "چرا ثبت رسمی این شاخص برای این پروژه ارزش نظارتی دارد"
       }
     ],
     "next_period_commitments": [
@@ -6004,7 +6033,8 @@ ${projectsDataForPrompt}`;
     }
 
     const shouldForceRefresh = Boolean(force_refresh || (manager_comment && manager_comment.trim()));
-    const deputyCacheKey = `deputy-analysis:period:${period_id}:deputy:${resolvedDeputyName || deputy_name || user_id}`;
+    const promptFingerprint = generateAiCacheKey(systemPrompt, userPrompt).slice(0, 16);
+    const deputyCacheKey = `deputy-analysis:p:${period_id}:dep:${resolvedDeputyName || deputy_name || user_id}:${promptFingerprint}`;
     const result: any = await callAiWithFallback(systemPrompt, userPrompt, {
       forceRefresh: shouldForceRefresh,
       cacheKey: deputyCacheKey,

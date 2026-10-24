@@ -52,7 +52,7 @@ export function parseExcelWBS(filePath: string): ParsedWBSResult {
 
   // ۳. خواندن شیت سوم: شاخص‌ها (KPIs)
   const sheetKpiName = workbook.SheetNames.find((s) => s.includes("شاخص")) || workbook.SheetNames[2];
-  let kpisText = "شاخص‌های مصوب ثبت نشده است.";
+  let kpisText = "شاخص‌های عملکردی ثبت نشده است.";
   if (sheetKpiName && workbook.Sheets[sheetKpiName]) {
     const kpiRows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetKpiName]) as any[];
     kpisText = kpiRows
@@ -73,7 +73,7 @@ ${projectInfoText}
 📋 **ساختار شکست کار و بسته‌های کاری مرجع (WBS):**
 ${wbsText}
 
-📊 **شاخص‌های کلیدی عملکرد مصوب (KPIs):**
+📊 **شاخص‌های کلیدی عملکرد (KPIs):**
 ${kpisText}
 `;
 

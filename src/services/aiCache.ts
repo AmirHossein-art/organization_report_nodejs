@@ -164,6 +164,31 @@ export async function invalidateAiCache(
 }
 
 /**
+ * ابطال هوشمند کش‌های تحلیلی مرتبط با یک دوره گزارش‌دهی خاص هنگام ثبت یا ویرایش گزارش
+ */
+export async function invalidatePeriodAiCache(prisma: PrismaClient, periodId: number): Promise<void> {
+  const pStr1 = `period:${periodId}`;
+  const pStr2 = `p:${periodId}`;
+  for (const key of Array.from(aiMemoryCache.keys())) {
+    if (key.includes(pStr1) || key.includes(pStr2)) {
+      aiMemoryCache.delete(key);
+    }
+  }
+  try {
+    await prisma.aiAnalysisCache.deleteMany({
+      where: {
+        OR: [
+          { cache_key: { contains: pStr1 } },
+          { cache_key: { contains: pStr2 } },
+        ],
+      },
+    });
+  } catch (error) {
+    console.warn("⚠️ خطا در پاکسازی کش دوره از دیتابیس:", error instanceof Error ? error.message : error);
+  }
+}
+
+/**
  * پاکسازی کامل کل کش هوش مصنوعی
  */
 export async function clearAllAiCache(prisma: PrismaClient): Promise<void> {

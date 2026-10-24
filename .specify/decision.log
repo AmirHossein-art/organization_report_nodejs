@@ -361,3 +361,15 @@
   3. **Live Gateway Attribution & Timer:** Displays real-time elapsed seconds alongside the active upstream model/gateway badge (`9Router AI Gateway`).
   4. **Universal Integration Across AI Surfaces:** Integrated seamlessly into `SingleReportAuditModal` (`ManagerDashboard.tsx` and `MyReports.tsx`), `DeputyAiAnalysisModal`, and macro period strategic analysis.
 - **Verification:** `npx tsc --noEmit` clean, 51 automated regression tests passing cleanly, and production build `npm run build` completed in 6.40s.
+
+### D48 — Elimination of Bureaucratic "Approved KPI" Jargon & Dynamic Fingerprint AI Cache Invalidation
+- **Context:**
+  1. AI evaluations previously outputted bureaucratic phrases like "فقدان کامل شاخص‌های مصوب" due to repeated prompt directives forcing the term "شاخص مصوب", confusing stakeholders since any KPI assigned to a project is simply its official operational metric.
+  2. Projects with verified submitted reports (e.g. "ایجاد خطوط بزرگراهی متغیر") erroneously appeared as "فاقد گزارش" in deputy evaluations because the API served a stale cached analysis generated before the report was submitted. Static cache keys (`deputy-analysis:period:X:deputy:Y`) never reflected newly submitted or updated reports.
+  3. Single-user ID resolution in `/api/reports/analyze-deputy` missed projects allocated to peer accounts operating within the same deputy office.
+- **Decision:**
+  1. **Purge "Approved KPI" (مصوب) Jargon:** Replaced all prompt directives and UI references with "شاخص‌های عملکردی پروژه (KPI)". Instructed the model that any assigned metric is the project's standard metric, forbidding invented distinctions between "مصوب" and "غیرمصوب".
+  2. **Dynamic Prompt-Fingerprint Cache Invalidation:** Appended a 16-character SHA-256 fingerprint of the prompt (`generateAiCacheKey(systemPrompt, userPrompt)`) to both `deputyCacheKey` and `strategicCacheKey`. Any newly submitted, edited, or deleted report immediately mutates the prompt fingerprint, bypassing stale caches deterministically while retaining fast caching when reports are unchanged.
+  3. **Event-Driven Period Cache Eviction (`invalidatePeriodAiCache`):** Triggered automatic L1 memory and L2 PostgreSQL cache eviction on report creation (`POST /api/reports`) and editing (`PUT /api/reports/:id`).
+  4. **Holistic Deputy Account Resolution:** Broadened deputy user resolution in `server.ts` to query all accounts sharing the same organizational title/department in parallel, capturing all allocated projects and submitted reports across the entire deputy office.
+- **Verification:** `npx tsc --noEmit` clean, 51 automated regression tests passing cleanly with 0 failures, and production build `npm run build` completed cleanly in 6.69s.
