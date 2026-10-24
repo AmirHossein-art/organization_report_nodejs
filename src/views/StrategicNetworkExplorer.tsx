@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import {
-  BrainCircuit,
+
   CheckCircle2,
   AlertTriangle,
   AlertCircle,
@@ -9,19 +9,21 @@ import {
   Search,
   Filter,
   Sparkles,
-  Layers,
-  ZoomIn,
-  ZoomOut,
-  RotateCcw,
-  ShieldCheck,
+
+
+
+
+
   Check,
-  Info,
-  Calendar,
+
+
   Globe,
   Table as TableIcon,
 } from "lucide-react";
 import { Project } from "../types";
 import { toPersianDigits } from "../dateUtils";
+import SemanticNetworkCanvas from "../components/SemanticNetworkCanvas";
+import type { SemanticGraph } from "../semantic/strategicGraph";
 
 interface WbsNodeItem {
   id: number;
@@ -72,6 +74,7 @@ interface KpiItem {
 }
 
 interface StrategicGraphResponse {
+  semantic?: SemanticGraph;
   project: {
     id: number;
     title: string;
@@ -122,7 +125,17 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
   selectedProjectIdRef.current = selectedProjectId;
 
   const projectPollingRef = useRef<any>(null);
+  const requestEpochRef = useRef(0);
+  const mountedRef = useRef(true);
   const globalPollingRef = useRef<any>(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (globalPollingRef.current) clearInterval(globalPollingRef.current);
+    };
+  }, []);
 
   // وضعیت فیلترها و نمایش
   const [viewMode, setViewMode] = useState<"graph" | "table">("graph");
@@ -134,12 +147,12 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
   const [toastMessage, setToastMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
 
   // بزرگ‌نمایی و کنترل‌های کانواس
-  const [zoomLevel, setZoomLevel] = useState<number>(1);
-  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+
 
   // خواندن داده‌های گراف پروژه
   const fetchGraphData = async (projectId: number) => {
-    if (!projectId) return;
+    if (!projectId || !mountedRef.current || selectedProjectIdRef.current !== projectId) return;
+    const epoch = requestEpochRef.current;
     setIsLoading(true);
     setError(null);
     try {
@@ -148,16 +161,16 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
         throw new Error("خطا در دریافت شبکه استراتژیک پروژه.");
       }
       const data: StrategicGraphResponse = await res.json();
-      if (selectedProjectIdRef.current === projectId) {
+      if (mountedRef.current && requestEpochRef.current === epoch && selectedProjectIdRef.current === projectId) {
         setGraphData(data);
       }
     } catch (err: any) {
-      if (selectedProjectIdRef.current === projectId) {
+      if (mountedRef.current && requestEpochRef.current === epoch && selectedProjectIdRef.current === projectId) {
         setError(err?.message || "خطای ناشناخته در دریافت داده‌های گراف.");
         setGraphData(null);
       }
     } finally {
-      if (selectedProjectIdRef.current === projectId) {
+      if (mountedRef.current && requestEpochRef.current === epoch && selectedProjectIdRef.current === projectId) {
         setIsLoading(false);
       }
     }
@@ -204,13 +217,19 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
 
   useEffect(() => {
     if (!selectedProjectId) return;
-    fetchGraphData(selectedProjectId);
+    let cancelled = false;
+    setGraphData(null);
     setSelectedActivity(null);
+    setIsSyncing(false);
+    setIsUpdatingLink(false);
+    setSyncProgress(null);
+    fetchGraphData(selectedProjectId);
 
     // بررسی وضعیت همین پروژه در پس‌زمینه
     fetch(`/api/projects/${selectedProjectId}/sync-status`)
       .then((r) => r.json())
       .then((job) => {
+        if (cancelled || selectedProjectIdRef.current !== selectedProjectId) return;
         if (job.status === "running") {
           setIsSyncing(true);
           setSyncProgress(`در حال پردازش گزارش ${toPersianDigits(job.processedReports)} از ${toPersianDigits(job.totalReports)}...`);
@@ -223,6 +242,8 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
       .catch(() => {});
 
     return () => {
+      cancelled = true;
+      requestEpochRef.current++;
       if (projectPollingRef.current) {
         clearInterval(projectPollingRef.current);
         projectPollingRef.current = null;
@@ -336,7 +357,11 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
 
   // اصلاح یا تایید دستی اتصال فعالیت
   const handleUpdateActivityLink = async (newWbsId: number | null, newStatus: string) => {
-    if (!selectedActivity) return;
+    if (!selectedActivity || isUpdatingLink) return;
+    const projectId = selectedProjectId;
+    const activityId = selectedActivity.id;
+    const epoch = requestEpochRef.current;
+    const isCurrent = () => mountedRef.current && requestEpochRef.current === epoch && selectedProjectIdRef.current === projectId;
     setIsUpdatingLink(true);
     try {
       const res = await fetch(`/api/report-activities/${selectedActivity.id}`, {
@@ -350,14 +375,17 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
       const updated = await res.json();
       if (!res.ok) throw new Error(updated.error || "خطا در به‌روزرسانی اتصال فعالیت.");
 
+      if (!isCurrent()) return;
       setToastMessage({ text: "پیوند فعالیت با موفقیت اصلاح شد.", type: "success" });
-      setSelectedActivity((prev) => (prev ? { ...prev, wbs_node_id: newWbsId, status: newStatus } : null));
-      await fetchGraphData(selectedProjectId);
+      setSelectedActivity((prev) => (prev?.id === activityId ? { ...prev, wbs_node_id: newWbsId, status: newStatus } : prev));
+      await fetchGraphData(projectId);
     } catch (err: any) {
-      setToastMessage({ text: err?.message || "خطا در اصلاح پیوند.", type: "error" });
+      if (isCurrent()) setToastMessage({ text: err?.message || "خطا در اصلاح پیوند.", type: "error" });
     } finally {
-      setIsUpdatingLink(false);
-      setTimeout(() => setToastMessage(null), 4000);
+      if (isCurrent()) {
+        setIsUpdatingLink(false);
+        setTimeout(() => { if (isCurrent()) setToastMessage(null); }, 4000);
+      }
     }
   };
 
@@ -442,7 +470,7 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
                 }`}
               >
                 <Network className="w-3.5 h-3.5 text-emerald-600" />
-                <span>نمای شبکه لایه‌ای (DAG)</span>
+                <span>شبکهٔ روابط و شواهد</span>
               </button>
               <button
                 type="button"
@@ -545,7 +573,7 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
               }`}
             >
               <span className="text-[10px] text-rose-700 block font-bold flex items-center justify-center gap-1">
-                <AlertCircle className="w-3 h-3 text-rose-600" /> انحراف / خارج محدوده
+                <AlertCircle className="w-3 h-3 text-rose-600" /> فعالیت‌های فاقد تطبیق
               </span>
               <span className="text-sm font-black text-rose-800">
                 {toPersianDigits(graphData.stats.unmappedActivities)}
@@ -565,7 +593,7 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
           <Search className="w-4 h-4 text-slate-400 absolute right-3 top-2.5" />
           <input
             type="text"
-            placeholder="جستجو در شرح فعالیت‌ها یا دوره‌ها..."
+            placeholder="جستجو در بسته‌ها، فعالیت‌ها، شاخص‌ها و شواهد..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pr-9 pl-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-emerald-500 text-slate-800 font-medium placeholder-slate-400"
@@ -618,7 +646,7 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
                 : "bg-rose-50 text-rose-800 hover:bg-rose-100"
             }`}
           >
-            انحراف از محدوده
+            فاقد تطبیق
           </button>
         </div>
       </div>
@@ -641,331 +669,26 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
       {!isLoading && !error && graphData && (
         <>
           {viewMode === "graph" ? (
-            /* =================== نمای شبکه لایه‌ای (Layered DAG Flow) =================== */
-            <div className="relative bg-slate-900 border border-slate-800 rounded-3xl shadow-xl overflow-hidden p-6 text-slate-100">
-              {/* ابزارهای بزرگ‌نمایی */}
-              <div className="absolute top-4 left-4 z-20 flex items-center gap-1.5 bg-slate-800/90 backdrop-blur-md p-1.5 rounded-2xl border border-slate-700 shadow-md">
-                <button
-                  type="button"
-                  onClick={() => setZoomLevel((z) => Math.min(1.4, z + 0.1))}
-                  className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-700 rounded-xl cursor-pointer"
-                  title="بزرگ‌نمایی"
-                >
-                  <ZoomIn className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setZoomLevel((z) => Math.max(0.7, z - 0.1))}
-                  className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-700 rounded-xl cursor-pointer"
-                  title="کوچک‌نمایی"
-                >
-                  <ZoomOut className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setZoomLevel(1)}
-                  className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-700 rounded-xl cursor-pointer"
-                  title="بازنشانی اندازه"
-                >
-                  <RotateCcw className="w-4 h-4" />
-                </button>
-                <span className="text-[10px] font-black text-slate-400 px-1">
-                  %{toPersianDigits(Math.round(zoomLevel * 100))}
-                </span>
-              </div>
-
-              {/* راهنمای لایه‌ها */}
-              <div className="mb-4 flex flex-wrap items-center justify-between text-xs text-slate-400 border-b border-slate-800 pb-3 gap-2">
-                <div className="flex items-center gap-2">
-                  <BrainCircuit className="w-4 h-4 text-emerald-400" />
-                  <span className="font-bold text-slate-200">
-                    جریان معنایی پروژه: بسته‌های مرجع WBS ➔ فعالیت‌های دوره‌ای ➔ تعهدات و شاخص‌ها
-                  </span>
-                </div>
-                <div className="flex items-center gap-4 text-[11px]">
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span> تایید خودکار گذر ۲
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block"></span> نیاز به بازبینی مدیر
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-rose-500 inline-block"></span> انحراف از محدوده
-                  </span>
-                </div>
-              </div>
-
-              {/* شبکه ۴ ستونه لایه‌ای با زوم داینامیک */}
-              <div
-                className="grid grid-cols-1 md:grid-cols-3 gap-6 transition-transform duration-200 origin-top-right"
-                style={{ transform: `scale(${zoomLevel})` }}
-              >
-                {/* ستون ۱: ساختار شکست کار (WBS Ground Truth) */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                    <span className="text-xs font-black text-emerald-400 flex items-center gap-1.5">
-                      <Layers className="w-4 h-4" /> ساختار شکست کار مصوب (WBS)
-                    </span>
-                    <span className="text-[10px] bg-slate-800 px-2 py-0.5 rounded-full text-slate-300">
-                      {toPersianDigits(graphData.nodes.wbsNodes.length)} گره
-                    </span>
-                  </div>
-
-                  <div className="space-y-2.5 max-h-[700px] overflow-y-auto pr-1">
-                    {graphData.nodes.wbsNodes.length === 0 ? (
-                      <p className="text-xs text-slate-500 text-center py-8">گره WBS فعالی یافت نشد.</p>
-                    ) : (
-                      graphData.nodes.wbsNodes.map((wbs) => {
-                        const isHovered = hoveredNodeId === `wbs-${wbs.id}`;
-                        const isLinkedToSelected = selectedActivity?.wbs_node_id === wbs.id;
-
-                        return (
-                          <div
-                            key={wbs.id}
-                            onMouseEnter={() => setHoveredNodeId(`wbs-${wbs.id}`)}
-                            onMouseLeave={() => setHoveredNodeId(null)}
-                            className={`p-3 rounded-2xl border transition-all text-xs ${
-                              isLinkedToSelected
-                                ? "bg-emerald-950/70 border-emerald-500 ring-2 ring-emerald-500/50 shadow-lg"
-                                : isHovered
-                                ? "bg-slate-800 border-slate-600 shadow-md"
-                                : "bg-slate-900/90 border-slate-800 hover:border-slate-700"
-                            }`}
-                          >
-                            <div className="flex items-center justify-between gap-2 mb-1.5">
-                              <span className="font-black text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded-lg border border-emerald-800/60 text-[11px]">
-                                {wbs.code}
-                              </span>
-                              <span className="text-[10px] text-slate-400">سطح {toPersianDigits(wbs.level)}</span>
-                            </div>
-
-                            <p className="font-bold text-slate-100 leading-5">{wbs.title}</p>
-
-                            {wbs.deliverable_text && (
-                              <div className="mt-2 text-[10px] text-teal-300 bg-teal-950/50 p-1.5 rounded-xl border border-teal-800/40">
-                                <span className="font-bold">خروجی: </span>
-                                <span>{wbs.deliverable_text}</span>
-                              </div>
-                            )}
-
-                            {wbs.kpis.length > 0 && (
-                              <div className="mt-2 flex items-center gap-1 flex-wrap">
-                                {wbs.kpis.map((k) => (
-                                  <span
-                                    key={k.id}
-                                    className="text-[9px] bg-cyan-950/80 text-cyan-300 px-1.5 py-0.5 rounded-lg border border-cyan-800/50"
-                                  >
-                                    🎯 {k.name}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                </div>
-
-                {/* ستون ۲: فعالیت‌های ثبت‌شده گزارش‌ها (Report Activities) */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                    <span className="text-xs font-black text-amber-400 flex items-center gap-1.5">
-                      <Sparkles className="w-4 h-4" /> فعالیت‌های اتمیک دوره‌ای
-                    </span>
-                    <span className="text-[10px] bg-slate-800 px-2 py-0.5 rounded-full text-slate-300">
-                      {toPersianDigits(filteredActivities.length)} مورد
-                    </span>
-                  </div>
-
-                  <div className="space-y-2.5 max-h-[700px] overflow-y-auto pr-1">
-                    {filteredActivities.length === 0 ? (
-                      <p className="text-xs text-slate-500 text-center py-8">فعالیتی منطبق با فیلتر یافت نشد.</p>
-                    ) : (
-                      filteredActivities.map((act) => {
-                        const isSelected = selectedActivity?.id === act.id;
-                        const targetWbs = act.wbs_node_id ? wbsMap.get(act.wbs_node_id) : null;
-
-                        let badgeColor = "bg-amber-950/70 border-amber-600/70 text-amber-300";
-                        let badgeLabel = "نیاز به بازبینی";
-                        if (act.status === "auto_confirmed") {
-                          badgeColor = "bg-emerald-950/70 border-emerald-600/70 text-emerald-300";
-                          badgeLabel = "تایید خودکار هوش مصنوعی";
-                        } else if (act.status === "confirmed" || act.status === "overridden") {
-                          badgeColor = "bg-blue-950/70 border-blue-600/70 text-blue-300";
-                          badgeLabel = "تایید مدیر";
-                        } else if (act.status === "unmapped") {
-                          badgeColor = "bg-rose-950/70 border-rose-600/70 text-rose-300";
-                          badgeLabel = "خارج از محدوده";
-                        }
-
-                        return (
-                          <div
-                            key={act.id}
-                            onClick={() => {
-                              setSelectedActivity(act);
-                              setEditingWbsId(act.wbs_node_id || "none");
-                            }}
-                            className={`p-3 rounded-2xl border transition-all text-xs cursor-pointer ${
-                              isSelected
-                                ? "bg-slate-800 border-amber-400 shadow-xl ring-2 ring-amber-400/50"
-                                : "bg-slate-900/90 border-slate-800 hover:border-slate-700"
-                            }`}
-                          >
-                            <div className="flex items-center justify-between gap-2 mb-1.5">
-                              <span className="text-[10px] text-slate-400 bg-slate-800 px-2 py-0.5 rounded-lg">
-                                {act.period_title}
-                              </span>
-                              <span className={`text-[9px] font-black px-2 py-0.5 rounded-lg border ${badgeColor}`}>
-                                {badgeLabel}
-                              </span>
-                            </div>
-
-                            <p className="text-slate-100 font-bold leading-5 line-clamp-3">{act.activity_text}</p>
-
-                            <div className="mt-2.5 pt-2 border-t border-slate-800/80 flex items-center justify-between gap-2">
-                              {targetWbs ? (
-                                <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-1 truncate">
-                                  <span>➔ متصل به WBS {targetWbs.code}:</span>
-                                  <span className="text-slate-300 truncate">{targetWbs.title}</span>
-                                </span>
-                              ) : (
-                                <span className="text-[10px] text-rose-400 font-bold">بدون بسته WBS متصل</span>
-                              )}
-
-                              {typeof act.confidence === "number" && (
-                                <span className="text-[9px] text-slate-400 shrink-0">
-                                  اطمینان: %{toPersianDigits(Math.round(act.confidence * 100))}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                </div>
-
-                {/* ستون ۳: پنل بازرسی هوش مصنوعی و اصلاح رابطه */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                    <span className="text-xs font-black text-cyan-400 flex items-center gap-1.5">
-                      <ShieldCheck className="w-4 h-4" /> کشوی ممیزی و تصمیم‌گیری
-                    </span>
-                  </div>
-
-                  {selectedActivity ? (
-                    <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 space-y-4">
-                      <div>
-                        <span className="text-[10px] text-slate-400 font-bold block mb-1">متن کامل فعالیت:</span>
-                        <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800 text-xs font-bold text-white leading-5">
-                          {selectedActivity.activity_text}
-                        </div>
-                      </div>
-
-                      {/* نتایج حلقه گذر ۱ و گذر ۲ */}
-                      <div className="space-y-2">
-                        <div className="bg-slate-900/90 p-2.5 rounded-xl border border-slate-800">
-                          <span className="text-[10px] text-amber-400 font-bold block mb-1">
-                            گذر اول (استدلال اولیه انتخاب گره):
-                          </span>
-                          <p className="text-[11px] text-slate-300 leading-5">
-                            {selectedActivity.ai_reasoning || "استدلال اولیه ثبت نشده است."}
-                          </p>
-                        </div>
-
-                        <div className="bg-slate-900/90 p-2.5 rounded-xl border border-slate-800">
-                          <span className="text-[10px] text-emerald-400 font-bold block mb-1">
-                            گذر دوم (ممیزی سازگاری و خود-پالایشی):
-                          </span>
-                          <p className="text-[11px] text-slate-300 leading-5">
-                            {selectedActivity.audit_feedback || "انطباق با قوانین پروژه مورد تایید است."}
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* اصلاح دستی اتصال به WBS */}
-                      <div className="space-y-2 pt-2 border-t border-slate-800">
-                        <span className="text-[10px] text-slate-300 font-bold block">
-                          تغییر بسته کاری متصل (WBS Link):
-                        </span>
-                        <select
-                          value={editingWbsId}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setEditingWbsId(val === "none" ? "none" : Number(val));
-                          }}
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2 text-xs text-white focus:outline-none focus:border-emerald-500 font-medium"
-                        >
-                          <option value="none">بدون اتصال (خارج از محدوده WBS)</option>
-                          {graphData.nodes.wbsNodes.map((w) => (
-                            <option key={w.id} value={w.id}>
-                              کد {w.code} - {w.title}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {/* دکمه‌های اقدام و تایید */}
-                      <div className="flex flex-col gap-2 pt-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const targetId = editingWbsId === "none" ? null : editingWbsId;
-                            handleUpdateActivityLink(targetId, targetId ? "confirmed" : "unmapped");
-                          }}
-                          disabled={isUpdatingLink}
-                          className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                        >
-                          <Check className="w-4 h-4" />
-                          <span>{isUpdatingLink ? "در حال ثبت..." : "ثبت و تایید اصلاحیه مدیر"}</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleUpdateActivityLink(null, "unmapped")}
-                          disabled={isUpdatingLink}
-                          className="w-full py-1.5 bg-rose-950/80 hover:bg-rose-900/80 text-rose-300 border border-rose-800/60 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
-                        >
-                          علامت‌گذاری به عنوان انحراف از محدوده (Scope Creep)
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="bg-slate-950/60 border border-slate-800 rounded-2xl p-8 text-center text-slate-500 text-xs">
-                      <Info className="w-6 h-6 text-slate-600 mx-auto mb-2" />
-                      یک فعالیت از ستون وسط انتخاب کنید تا ریز استدلال هوش مصنوعی و امکان تغییر پیوند نمایش داده شود.
-                    </div>
-                  )}
-
-                  {/* اقدامات آتی متصل به این پروژه */}
-                  <div className="mt-4 pt-3 border-t border-slate-800 space-y-2">
-                    <span className="text-xs font-black text-purple-400 flex items-center gap-1.5">
-                      <Calendar className="w-3.5 h-3.5" /> اقدامات آتی فعال (Next Actions)
-                    </span>
-                    <div className="space-y-1.5 max-h-[220px] overflow-y-auto">
-                      {graphData.nodes.nextActions.length === 0 ? (
-                        <p className="text-[11px] text-slate-500">اقدام بازی ثبت نشده است.</p>
-                      ) : (
-                        graphData.nodes.nextActions.slice(0, 10).map((na) => (
-                          <div
-                            key={na.id}
-                            className="bg-slate-900/70 p-2 rounded-xl border border-slate-800 text-[11px] text-slate-300 flex items-start justify-between gap-2"
-                          >
-                            <span className="leading-4">{na.action_text}</span>
-                            {na.wbs_node_id && (
-                              <span className="text-[9px] bg-purple-950 text-purple-300 px-1.5 py-0.5 rounded border border-purple-800 shrink-0">
-                                WBS متصل
-                              </span>
-                            )}
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
+            graphData.semantic ? <SemanticNetworkCanvas
+              key={selectedProjectId}
+              graph={graphData.semantic}
+              query={searchQuery}
+              status={statusFilter === "auto_confirmed" ? "confirmed" : statusFilter}
+              selectedActivityId={selectedActivity?.id}
+              onSelectActivity={(id) => {
+                const activity = graphData.nodes.activities.find(a => a.id === id);
+                if (activity) { setSelectedActivity(activity); setEditingWbsId(activity.wbs_node_id || "none"); }
+              }}
+              activityEditor={selectedActivity ? <div className="space-y-3 border-t border-slate-200 pt-4">
+                <label className="block text-xs font-bold text-slate-700" htmlFor="semantic-wbs-link">اصلاح اتصال این فعالیت</label>
+                <select id="semantic-wbs-link" value={editingWbsId} onChange={e => setEditingWbsId(e.target.value === "none" ? "none" : Number(e.target.value))} className="w-full rounded-lg border border-slate-300 bg-white p-2 text-xs text-slate-800">
+                  <option value="none">بدون پیوند WBS</option>
+                  {graphData.nodes.wbsNodes.filter(w => w.active).map(w => <option key={w.id} value={w.id}>{toPersianDigits(w.code)} — {w.title}</option>)}
+                </select>
+                <button type="button" onClick={() => handleUpdateActivityLink(editingWbsId === "none" ? null : editingWbsId, editingWbsId === "none" ? "unmapped" : "confirmed")} disabled={isUpdatingLink} className="w-full rounded-lg bg-emerald-700 p-2.5 text-xs font-bold text-white disabled:opacity-50">{isUpdatingLink ? "در حال ثبت..." : "ثبت اصلاح و تأیید اتصال"}</button>
+                <p className="text-[11px] leading-6 text-slate-500">تأیید اتصال، تأیید تحقق یا تحویل خروجی نیست.</p>
+              </div> : null}
+            /> : <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">قرارداد معنایی از سرور دریافت نشد. نسخهٔ سرور را به‌روز کنید؛ روابط حدسی نمایش داده نمی‌شود.</div>
           ) : (
             /* =================== نمای جدول ممیزی (Audit Table) =================== */
             <div className="bg-white border border-slate-200 rounded-3xl shadow-sm overflow-hidden">
@@ -1004,7 +727,7 @@ export default function StrategicNetworkExplorer({ projects }: StrategicNetworkE
                           statusText = "تایید مدیر";
                         } else if (act.status === "unmapped") {
                           statusBadge = "bg-rose-50 text-rose-800 border-rose-200";
-                          statusText = "خارج از محدوده";
+                          statusText = "فاقد تطبیق";
                         }
 
                         return (
