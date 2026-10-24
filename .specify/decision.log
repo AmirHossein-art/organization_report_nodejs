@@ -373,3 +373,24 @@
   3. **Event-Driven Period Cache Eviction (`invalidatePeriodAiCache`):** Triggered automatic L1 memory and L2 PostgreSQL cache eviction on report creation (`POST /api/reports`) and editing (`PUT /api/reports/:id`).
   4. **Holistic Deputy Account Resolution:** Broadened deputy user resolution in `server.ts` to query all accounts sharing the same organizational title/department in parallel, capturing all allocated projects and submitted reports across the entire deputy office.
 - **Verification:** `npx tsc --noEmit` clean, 51 automated regression tests passing cleanly with 0 failures, and production build `npm run build` completed cleanly in 6.69s.
+
+### D49 — Unified Semantic AI Intelligence, Living Project Memory & 3-State KPI Evaluation
+- **Context:**
+  1. AI evaluations previously operated in silos: single report audit was connected to `ProjectMemory` and `WbsNode`, but deputy-level (`/api/reports/analyze-deputy`) and macro organizational strategic audits (`/api/ai/strategic-analysis`) received raw monolithic report strings (`activities_done`) rather than the atomic, line-by-line decomposed activities (`ReportActivity`) mapped to WBS nodes.
+  2. Deputy evaluations were completely blind to the project's living dossier (`ProjectMemory`), missing cumulative chronic bottlenecks, empirical deadline reliability rates, and accumulated lessons learned.
+  3. When querying WBS files, legacy code relied on ephemeral disk lookups (`fs.existsSync`), causing projects with persistent `WbsNode` trees in PostgreSQL to be falsely declared as "فاقد WBS مرجع".
+  4. Project KPI evaluations lacked explicit deterministic states, causing inconsistent model evaluations.
+- **Decision:**
+  1. **PostgreSQL-First WBS Retrieval:** Deputy evaluations now query `prisma.wbsNode` directly from PostgreSQL as the authoritative source of truth. Active work packages, codes, levels, and deliverables are fed directly into the prompt, falling back to `WbsSubmission` and disk lookups only if the relational table is unpopulated.
+  2. **Atomic Activities & Scope Creep Injection (`ReportActivity`):** Replaced raw text blobs with line-by-line atomic activities showing exact WBS work package codes and verification tags (`auto_confirmed`, `confirmed`, and `⚠️ انحراف از محدوده WBS`). AI models are instructed to flag unmapped activities as scope creep / execution deviations.
+  3. **Living Project Memory Integration (`ProjectMemory`):** Injected project identity context (DNA summary), recorded chronic bottlenecks, deadline reliability track records, and strategic lessons learned into both deputy and macro organizational analysis prompts.
+  4. **Continuous Feedback Loop:** Triggered non-blocking background memory evolution (`evolveProjectMemory`) after every deputy analysis, continuously updating the living dossier for each evaluated project.
+  5. **Deterministic 3-State KPI Rule:** Strictly codified KPI evaluations into exactly 3 mutual states:
+     - State 1: "فاقد شاخص عملکردی" (no KPIs assigned in system).
+     - State 2: "دارای شاخص عملکردی ولی مقداری ثبت نشده است" (KPI assigned, but report omitted values).
+     - State 3: "دارای شاخص عملکردی با مقادیر ثبت‌شده: [تحلیل عملکرد]" (values reported and evaluated against baseline and target direction).
+- **Verification:**
+  - Written dedicated automated test suite in `tests/unified-ai-memory-integration.test.ts` validating prompt rendering, atomic formatting, and 3-state KPI logic.
+  - All 54 regression tests passing cleanly with 0 failures.
+  - Full TypeScript validation (`./node_modules/.bin/tsc --noEmit`) passes with 0 errors.
+  - Production build (`npm run build`) completed successfully in 6.47s.

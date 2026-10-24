@@ -50,7 +50,7 @@ import {
 } from "./src/utils/formulaEvaluator";
 import { userAiConcurrencyGuard } from "./src/utils/aiConcurrencyGuard";
 import { getDeadlineState } from "./src/deadline";
-import { ensureShamsiDate, isLastWeekOfShamsiMonth, shamsiToGregorian } from "./src/dateUtils";
+import { ensureShamsiDate, isLastWeekOfShamsiMonth, shamsiToGregorian, toPersianDigits } from "./src/dateUtils";
 
 const SALT_ROUNDS = 10;
 const app = express();
@@ -5225,6 +5225,29 @@ function formatKpiValuesForPrompt(kpiValues: any[] | undefined): string {
     .join("\n");
 }
 
+function formatAtomicActivitiesForPrompt(activities: any[] | undefined): string {
+  if (!Array.isArray(activities) || activities.length === 0) return "";
+  return activities
+    .map((act) => {
+      let statusTag = "تطبیق‌یافته";
+      if (act.status === "auto_confirmed") statusTag = "تطبیق خودکار WBS";
+      else if (act.status === "confirmed" || act.status === "overridden") statusTag = "تأییدشده توسط مدیر";
+      else if (act.status === "unmapped") statusTag = "⚠️ انحراف از محدوده WBS (خارج از ساختار شکست)";
+      else if (act.status === "needs_review") statusTag = "نیازمند بازبینی تطبیق";
+
+      const wbsRef = act.wbsNode?.code
+        ? ` ➔ بسته کاری WBS [${act.wbsNode.code}: ${act.wbsNode.title}]`
+        : " ➔ خارج از محدوده ساختار WBS";
+
+      const confidenceTag = typeof act.confidence === "number"
+        ? ` [ضریب اطمینان: ${toPersianDigits(Math.round(act.confidence * 100))}٪]`
+        : "";
+
+      return `  • فعالیت ${act.line_number}: ${act.activity_text}${wbsRef} (${statusTag})${confidenceTag}`;
+    })
+    .join("\n");
+}
+
 /**
  * ساخت کانتکست ساختاریافته و جامع گراف پروژه جهت تزریق به پرامپت‌های استنتاج هوش مصنوعی
  * شامل: شناسنامه و ذات پروژه + گره‌های WBS و تحویل‌دادنی‌ها + شاخص‌های مصوب + اقدامات باز
@@ -5406,17 +5429,44 @@ app.post(["/api/reports/analyze", "/api/ai/strategic-analysis"], authenticate, r
           .join("\n")
       : `هیچ اقدام معوق یا انجام‌نشده‌ای با موعد تا تاریخ ${periodEndShamsi} در دیتابیس ثبت نشده است.`;
 
+    const submittedReportIds = submittedReports.map((r: any) => Number(r.id)).filter(Boolean);
+    const atomicActivities = submittedReportIds.length > 0
+      ? await prisma.reportActivity.findMany({
+          where: { report_id: { in: submittedReportIds } },
+          include: { wbsNode: { select: { code: true, title: true } } },
+          orderBy: { line_number: "asc" },
+        })
+      : [];
+
+    const projectIdsInReports = Array.from(new Set(submittedReports.map((r: any) => Number(r.project_id)).filter(Boolean)));
+    const projectMemories = projectIdsInReports.length > 0
+      ? await prisma.projectMemory.findMany({
+          where: { project_id: { in: projectIdsInReports } },
+        })
+      : [];
+
     const reportsText = submittedReports
       .map((r, index) => {
         const deputy = r.deputy_name || r.user_job_title || r.user?.job_title || "معاونت / حوزه نامشخص";
         const kpiSection = (r.kpiValues && r.kpiValues.length > 0)
           ? `شاخص‌های ساختاریافته:\n${formatKpiValuesForPrompt(r.kpiValues)}`
           : `شاخص‌ها (متن آزاد): ${r.kpi_text || "ثبت نشده"}`;
+
+        const reportActs = atomicActivities.filter((a) => a.report_id === Number(r.id));
+        const actsText = reportActs.length > 0
+          ? `فعالیت‌های تفکیک‌شده اتمیک و اتصالات WBS:\n${formatAtomicActivitiesForPrompt(reportActs)}`
+          : `فعالیت‌ها: ${r.activities_done}`;
+
+        const projMemory = projectMemories.find((m) => m.project_id === Number(r.project_id));
+        const memoryContext = projMemory
+          ? `  سابقه و حافظه پروژه: DNA: ${projMemory.dna_summary} | گلوگاه‌های مزمن: ${projMemory.chronic_bottlenecks || "بدون گلوگاه مزمن"} | سابقه تعهدپذیری: ${projMemory.reliability_notes}\n`
+          : "";
+
         return `--- گزارش ${index + 1} ---
           معاونت / واحد سازمانی: ${deputy}
           نویسنده: ${r.user_full_name}
           پروژه: ${r.project_title}
-          فعالیت‌ها: ${r.activities_done}
+${memoryContext}          ${actsText}
           نتایج: ${r.results_achieved || "ثبت نشده"}
           اقدامات آتی ثبت‌شده در این گزارش: ${formatNextActionsForPrompt(r.nextActions)}
           ${kpiSection}`;
@@ -5881,7 +5931,7 @@ app.post(["/api/reports/analyze-deputy", "/api/ai/deputy-analysis"], authenticat
       orderBy: { sort_order: "asc" },
     });
 
-    // ۴. دریافت گزارش‌های این دوره برای این پروژه‌ها و کاربران
+    // ۴. دریافت گزارش‌های این دوره برای این پروژه‌ها و کاربران با فعالیت‌های اتمیک
     const reports = await prisma.report.findMany({
       where: {
         period_id: Number(period_id),
@@ -5894,13 +5944,16 @@ app.post(["/api/reports/analyze-deputy", "/api/ai/deputy-analysis"], authenticat
         kpiValues: {
           include: { kpi: true },
         },
+        activities: {
+          include: { wbsNode: true },
+          orderBy: { line_number: "asc" },
+        },
         files: true,
       },
       orderBy: { submitted_at: "desc" },
     });
 
-    // ۵. ساختاردهی اطلاعات پروژه به پروژه همراه با شبکه معنایی، WBS پایگاه‌داده و شاخص‌های ۳ حالته
-    // استخراج گره‌های WBS تمام این پروژه‌ها به صورت مستقیم از جدول WbsNode در PostgreSQL
+    // ۵. ساختاردهی اطلاعات پروژه به پروژه همراه با شبکه معنایی، WBS پایگاه‌داده، حافظه تاریخی و فعالیت‌های اتمیک
     const allWbsNodes = await prisma.wbsNode.findMany({
       where: { project_id: { in: projectIds } },
       orderBy: [{ sort_order: "asc" }, { code: "asc" }],
@@ -5911,9 +5964,15 @@ app.post(["/api/reports/analyze-deputy", "/api/ai/deputy-analysis"], authenticat
       orderBy: [{ created_at: "desc" }, { id: "desc" }],
     });
 
+    const allProjectMemories = await prisma.projectMemory.findMany({
+      where: { project_id: { in: projectIds } },
+    });
+
     const projectsDataForPrompt = projectsList.map((project, idx) => {
       const report = reports.find((r) => r.project_id === project.id);
       const projectKpis = definedProjectKpis.filter((pk) => pk.project_id === project.id);
+      const memory = allProjectMemories.find((m) => m.project_id === project.id);
+      const memorySection = formatProjectMemoryForPrompt(memory);
 
       // ۱. استخراج ساختار شکست کار (WBS): اولویت قطعی با گره‌های فعال ذخیره‌شده در PostgreSQL
       let wbsContext = "فاقد سند مرجع WBS";
@@ -5941,7 +6000,17 @@ app.post(["/api/reports/analyze-deputy", "/api/ai/deputy-analysis"], authenticat
         }
       }
 
-      // ۲. وضعیت سه‌گانه شاخص‌های عملکردی پروژه:
+      // ۲. فعالیت‌های عملیاتی: اولویت با تفکیک خط‌به‌خط اتمیک متصل به WBS
+      let activitiesSection = "";
+      if (report && report.activities && report.activities.length > 0) {
+        activitiesSection = `فعالیت‌های تفکیک‌شده اتمیک و اتصالات WBS (${report.activities.length} فعالیت):\n${formatAtomicActivitiesForPrompt(report.activities)}`;
+      } else if (report && report.activities_done) {
+        activitiesSection = `فعالیت‌های گزارش‌شده:\n${report.activities_done}`;
+      } else {
+        activitiesSection = "توضیحی ثبت نشده";
+      }
+
+      // ۳. وضعیت سه‌گانه شاخص‌های عملکردی پروژه:
       // حالت ۱: کلاً شاخص ندارد
       // حالت ۲: شاخص دارد ولی در این گزارش مقداری ثبت نشده است
       // حالت ۳: شاخص دارد و مقادیر ثبت شده است (همراه با مقادیر)
@@ -5964,6 +6033,7 @@ app.post(["/api/reports/analyze-deputy", "/api/ai/deputy-analysis"], authenticat
       if (!report) {
         return `=== پروژه ${idx + 1}: ${project.title} (مسئول: ${project.responsible_user || "مشخص نشده"}) ===
 وضعیت گزارش: ❌ فاقد گزارش در این دوره (عدم ثبت توسط کارشناس)
+${memorySection}
 ${kpiEvaluationStateLabel}
 سند مرجع WBS:
 ${wbsContext}`;
@@ -5971,8 +6041,9 @@ ${wbsContext}`;
 
       return `=== پروژه ${idx + 1}: ${project.title} (مسئول: ${report.user_full_name}) ===
 وضعیت گزارش: ✅ ${report.status === "late" ? "تأخیری" : "ثبت‌شده منظم"} (تاریخ ثبت: ${report.submitted_at.toISOString().split("T")[0]})
-فعالیت‌های انجام‌شده:
-${report.activities_done || "توضیحی ثبت نشده"}
+${memorySection}
+فعالیت‌ها:
+${activitiesSection}
 نتایج ملموس حاصله:
 ${report.results_achieved || "توضیحی ثبت نشده"}
 ${kpiEvaluationStateLabel}
@@ -6001,9 +6072,15 @@ ${wbsContext}`;
 ۳. ارزیابی ساختار شکست کار (WBS):
    - اگر در اطلاعات ورودی پروژه، بسته‌های کاری WBS درج شده است، در فیلد wbs_alignment صراحتاً وضعیت انطباق فعالیت‌های گزارش را با آن بسته‌های WBS بنویسید و هرگز پروژه را فاقد WBS ننویسید.
    - تنها در صورتی عبارت "فاقد WBS مرجع" را درج کنید که در اطلاعات ورودی پروژه صراحتاً نوشته شده باشد "فاقد سند مرجع WBS".
-۴. استخراج هوشمند شاخص (KPI Extraction): متن فعالیت‌ها و نتایج پروژه‌ها را بررسی کنید و سنجه‌های عددی/کمی بالقوه‌ای که کارشناس در متن آورده اما به عنوان شاخص ساختاریافته تعریف نشده را استخراج کنید تا سازمان بتواند در صورت تمایل آن‌ها را به عنوان شاخص جدید به پروژه تخصیص دهد.
-۵. زبان خروجی: کاملاً فارسی، روان، اداری و بدون هرگونه تعارف یا اطناب.
-۶. خروجی باید حتماً و فقط یک شیء JSON معتبر با کلید ریشه "analysis" باشد بدون هیچ کلمه، توضیح یا کاراکتر اضافی در ابتدا یا انتها.
+۴. استناد به فعالیت‌های اتمیک WBS و انحراف از محدوده (Scope Creep):
+   - فعالیت‌های گزارش‌شده به صورت خط‌به‌خط تفکیک شده و به گره‌های WBS پیوند داده شده‌اند.
+   - مواردی که با برچسب "⚠️ انحراف از محدوده WBS" مشخص شده‌اند، نمایانگر کارهای خارج از ساختار شکست پروژه هستند و باید در بخش ریسک‌ها یا موانع پروژه (risks_or_delays) به عنوان انحراف از محدوده پروژه منعکس شوند.
+۵. بهره‌برداری از پرونده حافظه تکاملی پروژه (Living Project Memory):
+   - برای هر پروژه، شناخت هویتی (DNA)، موانع مزمن ثبت‌شده و سابقه تعهدپذیری در ددلاین‌ها در بخش حافظه پروژه قید شده است.
+   - ارزیابی خود را با در نظر گرفتن این حافظه تاریخی انجام دهید و در پیشنهادات عملیاتی، راهکارهای حل ریشه‌ای گلوگاه‌های مزمن را هدف قرار دهید.
+۶. استخراج هوشمند شاخص (KPI Extraction): متن فعالیت‌ها و نتایج پروژه‌ها را بررسی کنید و سنجه‌های عددی/کمی بالقوه‌ای که کارشناس در متن آورده اما به عنوان شاخص ساختاریافته تعریف نشده را استخراج کنید تا سازمان بتواند در صورت تمایل آن‌ها را به عنوان شاخص جدید به پروژه تخصیص دهد.
+۷. زبان خروجی: کاملاً فارسی، روان، اداری و بدون هرگونه تعارف یا اطناب.
+۸. خروجی باید حتماً و فقط یک شیء JSON معتبر با کلید ریشه "analysis" باشد بدون هیچ کلمه، توضیح یا کاراکتر اضافی در ابتدا یا انتها.
 
 نمونه ساختار مورد انتظار JSON:
 {
@@ -6080,6 +6157,23 @@ ${projectsDataForPrompt}`;
         ...act,
         deadline: act.deadline ? ensureShamsiDate(act.deadline) : "تعیین‌نشده",
       }));
+    }
+
+    // تکامل غیرمسدودکننده پرونده حافظه برای پروژه‌های تحلیل‌شده در پس‌زمینه
+    if (result && result.analysis && Array.isArray(result.analysis.projects_analysis)) {
+      for (const pAudit of result.analysis.projects_analysis) {
+        const matchingProj = projectsList.find(
+          (p) => p.title === pAudit.project_title || p.title.includes(pAudit.project_title)
+        );
+        if (matchingProj) {
+          evolveProjectMemory(prisma, matchingProj.id, {
+            strategic_alignment: { alignment_analysis: pAudit.project_summary },
+            recommendations: pAudit.risks_or_delays || [],
+          }).catch((e) =>
+            console.warn(`Notice: Background memory evolution failed for project ${matchingProj.id}:`, e?.message || e)
+          );
+        }
+      }
     }
 
     res.json(result);
