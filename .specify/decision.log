@@ -348,3 +348,16 @@
 - **Trade-offs:** SVG may need further viewport virtualization for very large projects. Readable framing permits offscreen nodes; fit-all is an explicit overview. Source boundaries reduce accidental instruction mixing but do not guarantee prompt-injection immunity.
 - **Verification status:** Local suite reports 51 passed / 4 skipped / 0 failed; TypeScript and production build pass (large JS chunk warning remains). Twelve isolated synthetic-data browser scenarios pass; five workspace unit tests pass. Live authenticated data and live AI were not exercised. Independent UI review accepted the integrated canvas with no blocking findings. Backend remediation `0e383f3` was checked by the parent; followup `87bc172` passed independent review and preserves exact AI source paths plus hard query caps. See `.specify/verification/semantic-network-evidence-workspace.md`.
 - **D40 clarification:** Actual activity mapping uses one model request containing proposal/self-review instructions plus deterministic referential checks. This must not be represented as an independently verified two-model audit or a guarantee of semantic correctness.
+
+### D47 — Visual AI Chain of Thought Stepper & Intermediate Reasoning Telemetry
+- **Context:** During AI analysis (single report audit, deputy evaluations, and macro strategic audits), users previously saw only an opaque spinning circle (`RefreshCw animate-spin`), creating anxiety, uncertainty over network stalls, and poor transparency into which exact reasoning steps were executing.
+- **Decision:**
+  1. **Reusable Chain of Thought Component (`AiThoughtChainStepper.tsx`):** Designed an animated, dark-themed, frosted stepper component inspired by `vercel/chain-of-thought` and `catalogs.dev` standards, matching the project's slate/emerald/amber palette.
+  2. **Four Deterministic Cognitive Stages:**
+     - Stage 1: `Layers` — WBS Work Breakdown Structure & Approved Deliverable reading.
+     - Stage 2: `Brain` — Living Project Memory (`ProjectMemory`) & Historical Dossier query.
+     - Stage 3: `Sparkles` — Tripartite Alignment, Scope Creep & Disputed Linkage reasoning (with dynamic rotating activity ticker).
+     - Stage 4: `ShieldCheck` — Shamsi deadline validation, PMBOK rule enforcement & Audit scorecard issuance.
+  3. **Live Gateway Attribution & Timer:** Displays real-time elapsed seconds alongside the active upstream model/gateway badge (`9Router AI Gateway`).
+  4. **Universal Integration Across AI Surfaces:** Integrated seamlessly into `SingleReportAuditModal` (`ManagerDashboard.tsx` and `MyReports.tsx`), `DeputyAiAnalysisModal`, and macro period strategic analysis.
+- **Verification:** `npx tsc --noEmit` clean, 51 automated regression tests passing cleanly, and production build `npm run build` completed in 6.40s.

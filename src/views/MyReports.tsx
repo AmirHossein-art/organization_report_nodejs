@@ -31,6 +31,7 @@ import { User, Report, Project, ReportPeriod } from "../types";
 import { CustomSelect, ShamsiDatePicker } from "../components";
 
 import ProjectBubbleNode from "../components/ProjectBubbleNode";
+import { AiThoughtChainStepper } from "../components/AiThoughtChainStepper";
 import ProjectNextActionsModal, { NextActionItem } from "../components/ProjectNextActionsDrawer";
 import Projects3DExplorer from "../components/projects-3d/Projects3DExplorer";
 import ReportsPdfDocument from "../components/ReportsPdfDocument";
@@ -475,11 +476,10 @@ function SingleReportAuditModal({
         {/* بدنه محتوای ممیزی */}
         <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6 bg-slate-50/60 text-right">
           {loading && (
-            <div className="py-20 text-center space-y-4">
-              <RefreshCw className="w-12 h-12 text-emerald-600 animate-spin mx-auto" />
-              <p className="text-sm font-bold text-slate-800">در حال ممیزی هوشمند و انطباق با سند WBS...</p>
-              <p className="text-xs text-slate-400">استخراج شاخص‌ها، تحلیل اصالت و میزان خلق فایده</p>
-            </div>
+            <AiThoughtChainStepper
+              title="ممیزی هوشمند گزارش در برابر سند WBS"
+              projectOrReportTitle={reportTitle}
+            />
           )}
 
           {error && (

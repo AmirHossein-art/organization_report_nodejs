@@ -28,6 +28,7 @@ import {
 import { ReportPeriod, Project, User } from "../types";
 import { CustomSelect } from "../components";
 import ReportsPdfDocument from "../components/ReportsPdfDocument";
+import { AiThoughtChainStepper } from "../components/AiThoughtChainStepper";
 import { ensureShamsiDate, isLastWeekOfShamsiMonth } from "../dateUtils";
 
 // 🌐 تبدیل اعداد به فارسی
@@ -195,10 +196,10 @@ function SingleReportAuditModal({
         {/* بدنه محتوا */}
         <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6 bg-slate-50/50 text-right">
           {loading && (
-            <div className="py-24 text-center space-y-4">
-              <RefreshCw className="w-12 h-12 text-amber-500 animate-spin mx-auto" />
-              <p className="text-sm font-bold text-slate-700">در حال تطابق گزارش با ساختار شکست کار (WBS)...</p>
-            </div>
+            <AiThoughtChainStepper
+              title="ممیزی و ارزیابی استراتژیک گزارش بر اساس WBS"
+              projectOrReportTitle={reportTitle}
+            />
           )}
 
           {error && (
@@ -777,16 +778,11 @@ function DeputyAiAnalysisModal({
 
         {/* بدنه مودال */}
         <div className="flex-1 overflow-y-auto p-5 md:p-8 space-y-6 bg-slate-50/70 text-right text-slate-900">
-          {loading && (
-            <div className="py-24 text-center space-y-4">
-              <RefreshCw className="w-12 h-12 text-amber-500 animate-spin mx-auto" />
-              <p className="text-sm font-bold text-slate-700">
-                در حال استخراج پروژه‌های این معاونت، تطابق با WBS و تحلیل هوشمند...
-              </p>
-              <p className="text-xs text-slate-500">
-                پردازش همزمان شاخص‌ها، موانع و استخراج سنجه‌های پیشنهادی از متن
-              </p>
-            </div>
+          {(loading || revisionLoading) && (
+            <AiThoughtChainStepper
+              title={`ارزیابی استراتژیک و ممیزی پروژه‌های ${deputyName}`}
+              projectOrReportTitle={`دوره گزارش‌دهی: ${periodTitle}`}
+            />
           )}
 
           {error && (
@@ -1879,6 +1875,15 @@ export default function ManagerDashboard({
           <div className="mt-4 bg-rose-500/10 border border-rose-500/30 text-rose-300 p-3 rounded-xl text-xs flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
             <span>{aiError}</span>
+          </div>
+        )}
+
+        {aiLoading && (
+          <div className="mt-6">
+            <AiThoughtChainStepper
+              title="پردازش و ممیزی استراتژیک کلان دوره سازمان"
+              projectOrReportTitle={summaryData?.period?.title || "دوره جاری گزارش‌دهی"}
+            />
           </div>
         )}
       </div>
